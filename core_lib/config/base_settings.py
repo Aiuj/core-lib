@@ -151,14 +151,18 @@ class EnvParser:
             return value  # type: ignore
         elif target_type == int:
             try:
-                return int(value)  # type: ignore
+                # Handle potential inline comments (e.g. "86400 # 1 day")
+                clean_value = value.split('#')[0].strip()
+                return int(clean_value)  # type: ignore
             except ValueError:
                 raise EnvironmentVariableError(
                     f"Invalid integer value for {var_name}: {value}"
                 )
         elif target_type == float:
             try:
-                return float(value)  # type: ignore
+                # Handle potential inline comments
+                clean_value = value.split('#')[0].strip()
+                return float(clean_value)  # type: ignore
             except ValueError:
                 raise EnvironmentVariableError(
                     f"Invalid float value for {var_name}: {value}"
