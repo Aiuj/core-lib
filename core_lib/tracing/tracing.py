@@ -64,9 +64,13 @@ class LangfuseTracingProvider(TracingProvider):
         if metadata:
             try:
                 self._client.update_current_span(metadata=metadata)
-            except Exception:
-                # Silently ignore if no active span context exists
+            except Exception as e:
+                # Silently ignore if no active span context exists or validation fails
                 # This is expected in some execution contexts (e.g., MCP server)
+                # Common errors: invalid session_id format, missing required fields, etc.
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Failed to update trace metadata: {e}")
                 pass
 
 
