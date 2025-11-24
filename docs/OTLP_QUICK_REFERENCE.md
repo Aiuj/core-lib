@@ -188,4 +188,4 @@ All work simultaneously!
 
 - Architecture & setup: `docs/OTLP_LOGGING_INTEGRATION.md`
 - Examples: `examples/example_otlp_logging.py`
-- Implementation details: `docs/OTLP_IMPLEMENTATION_SUMMARY.md`
+- Implementation details: `docs/implementation/OTLP_IMPLEMENTATION_SUMMARY.md`

@@ -49,6 +49,12 @@ from .fastmcp_auth import (
     MCPAuthError,
 )
 
+# Uvicorn server runner utilities
+from .uvicorn_runner import (
+    run_uvicorn_server,
+    run_uvicorn_from_settings,
+)
+
 __all__ = [
     # Core authentication
     "generate_time_key",
@@ -63,4 +69,8 @@ __all__ = [
     "get_auth_headers",
     "get_auth_env_vars",
     "MCPAuthError",
+    
+    # Uvicorn runner
+    "run_uvicorn_server",
+    "run_uvicorn_from_settings",
 ] + __all_fastapi__

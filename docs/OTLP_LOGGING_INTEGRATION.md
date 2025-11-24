@@ -380,6 +380,161 @@ OTLPHandler batches logs for efficiency:
 - **Enabled**: ~1-2ms per log (batching + async)
 - **Network**: Async, doesn't block application
 
+## Running with ASGI Servers (FastAPI, FastMCP)
+
+### Critical: Use uvicorn for OTLP Logging
+
+When running ASGI applications (FastAPI, FastMCP, Starlette), you **must** use uvicorn (or another ASGI server) to ensure OTLP logs are properly sent. The OTLP handler uses background threads and batching, which requires proper server lifecycle management.
+
+**✅ Correct - Using uvicorn:**
+
+```python
+# mcp_server.py or fastapi_app.py
+import uvicorn
+from core_lib.config import initialize_settings
+from your_app import app
+
+# Initialize settings with setup_logging=True
+settings = initialize_settings(setup_logging=True)
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_config=None,  # CRITICAL: Disable uvicorn's logging config
+        log_level=settings.app.log_level.lower()
+    )
+```
+
+**❌ Incorrect - Using app.run() directly:**
+
+```python
+# Don't do this for OTLP logging
+app.run()  # Logs may be batched but never flushed
+```
+
+### Key Configuration
+
+1. **Disable uvicorn's log_config:**
+   ```python
+   uvicorn.run(
+       app,
+       log_config=None,  # Preserves your OTLP handler setup
+   )
+   ```
+
+2. **Flush logs on shutdown:**
+   ```python
+   from core_lib.tracing.logger import flush_logging
+   import atexit
+   
+   # Register flush on exit
+   atexit.register(flush_logging)
+   ```
+
+3. **Explicit flush before server start:**
+   ```python
+   logger.info("Starting server")
+   flush_logging()  # Ensure initialization logs are sent
+   
+   uvicorn.run(app, ...)
+   ```
+
+### Complete FastAPI Example
+
+```python
+from fastapi import FastAPI
+from core_lib.config import initialize_settings, Settings
+from core_lib.tracing.logger import flush_logging, get_module_logger
+import atexit
+import uvicorn
+
+# Initialize settings and logging
+settings = initialize_settings(settings_class=Settings, setup_logging=True)
+logger = get_module_logger()
+
+# Register cleanup
+atexit.register(flush_logging)
+
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    logger.info("Root endpoint accessed")
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    logger.info("Starting FastAPI server")
+    flush_logging()
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_config=None,  # Don't override our OTLP logging
+        log_level=settings.app.log_level.lower()
+    )
+```
+
+### Complete FastMCP Example
+
+```python
+from fastmcp import FastMCP
+from core_lib.config import initialize_settings, Settings
+from core_lib.tracing.logger import flush_logging, get_module_logger
+import atexit
+import uvicorn
+
+# Initialize settings and logging
+settings = initialize_settings(settings_class=Settings, setup_logging=True)
+logger = get_module_logger()
+
+# Register cleanup
+atexit.register(flush_logging)
+
+app = FastMCP("My MCP Server")
+
+@app.tool()
+def my_tool(query: str) -> str:
+    logger.info(f"Tool called with query: {query}")
+    return "result"
+
+if __name__ == "__main__":
+    logger.info("Starting MCP server")
+    flush_logging()
+    
+    # Create ASGI app from FastMCP
+    mcp_asgi_app = app.http_app(path="/mcp")
+    
+    # Run with uvicorn
+    uvicorn.run(
+        mcp_asgi_app,
+        host="0.0.0.0",
+        port=9980,
+        log_config=None,  # Preserve OTLP logging setup
+        log_level=settings.app.log_level.lower()
+    )
+```
+
+### Why uvicorn is Required
+
+The OTLP handler batches logs and sends them:
+- When 100 records accumulate, OR
+- After 5 seconds timeout, OR
+- On explicit flush/shutdown
+
+Without uvicorn's proper lifecycle management:
+- Batched logs may never be sent
+- Background threads may not be cleaned up properly
+- Shutdown hooks may not execute
+
+Using uvicorn ensures:
+- Proper ASGI application lifecycle
+- Graceful shutdown with cleanup
+- Background threads are managed correctly
+- atexit handlers execute reliably
+
 ## Troubleshooting
 
 ### Logs Not Appearing in OpenSearch
