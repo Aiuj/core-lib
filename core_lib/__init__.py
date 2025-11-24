@@ -22,7 +22,7 @@ from .llm import (
     create_llm_client, create_gemini_client, create_ollama_client, 
     create_openai_client, create_client_from_env, clean_and_parse_json_response
 )
-from .utils import LanguageUtils
+from .utils import LanguageUtils, HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check
 from .tools import ExcelManager
 
 # New settings management system
@@ -40,7 +40,7 @@ from .config import (
 from .api_utils import (
     generate_time_key, verify_time_key, TimeBasedAuthError,
     verify_mcp_auth, get_auth_headers, get_auth_env_vars, MCPAuthError,
-    APIClient
+    APIClient, run_uvicorn_server, run_uvicorn_from_settings
 )
 
 __all__ = [
@@ -102,6 +102,10 @@ __all__ = [
     # Utils
     "LanguageUtils",
     "AppSettings",
+    "HealthChecker",
+    "HealthCheckResult",
+    "HealthStatus",
+    "create_lazy_check",
     
     # Tools
     "ExcelManager",
@@ -139,6 +143,8 @@ __all__ = [
     "get_auth_env_vars",
     "MCPAuthError",
     "APIClient",
+    "run_uvicorn_server",
+    "run_uvicorn_from_settings",
     
     "__version__",
 ]
