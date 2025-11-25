@@ -25,6 +25,16 @@
 				"$pytest-stylish"
 			],
 			"group": "test"
+		},
+		{
+			"label": "Run core-lib tests",
+			"type": "shell",
+			"command": "pytest",
+			"args": [
+				"-q"
+			],
+			"isBackground": false,
+			"group": "test"
 		}
 	]
 }

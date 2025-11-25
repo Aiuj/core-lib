@@ -376,7 +376,7 @@ def setup_logging(
 
         # Noise reduction - suppress verbose logging from third-party libraries
         # and infrastructure components (HTTP servers, DB drivers, etc.)
-        for noisy in ["urllib3", "requests", "opensearch", "psycopg2", "redis", "uvicorn", "uvicorn.error", "uvicorn.access", "google_genai"]:
+        for noisy in ["urllib3", "requests", "opensearch", "psycopg2", "redis", "uvicorn", "uvicorn.error", "uvicorn.access", "google_genai", "mcp", "mcp.client", "mcp.client.streamable_http", "httpx", "httpcore", "ddgs", "duckduckgo_search"]:
             try:
                 logging.getLogger(noisy).setLevel(logging.WARNING)
             except Exception:

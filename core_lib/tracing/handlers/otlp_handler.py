@@ -9,6 +9,10 @@ The handler uses the standard OTLP/HTTP protocol on port 4318 by default.
 References:
     - OTLP specification: https://opentelemetry.io/docs/specs/otlp/
     - Log data model: https://opentelemetry.io/docs/specs/otel/logs/data-model/
+
+Debug Mode:
+    Set OTLP_DEBUG=true to enable verbose output to stderr for troubleshooting
+    log delivery issues.
 """
 
 import logging
@@ -21,6 +25,10 @@ from queue import Queue
 import sys
 import threading
 import atexit
+import os
+
+# Check for debug mode at module load
+_OTLP_DEBUG = os.environ.get("OTLP_DEBUG", "").lower() in ("true", "1", "yes")
 
 
 class OTLPHandler(logging.Handler):
@@ -257,6 +265,8 @@ class _OTLPWorkerHandler(logging.Handler):
             record: The log record to process
         """
         if self._shutdown:
+            if _OTLP_DEBUG:
+                print(f"OTLP: Ignoring log (handler shutdown): {record.getMessage()[:50]}...", file=sys.stderr)
             return
             
         try:
@@ -264,9 +274,14 @@ class _OTLPWorkerHandler(logging.Handler):
                 # Initialize timer on first log (not at init, to avoid startup delays)
                 if self._last_send is None:
                     self._last_send = time.time()
+                    if _OTLP_DEBUG:
+                        print(f"OTLP: First log received, timer initialized", file=sys.stderr)
                 
                 otlp_record = self._convert_to_otlp(record)
                 self._batch.append(otlp_record)
+                
+                if _OTLP_DEBUG:
+                    print(f"OTLP: Queued log [{record.levelname}] from {record.name}: batch size now {len(self._batch)}", file=sys.stderr)
                 
                 # Send if batch is full
                 if len(self._batch) >= self._batch_size:
@@ -315,13 +330,17 @@ class _OTLPWorkerHandler(logging.Handler):
         # Add any extra attributes from the record (including LoggingContext metadata)
         if hasattr(record, "extra_attrs"):
             for key, value in record.extra_attrs.items():
-                attr_value = {"stringValue": str(value)}
-                if isinstance(value, int):
+                # Check bool BEFORE int because bool is a subclass of int in Python
+                if isinstance(value, bool):
+                    # OTLP expects boolValue as actual boolean, not string
+                    attr_value = {"boolValue": value}
+                elif isinstance(value, int):
                     attr_value = {"intValue": str(value)}
                 elif isinstance(value, float):
                     attr_value = {"doubleValue": value}
-                elif isinstance(value, bool):
-                    attr_value = {"boolValue": value}
+                else:
+                    # Default: convert to string
+                    attr_value = {"stringValue": str(value)}
                 otlp_record["attributes"].append({"key": key, "value": attr_value})
         
         return otlp_record
@@ -356,8 +375,12 @@ class _OTLPWorkerHandler(logging.Handler):
             return
         
         batch_to_send = self._batch[:]
+        batch_count = len(batch_to_send)
         self._batch = []
         self._last_send = time.time()
+        
+        if _OTLP_DEBUG:
+            print(f"OTLP: Sending batch of {batch_count} log records to {self.endpoint}", file=sys.stderr)
         
         # Make network call (safe because we copied the batch)
         try:
@@ -398,6 +421,8 @@ class _OTLPWorkerHandler(logging.Handler):
                     f"OTLP export failed: {response.status_code} - {response.text}",
                     file=sys.stderr,
                 )
+            elif _OTLP_DEBUG:
+                print(f"OTLP: Successfully sent {batch_count} log records (status: {response.status_code})", file=sys.stderr)
             
         except requests.exceptions.Timeout:
             print(f"OTLP send timeout (logs may be lost)", file=sys.stderr)

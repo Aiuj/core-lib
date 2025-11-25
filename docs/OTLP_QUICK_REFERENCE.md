@@ -184,6 +184,43 @@ All work simultaneously!
 - Check Docker network connectivity
 - For dev: use `otlp_insecure=True`
 
+## Disabling OTLP During Tests
+
+When running tests, you typically don't want logs sent to your OTLP collector. Disable OTLP in your test configuration:
+
+**In `conftest.py` (pytest):**
+
+```python
+import os
+
+# Disable OTLP export during tests - must be set BEFORE importing settings
+os.environ["OTLP_ENABLED"] = "false"
+
+# Then initialize settings
+from core_lib.config import initialize_settings
+from config.settings import Settings
+initialize_settings(settings_class=Settings, force=True)
+```
+
+**Important:** Set the environment variable *before* importing/initializing settings, otherwise the OTLP handler may already be configured.
+
+**Alternative - pytest.ini:**
+
+```ini
+[pytest]
+env =
+    OTLP_ENABLED=false
+```
+
+(Requires `pytest-env` plugin)
+
+**Alternative - Environment variable:**
+
+```bash
+# Run tests with OTLP disabled
+OTLP_ENABLED=false pytest tests/
+```
+
 ## Full Documentation
 
 - Architecture & setup: `docs/OTLP_LOGGING_INTEGRATION.md`
