@@ -58,6 +58,7 @@ class ServiceType(str, Enum):
     LLM = "llm"
     EMBEDDING = "embedding"
     OCR = "ocr"
+    SEARCH = "search"
 
 
 def calculate_llm_cost(
@@ -375,11 +376,86 @@ def log_ocr_usage(
     )
 
 
+def log_search_usage(
+    provider: str,
+    query: str,
+    num_results: int,
+    max_results: int,
+    latency_ms: Optional[float] = None,
+    cache_hit: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Log search usage to OpenTelemetry/OpenSearch.
+    
+    This function creates a structured log event with search usage metrics that
+    can be queried in OpenSearch dashboards for usage analysis and monitoring.
+    
+    Args:
+        provider: Provider name (e.g., "duckduckgo", "serpapi", "tavily", "ollama")
+        query: Search query string (truncated for privacy)
+        num_results: Number of results returned
+        max_results: Maximum results requested
+        latency_ms: Request latency in milliseconds
+        cache_hit: Whether results were served from cache
+        metadata: Additional context (user_id, session_id, etc.)
+        error: Error message if the request failed
+        
+    Example:
+        ```python
+        log_search_usage(
+            provider="duckduckgo",
+            query="python asyncio tutorial",
+            num_results=10,
+            max_results=10,
+            latency_ms=350,
+            cache_hit=False
+        )
+        ```
+    """
+    # Truncate query for privacy (keep first 100 chars)
+    query_truncated = query[:100] if len(query) > 100 else query
+    query_length = len(query)
+    
+    event = {
+        "service.type": ServiceType.SEARCH.value,
+        "service.provider": provider,
+        "search.query_length": query_length,
+        "search.num_results": num_results,
+        "search.max_results": max_results,
+        "search.cache_hit": str(cache_hit).lower(),
+    }
+    
+    if latency_ms is not None:
+        event["latency_ms"] = latency_ms
+        if num_results and latency_ms > 0:
+            event["results_per_second"] = (num_results / latency_ms) * 1000
+    
+    if metadata:
+        for key, value in metadata.items():
+            if key not in event:
+                event[f"custom.{key}"] = value
+    
+    if error:
+        event["error"] = error
+        event["status"] = "error"
+    else:
+        event["status"] = "success"
+    
+    cache_str = " (cached)" if cache_hit else ""
+    latency_str = f", {latency_ms:.0f}ms" if latency_ms else ""
+    logger.info(
+        f"Search usage: {provider} - '{query_truncated}' -> {num_results}/{max_results} results{cache_str}{latency_str}",
+        extra={"extra_attrs": event}
+    )
+
+
 __all__ = [
     "ServiceType",
     "log_llm_usage",
     "log_embedding_usage",
     "log_ocr_usage",
+    "log_search_usage",
     "calculate_llm_cost",
     "calculate_embedding_cost",
 ]

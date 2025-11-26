@@ -376,7 +376,25 @@ def setup_logging(
 
         # Noise reduction - suppress verbose logging from third-party libraries
         # and infrastructure components (HTTP servers, DB drivers, etc.)
-        for noisy in ["urllib3", "requests", "opensearch", "psycopg2", "redis", "uvicorn", "uvicorn.error", "uvicorn.access", "google_genai", "mcp", "mcp.client", "mcp.client.streamable_http", "mcp.server", "mcp.server.streamable_http", "mcp.server.sse", "mcp.server.stdio", "fastmcp", "httpx", "httpcore", "ddgs", "duckduckgo_search"]:
+        # These are set to WARNING to reduce log noise while still showing errors
+        noisy_loggers = [
+            # HTTP clients and servers
+            "urllib3", "requests", "aiohttp", "httpx", "httpcore", "h11",
+            "uvicorn", "uvicorn.error", "uvicorn.access",
+            # Database and cache clients
+            "opensearch", "psycopg2", "redis", "asyncpg", "elasticsearch",
+            # AI/ML providers
+            "google_genai", "ollama", "serpapi", "tavily",
+            # MCP protocol
+            "mcp", "mcp.client", "mcp.client.streamable_http",
+            "mcp.server", "mcp.server.streamable_http", "mcp.server.sse", "mcp.server.stdio",
+            "fastmcp",
+            # Search providers
+            "ddgs", "duckduckgo_search",
+            # Other common noisy libraries
+            "watchfiles", "watchgod", "asyncio", "concurrent.futures",
+        ]
+        for noisy in noisy_loggers:
             try:
                 logging.getLogger(noisy).setLevel(logging.WARNING)
             except Exception:
