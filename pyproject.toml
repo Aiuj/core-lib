@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "core-lib"
-version = "0.3.0"
+version = "0.3.3"
 description = "Comprehensive Python library providing LLM clients, embeddings, caching, job queues, API utilities, centralized logging with OTLP support, and unified settings management for AI-powered applications"
 authors = [{ name = "Julien Nadaud", email = "nad.julien@gmail.com" }]
 readme = "README.md"
