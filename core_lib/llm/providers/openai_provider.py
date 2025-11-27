@@ -238,7 +238,7 @@ class OpenAIProvider(BaseProvider):
                 )
             except Exception as e:
                 # Service usage logging should never break the call
-                logger.debug(f"Failed to log LLM usage: {e}")
+                logger.warning(f"Failed to log LLM usage: {e}")
 
             # If structured_output requested, attempt to validate
             if resp_format is not None and structured_output is not None:

@@ -187,7 +187,7 @@ class OllamaProvider(BaseProvider):
                     search_grounding=use_search_grounding,
                 )
             except Exception as e:
-                logger.debug(f"Failed to log LLM usage: {e}")
+                logger.warning(f"Failed to log LLM usage: {e}")
 
             # If structured_output requested, attempt to validate
             if resp_format is not None and structured_output is not None:

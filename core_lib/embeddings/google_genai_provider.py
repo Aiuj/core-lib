@@ -137,7 +137,7 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
                     metadata={"task_type": str(self.task_type) if self.task_type else None},
                 )
             except Exception as e:
-                logger.debug(f"Failed to log embedding usage: {e}")
+                logger.warning(f"Failed to log embedding usage: {e}")
             
             return embeddings
             

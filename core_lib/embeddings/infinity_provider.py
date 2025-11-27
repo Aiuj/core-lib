@@ -150,7 +150,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
                     latency_ms=self.embedding_time_ms,
                 )
             except Exception as e:
-                logger.debug(f"Failed to log embedding usage: {e}")
+                logger.warning(f"Failed to log embedding usage: {e}")
             
             return embeddings
             

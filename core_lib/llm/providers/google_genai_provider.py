@@ -541,10 +541,16 @@ class GoogleGenAIProvider(BaseProvider):
 
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)
             try:
-                usage_metadata = getattr(resp, "usage_metadata", {}) or {}
-                input_tokens = getattr(usage_metadata, "prompt_token_count", None) or usage_metadata.get("prompt_token_count")
-                output_tokens = getattr(usage_metadata, "candidates_token_count", None) or usage_metadata.get("candidates_token_count")
-                total_tokens = getattr(usage_metadata, "total_token_count", None) or usage_metadata.get("total_token_count")
+                usage_metadata = getattr(resp, "usage_metadata", None)
+                input_tokens = None
+                output_tokens = None
+                total_tokens = None
+                
+                if usage_metadata is not None:
+                    # usage_metadata is a GenerateContentResponseUsageMetadata object, not a dict
+                    input_tokens = getattr(usage_metadata, "prompt_token_count", None)
+                    output_tokens = getattr(usage_metadata, "candidates_token_count", None)
+                    total_tokens = getattr(usage_metadata, "total_token_count", None)
                 
                 log_llm_usage(
                     provider="google-gemini",
@@ -558,8 +564,8 @@ class GoogleGenAIProvider(BaseProvider):
                     metadata={"single_turn": is_single_turn},
                 )
             except Exception as e:
-                # Service usage logging should never break the call
-                logger.debug(f"Failed to log LLM usage: {e}")
+                # Service usage logging should never break the call, but log warning for debugging
+                logger.warning(f"Failed to log LLM usage: {e}")
 
             if structured_output is not None:
                 # Prefer SDK-native parsed output, but ensure the return value is JSON-serializable
