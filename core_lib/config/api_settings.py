@@ -47,6 +47,10 @@ class ApiSettings(BaseSettings):
     # Core app settings component
     app: AppSettings = field(default_factory=lambda: AppSettings())
     
+    # Default server host and port for API servers (configurable via SERVER_HOST/SERVER_PORT env vars)
+    server_host: str = "0.0.0.0"
+    server_port: int = 8080
+    
     # Optional service configurations for API servers
     cache: Optional[CacheSettings] = None
     tracing: Optional[TracingSettings] = None
@@ -127,10 +131,22 @@ class ApiSettings(BaseSettings):
             except Exception:
                 enable_fastapi_server = False
         
+        # Parse server_host and server_port from environment
+        server_host = overrides.get("server_host")
+        if server_host is None:
+            server_host = EnvParser.get_env("SERVER_HOST", default="0.0.0.0")
+        
+        server_port = overrides.get("server_port")
+        if server_port is None:
+            server_port = EnvParser.get_env("SERVER_PORT", env_type=int, default=8080)
+        
         # Build the settings dict
         settings_dict = {
             # Core app settings
             "app": app_settings,
+            # Server host and port
+            "server_host": server_host,
+            "server_port": server_port,
             # Service configurations
             "cache": cache_config,
             "tracing": tracing_config,
@@ -343,6 +359,9 @@ class ApiSettings(BaseSettings):
             "environment": self.app.environment,
             "log_level": self.app.log_level,
             "project_root": str(self.app.project_root) if self.app.project_root else None,
+            # Server host and port
+            "server_host": self.server_host,
+            "server_port": self.server_port,
             # Service configurations
             "cache": self.cache.as_dict() if self.cache else None,
             "tracing": self.tracing.as_dict() if self.tracing else None,
