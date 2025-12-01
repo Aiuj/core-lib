@@ -302,11 +302,11 @@ class APIClient:
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error: {str(e)}"
+            error_msg = f"Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request: {str(e)}"
+            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -378,11 +378,11 @@ class APIClient:
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error: {str(e)}"
+            error_msg = f"Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request: {str(e)}"
+            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -444,11 +444,11 @@ class APIClient:
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error: {str(e)}"
+            error_msg = f"Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request: {str(e)}"
+            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -510,11 +510,11 @@ class APIClient:
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error: {str(e)}"
+            error_msg = f"Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request: {str(e)}"
+            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -574,11 +574,11 @@ class APIClient:
             logger.error(error_msg)
             return False, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error: {str(e)}"
+            error_msg = f"Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
         except Exception as e:
-            error_msg = f"Error downloading file: {str(e)}"
+            error_msg = f"Error downloading file from {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
     
