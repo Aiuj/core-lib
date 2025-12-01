@@ -381,6 +381,7 @@ def setup_logging(
             # HTTP clients and servers
             "urllib3", "requests", "aiohttp", "httpx", "httpcore", "h11",
             "uvicorn", "uvicorn.error", "uvicorn.access",
+            "primp", "primp.client", "primp.response",  # HTTP client used by duckduckgo-search
             # Database and cache clients
             "opensearch", "psycopg2", "redis", "asyncpg", "elasticsearch",
             # AI/ML providers
