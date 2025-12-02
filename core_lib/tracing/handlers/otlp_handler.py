@@ -204,6 +204,7 @@ class OTLPHandler(logging.Handler):
                 self._queue, self._worker_handler, respect_handler_level=False
             )
             self._listener.start()
+            atexit.register(self.stop)
     
     def stop(self) -> None:
         """Stop the background worker thread and flush pending logs."""
@@ -213,6 +214,10 @@ class OTLPHandler(logging.Handler):
         if self._worker_handler is not None:
             self._worker_handler.close()
             self._worker_handler = None
+        try:
+            atexit.unregister(self.stop)
+        except AttributeError:
+            pass
     
     def flush(self) -> None:
         """Flush any pending logs immediately (useful before shutdown)."""
