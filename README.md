@@ -8,6 +8,7 @@
 
 - Reusable utility functions
 - **🆕 Embeddings System** - Multi-provider embeddings with automatic failover (OpenAI, Google GenAI, Infinity, Ollama, Local)
+- **🆕 Reranker System** - Multi-provider semantic reranking for improved search quality (Infinity, Cohere, Local)
 - **🆕 APIClient Base Class** - Reusable HTTP client with built-in authentication support
 - **🆕 Centralized Logging** - Unified logging with console, file, OTLP, and OVH LDP handlers
 - Redis-based caching system with configurable TTL
@@ -684,6 +685,61 @@ embeddings = client.generate_embeddings(["text1", "text2", "text3"])
 
 See **[Embeddings Guide](docs/EMBEDDINGS_GUIDE.md)** for complete documentation and **[Embeddings Quick Reference](docs/EMBEDDINGS_QUICK_REFERENCE.md)** for quick start.
 
+### Reranker (New!)
+
+Improve search quality with semantic reranking using cross-encoder models:
+
+```python
+from core_lib.reranker import create_reranker_client
+
+# Auto-detect from environment
+client = create_reranker_client()
+
+# Rerank documents by relevance to query
+results = client.rerank(
+    query="What is machine learning?",
+    documents=[
+        "Machine learning is a subset of AI.",
+        "Python is a programming language.",
+        "Deep learning uses neural networks.",
+    ],
+    top_k=2
+)
+
+# Results sorted by score (highest first)
+for result in results:
+    print(f"[{result.index}] Score: {result.score:.4f} - {result.document}")
+
+# Provider-specific creation
+from core_lib.reranker import create_infinity_reranker, create_cohere_reranker
+
+infinity_client = create_infinity_reranker(
+    model="BAAI/bge-reranker-v2-m3",
+    base_url="http://localhost:7997"
+)
+
+cohere_client = create_cohere_reranker(
+    model="rerank-multilingual-v3.0",
+    api_key="your-api-key"
+)
+```
+
+#### Reranker API
+
+- `create_reranker_client(provider=None, **kwargs)`:  
+  Create a reranker client. Auto-detects provider from environment.
+
+- `create_infinity_reranker(model, base_url=None, **kwargs)`:  
+  Create Infinity client for local high-throughput reranking.
+
+- `create_cohere_reranker(model, api_key=None, **kwargs)`:  
+  Create Cohere cloud reranker client.
+
+- `create_local_reranker(model, device=None, **kwargs)`:  
+  Create local reranker using sentence-transformers.
+
+See **[Reranker Guide](docs/RERANKER_GUIDE.md)** for complete documentation and **[Reranker Quick Reference](docs/RERANKER_QUICK_REFERENCE.md)** for quick start.
+
 ### APIClient Base Class
 
 Reusable base class for building HTTP API clients with authentication:
@@ -740,6 +796,8 @@ Detailed documentation is available in the `docs/` directory:
 - **[Settings Singleton](docs/SETTINGS_SINGLETON_QUICK_REF.md)** - Global settings management
 - **[Embeddings Guide](docs/EMBEDDINGS_GUIDE.md)** - 🆕 Complete embeddings documentation with HA setup
 - **[Embeddings Quick Reference](docs/EMBEDDINGS_QUICK_REFERENCE.md)** - 🆕 Quick start for embeddings
+- **[Reranker Guide](docs/RERANKER_GUIDE.md)** - 🆕 Complete reranker documentation
+- **[Reranker Quick Reference](docs/RERANKER_QUICK_REFERENCE.md)** - 🆕 Quick start for reranking
 - **[Infinity Provider](docs/INFINITY_PROVIDER.md)** - 🆕 Local high-throughput embeddings
 - **[APIClient Base Class](docs/API_CLIENT_BASE_CLASS.md)** - 🆕 Reusable HTTP client with auth
 - **[API Authentication](docs/API_AUTH_QUICK_REFERENCE.md)** - 🆕 Time-based HMAC authentication for FastAPI/MCP

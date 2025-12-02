@@ -15,6 +15,13 @@ Always use "uv run" to execute scripts and tests, ensuring the virtual environme
     - `llm/providers/openai_provider.py`: OpenAI/Azure/OpenAI-compatible endpoints via official `openai` SDK. Structured outputs via `response_format`, tool calling; can add web/file search tools when `use_search_grounding=True`.
     - `llm/llm_client.py`: entry point selecting provider by config, normalizes messages, forwards flags, and attaches trace metadata before/after calls.
     - `llm/llm_config.py`: config classes (`GeminiConfig`, `OllamaConfig`, `OpenAIConfig`) with `from_env()` to populate from env vars.
+  - `reranker/`: Provider-agnostic reranking for improved search quality.
+    - `reranker/base.py`: base contract with `rerank()` returning `RerankResult` dataclass (index, score, document).
+    - `reranker/infinity_provider.py`: Infinity server for local high-throughput reranking.
+    - `reranker/cohere_provider.py`: Cohere cloud reranking API.
+    - `reranker/local_provider.py`: Local cross-encoder models via sentence-transformers.
+    - `reranker/factory.py`: `create_reranker_client()`, provider-specific helpers, and `RerankerFactory` class.
+    - `reranker/reranker_config.py`: `RerankerSettings` with `from_env()` for env-based configuration.
   - `tracing/`: thin wrapper around Langfuse/OpenTelemetry, plus logging context with `parse_from()`. Use `setup_tracing()` and `add_trace_metadata()`; providers should not import Langfuse directly.
 - Tests live in `tests/` and mock provider classes where possible to avoid network calls.
 
@@ -64,5 +71,6 @@ Always use "uv run" to execute scripts and tests, ensuring the virtual environme
 - Create from env: `from core_lib.llm import create_client_from_env`
 - Explicit providers: `create_gemini_client`, `create_ollama_client`, `create_openai_client`, `create_azure_openai_client`, `create_openai_compatible_client`.
 - Cache: `set_cache`, `cache_get`, `cache_set`; class: `RedisCache`.
+- Reranker: `create_reranker_client`, `create_infinity_reranker`, `create_cohere_reranker`, `create_local_reranker`; class: `RerankerFactory`.
 - Tracing/logging: `parse_from` (from `core_lib.tracing`), `LoggingContext`, `setup_logging`, `setup_tracing`.
 - MCP utils: `get_transport_from_args`.

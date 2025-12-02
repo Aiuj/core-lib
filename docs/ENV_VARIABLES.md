@@ -1,6 +1,6 @@
 # Environment Variables Reference
 
-This file lists all environment variables for configuring LLM clients, embeddings, and logging.
+This file lists all environment variables for configuring LLM clients, embeddings, rerankers, and logging.
 
 ## Embeddings Configuration
 
@@ -46,6 +46,57 @@ export GOOGLE_GENAI_API_KEY=your-key
 - OpenAI: `OPENAI_BASE_URL` > `EMBEDDING_BASE_URL` > default
 
 **See:** [EMBEDDINGS_GUIDE.md](../docs/EMBEDDINGS_GUIDE.md) for detailed configuration guide
+
+## Reranker Configuration
+
+### Basic Reranker Settings
+
+```bash
+export RERANKER_PROVIDER=infinity              # Provider: infinity|cohere|local
+export RERANKER_MODEL=BAAI/bge-reranker-v2-m3  # Model name (multilingual default)
+export RERANKER_TIMEOUT=30                     # Request timeout in seconds
+export RERANKER_CACHE_DURATION_SECONDS=3600    # Cache duration (0 to disable)
+export RERANKER_DEFAULT_TOP_K=10               # Default number of results
+export RERANKER_SCORE_THRESHOLD=               # Optional minimum score threshold
+```
+
+### Infinity Reranker (Local Server)
+
+```bash
+# Server URL (shared with embeddings Infinity server)
+export INFINITY_BASE_URL=http://localhost:7997
+
+# Or use dedicated reranker URL (takes precedence)
+export INFINITY_RERANK_URL=http://reranker:7997
+
+# Authentication (optional)
+export INFINITY_TOKEN=your-auth-token
+# Or use reranker-specific token
+export RERANKER_TOKEN=your-auth-token
+
+# Timeout
+export INFINITY_TIMEOUT=30
+```
+
+### Cohere Reranker (Cloud API)
+
+```bash
+export RERANKER_PROVIDER=cohere
+export COHERE_API_KEY=your-cohere-api-key
+export RERANKER_MODEL=rerank-multilingual-v3.0  # or rerank-english-v3.0
+```
+
+### Local Reranker (sentence-transformers)
+
+```bash
+export RERANKER_PROVIDER=local
+export RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+export RERANKER_DEVICE=auto                     # cpu, cuda, or auto
+export RERANKER_CACHE_DIR=/path/to/models       # Optional model cache directory
+export RERANKER_TRUST_REMOTE_CODE=false         # Trust remote code from HuggingFace
+```
+
+**See:** [RERANKER_GUIDE.md](./RERANKER_GUIDE.md) for detailed configuration guide
 
 ## Ollama Configuration
 

@@ -43,6 +43,14 @@ from .api_utils import (
     APIClient, run_uvicorn_server, run_uvicorn_from_settings
 )
 
+# Reranker support
+from .reranker import (
+    BaseRerankerClient, RerankerError, RerankResult,
+    RerankerSettings, reranker_settings,
+    RerankerFactory, create_reranker_client, create_infinity_reranker,
+    create_cohere_reranker, create_local_reranker, get_reranker_client
+)
+
 __all__ = [
     # Cache
     "create_cache",
@@ -145,6 +153,19 @@ __all__ = [
     "APIClient",
     "run_uvicorn_server",
     "run_uvicorn_from_settings",
+    
+    # Reranker
+    "BaseRerankerClient",
+    "RerankerError",
+    "RerankResult",
+    "RerankerSettings",
+    "reranker_settings",
+    "RerankerFactory",
+    "create_reranker_client",
+    "create_infinity_reranker",
+    "create_cohere_reranker",
+    "create_local_reranker",
+    "get_reranker_client",
     
     "__version__",
 ]
