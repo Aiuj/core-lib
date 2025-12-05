@@ -53,6 +53,7 @@ class APIClient:
         api_key_header_name: str = "x-api-key",
         timeout: float = 30.0,
         verify_ssl: bool = True,
+        service_name: Optional[str] = None,
     ):
         """
         Initialize the API client.
@@ -66,6 +67,7 @@ class APIClient:
             api_key_header_name: HTTP header name for legacy API key (default: x-api-key)
             timeout: Default request timeout in seconds
             verify_ssl: Whether to verify SSL certificates (set False for self-signed certs)
+            service_name: Human-readable name for this service (for logging)
         """
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
@@ -75,10 +77,21 @@ class APIClient:
         self.api_key_header_name = api_key_header_name
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        self.service_name = service_name or self._derive_service_name(base_url)
         
         # Determine authentication method for logging
         auth_method = self._get_auth_method()
-        logger.info(f"Initialized API client for {base_url} with auth: {auth_method}")
+        logger.info(f"Initialized API client for {self.service_name} ({base_url}) with auth: {auth_method}")
+    
+    def _derive_service_name(self, base_url: str) -> str:
+        """Derive a service name from the URL if not provided."""
+        # Extract host:port from URL for use as fallback service name
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname or "unknown"
+        except Exception:
+            return "unknown"
     
     def _get_auth_method(self) -> str:
         """Get the current authentication method as a string."""
@@ -294,19 +307,19 @@ class APIClient:
                     return True, response.content, None
                     
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
+            error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, None, error_msg
         except httpx.TimeoutException as e:
-            error_msg = f"Request timed out after {timeout or self.timeout}s: {str(e)}"
+            error_msg = f"[{self.service_name}] Request timed out after {timeout or self.timeout}s: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -370,19 +383,19 @@ class APIClient:
                     return True, response.content, None
                     
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
+            error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, None, error_msg
         except httpx.TimeoutException as e:
-            error_msg = f"Request timed out after {timeout or self.timeout}s: {str(e)}"
+            error_msg = f"[{self.service_name}] Request timed out after {timeout or self.timeout}s: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -436,19 +449,19 @@ class APIClient:
                     return True, response.content, None
                     
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
+            error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, None, error_msg
         except httpx.TimeoutException as e:
-            error_msg = f"Request timed out after {timeout or self.timeout}s: {str(e)}"
+            error_msg = f"[{self.service_name}] Request timed out after {timeout or self.timeout}s: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -502,19 +515,19 @@ class APIClient:
                     return True, response.content, None
                     
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
+            error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, None, error_msg
         except httpx.TimeoutException as e:
-            error_msg = f"Request timed out after {timeout or self.timeout}s: {str(e)}"
+            error_msg = f"[{self.service_name}] Request timed out after {timeout or self.timeout}s: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
         except Exception as e:
-            error_msg = f"Unexpected error during request to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Unexpected error during request to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, None, error_msg
     
@@ -566,19 +579,19 @@ class APIClient:
                 return True, None
                 
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
+            error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, error_msg
         except httpx.TimeoutException as e:
-            error_msg = f"Request timed out after {timeout or self.timeout}s: {str(e)}"
+            error_msg = f"[{self.service_name}] Request timed out after {timeout or self.timeout}s: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
         except httpx.RequestError as e:
-            error_msg = f"Connection error to {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Connection error to {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
         except Exception as e:
-            error_msg = f"Error downloading file from {self.base_url}: {str(e)}"
+            error_msg = f"[{self.service_name}] Error downloading file from {self.base_url}: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
     
