@@ -235,6 +235,7 @@ class OpenAIProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    host=self.config.azure_endpoint or self.config.base_url or "https://api.openai.com",
                 )
             except Exception as e:
                 # Service usage logging should never break the call

@@ -52,6 +52,7 @@ def test_log_llm_usage_success(mock_logger):
         structured=False,
         has_tools=True,
         search_grounding=False,
+        host="https://api.openai.com",
     )
     
     # Verify logger.info was called
@@ -79,6 +80,7 @@ def test_log_llm_usage_success(mock_logger):
     assert attrs['features.tools'] == 'true'
     assert attrs['status'] == 'success'
     assert 'cost_usd' in attrs
+    assert attrs['gen_ai.host'] == 'https://api.openai.com'
 
 
 @patch('core_lib.tracing.service_usage.logger')
@@ -109,6 +111,7 @@ def test_log_embedding_usage_success(mock_logger):
         num_texts=10,
         embedding_dim=1536,
         latency_ms=250,
+        host="https://api.openai.com",
     )
     
     assert mock_logger.info.called
@@ -131,6 +134,7 @@ def test_log_embedding_usage_success(mock_logger):
     assert attrs['latency_ms'] == 250
     assert attrs['status'] == 'success'
     assert 'cost_usd' in attrs
+    assert attrs['gen_ai.host'] == 'https://api.openai.com'
 
 
 @patch('core_lib.tracing.service_usage.logger')
@@ -227,3 +231,77 @@ def test_tokens_per_second_calculation():
         
         # 150 tokens / 1.5 seconds = 100 tokens/second
         assert attrs['tokens_per_second'] == pytest.approx(100.0, rel=1e-3)
+
+
+@patch('core_lib.tracing.service_usage.logger')
+def test_log_llm_usage_cost_always_present(mock_logger):
+    """Test that cost_usd is always present even for unknown models."""
+    log_llm_usage(
+        provider="custom",
+        model="unknown-model",
+        input_tokens=100,
+        output_tokens=50,
+    )
+    
+    call_args = mock_logger.info.call_args
+    extra = call_args[1]['extra']
+    attrs = extra['extra_attrs']
+    
+    # cost_usd should always be present, even if 0
+    assert 'cost_usd' in attrs
+    assert attrs['cost_usd'] == 0.0
+
+
+@patch('core_lib.tracing.service_usage.logger')
+def test_log_llm_usage_without_host(mock_logger):
+    """Test that host is optional and not included when not provided."""
+    log_llm_usage(
+        provider="openai",
+        model="gpt-4",
+        input_tokens=100,
+        output_tokens=50,
+    )
+    
+    call_args = mock_logger.info.call_args
+    extra = call_args[1]['extra']
+    attrs = extra['extra_attrs']
+    
+    # gen_ai.host should not be present when not provided
+    assert 'gen_ai.host' not in attrs
+
+
+@patch('core_lib.tracing.service_usage.logger')
+def test_log_embedding_usage_cost_always_present(mock_logger):
+    """Test that cost_usd is always present even for unknown models."""
+    log_embedding_usage(
+        provider="custom",
+        model="unknown-model",
+        input_tokens=500,
+        num_texts=10,
+    )
+    
+    call_args = mock_logger.info.call_args
+    extra = call_args[1]['extra']
+    attrs = extra['extra_attrs']
+    
+    # cost_usd should always be present, even if 0
+    assert 'cost_usd' in attrs
+    assert attrs['cost_usd'] == 0.0
+
+
+@patch('core_lib.tracing.service_usage.logger')
+def test_log_embedding_usage_without_host(mock_logger):
+    """Test that host is optional and not included when not provided."""
+    log_embedding_usage(
+        provider="openai",
+        model="text-embedding-3-small",
+        input_tokens=500,
+        num_texts=10,
+    )
+    
+    call_args = mock_logger.info.call_args
+    extra = call_args[1]['extra']
+    attrs = extra['extra_attrs']
+    
+    # gen_ai.host should not be present when not provided
+    assert 'gen_ai.host' not in attrs

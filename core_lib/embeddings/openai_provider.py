@@ -111,6 +111,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
                     num_texts=len(texts),
                     embedding_dim=self.embedding_dim or len(embeddings[0]) if embeddings else None,
                     latency_ms=self.embedding_time_ms,
+                    host=getattr(self.client, '_base_url', None) or "https://api.openai.com",
                 )
             except Exception as e:
                 logger.warning(f"Failed to log embedding usage: {e}")
@@ -129,6 +130,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
                     embedding_dim=self.embedding_dim,
                     latency_ms=self.embedding_time_ms,
                     error=str(e),
+                    host=getattr(self.client, '_base_url', None) or "https://api.openai.com",
                 )
             except Exception:
                 pass

@@ -124,6 +124,7 @@ def log_llm_usage(
     structured: bool = False,
     has_tools: bool = False,
     search_grounding: bool = False,
+    host: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -143,6 +144,8 @@ def log_llm_usage(
         structured: Whether structured output was requested
         has_tools: Whether tool/function calling was used
         search_grounding: Whether search grounding was enabled
+        host: Service host URL (e.g., "http://localhost:11434" for Ollama,
+              "https://api.openai.com" for OpenAI)
         metadata: Additional context (user_id, session_id, etc.) - automatically
                  included from LoggingContext if set
         error: Error message if the request failed
@@ -175,7 +178,11 @@ def log_llm_usage(
         "service.model": model,
         "gen_ai.request.model": model,  # OpenTelemetry semantic convention
         "gen_ai.system": provider,
+        "cost_usd": round(cost, 6),  # Always include cost (0.0 if unknown)
     }
+    
+    if host:
+        event["gen_ai.host"] = host
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
@@ -193,9 +200,6 @@ def log_llm_usage(
         # Calculate tokens per second if we have the data
         if total_tokens and latency_ms > 0:
             event["tokens_per_second"] = (total_tokens / latency_ms) * 1000
-    
-    if cost > 0:
-        event["cost_usd"] = round(cost, 6)
     
     # Feature flags - convert booleans to strings for OTLP compatibility
     event["features.structured_output"] = str(structured).lower()
@@ -231,6 +235,7 @@ def log_embedding_usage(
     num_texts: Optional[int] = None,
     embedding_dim: Optional[int] = None,
     latency_ms: Optional[float] = None,
+    host: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -243,6 +248,8 @@ def log_embedding_usage(
         num_texts: Number of text chunks embedded
         embedding_dim: Embedding dimension
         latency_ms: Request latency in milliseconds
+        host: Service host URL (e.g., "http://localhost:7997" for Infinity,
+              "https://api.openai.com" for OpenAI)
         metadata: Additional context
         error: Error message if the request failed
         
@@ -268,7 +275,11 @@ def log_embedding_usage(
         "service.model": model,
         "gen_ai.request.model": model,
         "gen_ai.system": provider,
+        "cost_usd": round(cost, 6),  # Always include cost (0.0 if unknown)
     }
+    
+    if host:
+        event["gen_ai.host"] = host
     
     if input_tokens is not None:
         event["tokens.input"] = input_tokens
@@ -284,9 +295,6 @@ def log_embedding_usage(
         event["latency_ms"] = latency_ms
         if num_texts and latency_ms > 0:
             event["texts_per_second"] = (num_texts / latency_ms) * 1000
-    
-    if cost > 0:
-        event["cost_usd"] = round(cost, 6)
     
     if metadata:
         for key, value in metadata.items():

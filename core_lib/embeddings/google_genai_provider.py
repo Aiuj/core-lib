@@ -134,6 +134,7 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
                     num_texts=len(texts),
                     embedding_dim=self.embedding_dim or len(embeddings[0]) if embeddings else None,
                     latency_ms=self.embedding_time_ms,
+                    host="https://generativelanguage.googleapis.com",
                     metadata={"task_type": str(self.task_type) if self.task_type else None},
                 )
             except Exception as e:
@@ -153,6 +154,7 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
                     embedding_dim=self.embedding_dim,
                     latency_ms=self.embedding_time_ms,
                     error=str(e),
+                    host="https://generativelanguage.googleapis.com",
                 )
             except Exception:
                 pass

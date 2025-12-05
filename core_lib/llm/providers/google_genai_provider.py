@@ -561,6 +561,7 @@ class GoogleGenAIProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    host=self.config.base_url,
                     metadata={"single_turn": is_single_turn},
                 )
             except Exception as e:

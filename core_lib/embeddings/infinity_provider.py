@@ -148,6 +148,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
                     num_texts=len(texts),
                     embedding_dim=self.embedding_dim or len(embeddings[0]) if embeddings else None,
                     latency_ms=self.embedding_time_ms,
+                    host=self.base_url,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log embedding usage: {e}")
@@ -168,6 +169,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
                     embedding_dim=self.embedding_dim,
                     latency_ms=self.embedding_time_ms,
                     error=error_msg,
+                    host=self.base_url,
                 )
             except Exception:
                 pass

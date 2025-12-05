@@ -421,7 +421,8 @@ def setup_logging(
         _root_logger = logging.getLogger()
         _logger_initialized = True
         _LAST_CONFIG = new_config
-        _root_logger.info(
+        # Use DEBUG level to reduce log noise - initialization is a diagnostic detail
+        _root_logger.debug(
             "Logging initialized", extra={"config": {k: v for k, v in new_config.items() if k != "level"}, "level_int": numeric_level}
         )
 

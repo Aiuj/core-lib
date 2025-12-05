@@ -185,6 +185,7 @@ class OllamaProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    host=self.config.base_url,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")
@@ -228,6 +229,7 @@ class OllamaProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     error=str(e),
+                    host=self.config.base_url,
                 )
             except Exception:
                 pass
