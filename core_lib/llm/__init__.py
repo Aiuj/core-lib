@@ -30,6 +30,7 @@ from .factory import (
     create_azure_openai_client,
     create_openai_compatible_client,
 )
+from .provider_registry import ProviderConfig, ProviderRegistry
 from .json_parser import clean_and_parse_json_response
 
 __all__ = [
@@ -39,6 +40,10 @@ __all__ = [
     "OllamaConfig",
     "OpenAIConfig",
     "LLMClient",
+    
+    # Provider registry (multi-provider configuration)
+    "ProviderConfig",
+    "ProviderRegistry",
     
     # Factory class
     "LLMFactory",

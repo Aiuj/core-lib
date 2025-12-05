@@ -179,10 +179,12 @@ def log_llm_usage(
         "gen_ai.request.model": model,  # OpenTelemetry semantic convention
         "gen_ai.system": provider,
         "cost_usd": round(cost, 6),  # Always include cost (0.0 if unknown)
+        "gen_ai.usage.cost": round(cost, 6),  # Alias for easier querying
     }
     
     if host:
         event["gen_ai.host"] = host
+        event["server.address"] = host  # OTel semantic convention
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
@@ -222,8 +224,9 @@ def log_llm_usage(
     # Log as INFO level with extra_attrs
     # The LoggingContextFilter will automatically add user_id, session_id, etc.
     # The OTLPHandler will send this to OpenSearch
+    host_str = f" ({host})" if host else ""
     logger.info(
-        f"LLM usage: {provider}/{model} - {total_tokens or 0} tokens, ${cost:.6f}",
+        f"LLM usage: {provider}/{model}{host_str} - {total_tokens or 0} tokens, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 
