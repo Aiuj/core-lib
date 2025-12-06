@@ -33,6 +33,15 @@ from .factory import (
 from .provider_registry import ProviderConfig, ProviderRegistry
 from .json_parser import clean_and_parse_json_response
 
+# LangChain adapter - optional import (requires langchain-core)
+try:
+    from .langchain_adapter import CoreLibChatModel, create_langchain_model
+    _LANGCHAIN_AVAILABLE = True
+except ImportError:
+    CoreLibChatModel = None  # type: ignore
+    create_langchain_model = None  # type: ignore
+    _LANGCHAIN_AVAILABLE = False
+
 __all__ = [
     # Core classes
     "LLMConfig", 
@@ -58,6 +67,10 @@ __all__ = [
     "create_openai_client",
     "create_azure_openai_client",
     "create_openai_compatible_client",
+    
+    # LangChain adapter (optional - requires langchain-core)
+    "CoreLibChatModel",
+    "create_langchain_model",
     
     # Utilities
     "clean_and_parse_json_response"
