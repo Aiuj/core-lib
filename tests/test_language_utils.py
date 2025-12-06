@@ -203,5 +203,68 @@ class TestLanguageUtils(unittest.TestCase):
         result = LanguageUtils.detect_most_common_language(samples)
         self.assertIsNone(result)
 
+    # Tests for detect_language_safe method
+    def test_detect_language_safe_english(self):
+        """Test detect_language_safe returns language code for valid English text"""
+        text = "This is a test sentence in English."
+        result = LanguageUtils.detect_language_safe(text)
+        self.assertEqual(result, "en")
+
+    def test_detect_language_safe_french(self):
+        """Test detect_language_safe returns language code for valid French text"""
+        text = "Ceci est une phrase de test en français."
+        result = LanguageUtils.detect_language_safe(text)
+        self.assertEqual(result, "fr")
+
+    def test_detect_language_safe_none_input(self):
+        """Test detect_language_safe returns None for None input"""
+        result = LanguageUtils.detect_language_safe(None)
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_non_string_input(self):
+        """Test detect_language_safe returns None for non-string input"""
+        result = LanguageUtils.detect_language_safe(123)
+        self.assertIsNone(result)
+        result = LanguageUtils.detect_language_safe(['list', 'of', 'strings'])
+        self.assertIsNone(result)
+        result = LanguageUtils.detect_language_safe({'dict': 'value'})
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_empty_string(self):
+        """Test detect_language_safe returns None for empty string"""
+        result = LanguageUtils.detect_language_safe("")
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_whitespace_only(self):
+        """Test detect_language_safe returns None for whitespace-only string"""
+        result = LanguageUtils.detect_language_safe("   \n\t   ")
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_short_text(self):
+        """Test detect_language_safe returns None for text shorter than min_length"""
+        result = LanguageUtils.detect_language_safe("Hi", min_length=20)
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_custom_min_length(self):
+        """Test detect_language_safe with custom min_length"""
+        short_text = "Hello world"  # 11 chars
+        result = LanguageUtils.detect_language_safe(short_text, min_length=5)
+        self.assertEqual(result, "en")
+        result = LanguageUtils.detect_language_safe(short_text, min_length=50)
+        self.assertIsNone(result)
+
+    def test_detect_language_safe_handles_exceptions(self):
+        """Test detect_language_safe gracefully handles exceptions from detect_language"""
+        # Patch detect_language to raise an exception
+        with patch.object(LanguageUtils, 'detect_language', side_effect=RuntimeError("Detection failed")):
+            result = LanguageUtils.detect_language_safe("This is a valid test string")
+            self.assertIsNone(result)
+
+    def test_detect_language_safe_returns_lowercase(self):
+        """Test detect_language_safe returns lowercase language code"""
+        text = "This is a test sentence in English."
+        result = LanguageUtils.detect_language_safe(text)
+        self.assertEqual(result, result.lower())
+
 if __name__ == "__main__":
     unittest.main()

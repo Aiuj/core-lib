@@ -276,6 +276,62 @@ class LanguageUtils:
         return {"lang": best.get("lang"), "score": best.get("score")}
 
     @staticmethod
+    def detect_language_safe(text: Optional[str], min_length: int = 20) -> Optional[str]:
+        """
+        Safely detect the language of text, returning None on any error.
+        
+        This is a convenience wrapper around detect_language that handles edge cases
+        gracefully without raising exceptions. Useful for scenarios where language
+        detection is optional and failures should not interrupt the main workflow.
+        
+        Args:
+            text: Input text to analyze (can be None or any type)
+            min_length: Minimum text length required for detection (default: 20)
+            
+        Returns:
+            ISO 639-1 language code (e.g., 'en', 'fr', 'de') or None if:
+            - text is None, not a string, or too short
+            - detection fails for any reason
+            
+        Examples:
+            >>> LanguageUtils.detect_language_safe("Hello, how are you today?")
+            'en'
+            
+            >>> LanguageUtils.detect_language_safe(None)
+            None
+            
+            >>> LanguageUtils.detect_language_safe("Hi")  # Too short
+            None
+        """
+        # Validate input type
+        if not isinstance(text, str):
+            return None
+        
+        # Check minimum length after stripping
+        stripped = text.strip()
+        if len(stripped) < min_length:
+            return None
+        
+        try:
+            result = LanguageUtils.detect_language(text)
+            if result and result.get('lang'):
+                lang_code = result['lang']
+                if isinstance(lang_code, str):
+                    return lang_code.lower()
+        except (ValueError, RuntimeError):
+            # Expected errors from detect_language (invalid/short text, no results)
+            pass
+        except Exception:
+            # Unexpected errors - log but don't propagate
+            try:
+                from core_lib.tracing.logger import get_module_logger
+                get_module_logger().debug("Unexpected error during language detection")
+            except Exception:
+                pass
+        
+        return None
+
+    @staticmethod
     def detect_most_common_language(texts: List[str], min_confidence: float = 0.5) -> Optional[str]:
         """
         Detect the most common language across multiple text samples.
