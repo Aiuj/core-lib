@@ -3,6 +3,7 @@
 Expose configuration classes and category constants for easy import.
 """
 from .doc_categories import DOC_CATEGORIES, DOC_CATEGORIES_BY_KEY, DOC_CATEGORY_CHOICES
+from .industry_categories import INDUSTRY_CATEGORIES, INDUSTRY_CATEGORIES_BY_KEY, INDUSTRY_CATEGORY_CHOICES
 from .confidentiality_levels import (
     CONFIDENTIALITY_LEVELS,
     CONFIDENTIALITY_LEVEL_NAMES,
