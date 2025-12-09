@@ -30,7 +30,16 @@ from .factory import (
     create_azure_openai_client,
     create_openai_compatible_client,
 )
-from .provider_registry import ProviderConfig, ProviderRegistry
+from .provider_registry import ProviderConfig, ProviderRegistry, substitute_env_vars
+from .provider_health import (
+    ProviderHealthTracker,
+    HealthStatus,
+    get_health_tracker,
+    reset_health_tracker,
+    classify_error,
+    DEFAULT_UNHEALTHY_TTL,
+    FAILURE_TTL_MAP,
+)
 from .json_parser import clean_and_parse_json_response
 
 # LangChain adapter - optional import (requires langchain-core)
@@ -53,6 +62,16 @@ __all__ = [
     # Provider registry (multi-provider configuration)
     "ProviderConfig",
     "ProviderRegistry",
+    "substitute_env_vars",
+    
+    # Provider health tracking (intelligent fallback)
+    "ProviderHealthTracker",
+    "HealthStatus",
+    "get_health_tracker",
+    "reset_health_tracker",
+    "classify_error",
+    "DEFAULT_UNHEALTHY_TTL",
+    "FAILURE_TTL_MAP",
     
     # Factory class
     "LLMFactory",

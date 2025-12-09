@@ -1,6 +1,6 @@
 # LLM Provider Registry Quick Reference
 
-Configure multiple LLM providers with automatic fallback support.
+Configure multiple LLM providers with automatic fallback and health-aware selection.
 
 ## Installation
 
@@ -12,7 +12,38 @@ from core_lib.llm import ProviderRegistry, ProviderConfig
 
 ## Configuration Methods
 
-### 1. Environment Variable (JSON)
+### 1. YAML Configuration File (Recommended)
+
+Create a `llm_providers.yaml` file with environment variable substitution:
+
+```yaml
+# llm_providers.yaml
+providers:
+  - provider: gemini
+    api_key: ${GEMINI_API_KEY}
+    model: ${GEMINI_MODEL:-gemini-2.0-flash}
+    priority: 1
+    tier: standard
+    
+  - provider: ollama
+    host: ${OLLAMA_HOST:-http://localhost:11434}
+    model: llama3.2
+    priority: 2
+    tier: low
+```
+
+Set the environment variable:
+
+```bash
+export LLM_PROVIDERS_FILE=llm_providers.yaml
+export GEMINI_API_KEY=your-api-key
+```
+
+```python
+registry = ProviderRegistry.from_env()
+```
+
+### 2. Environment Variable (JSON)
 
 ```bash
 export LLM_PROVIDERS='[
@@ -25,9 +56,9 @@ export LLM_PROVIDERS='[
 registry = ProviderRegistry.from_env()
 ```
 
-### 2. Legacy Environment Variables
+### 3. Legacy Environment Variables
 
-When `LLM_PROVIDERS` is not set, falls back to individual vars:
+When neither `LLM_PROVIDERS_FILE` nor `LLM_PROVIDERS` is set, falls back to individual vars:
 
 ```bash
 GEMINI_API_KEY=...
@@ -36,13 +67,13 @@ OPENAI_API_KEY=sk-...
 OLLAMA_HOST=http://localhost:11434
 ```
 
-### 3. Configuration File
+### 4. Configuration File (Direct Load)
 
 ```python
-registry = ProviderRegistry.from_file("llm_providers.json")
+registry = ProviderRegistry.from_file("llm_providers.yaml", substitute_env=True)
 ```
 
-### 4. Programmatic
+### 5. Programmatic
 
 ```python
 registry = ProviderRegistry.from_list([
@@ -105,6 +136,37 @@ for client, is_fallback, provider_info in registry.iter_clients():
     except Exception as e:
         print(f"Provider {provider_info['provider']} failed: {e}")
         continue
+```
+
+### Health-Aware Fallback (Recommended)
+
+Automatically skip unhealthy providers and recover after TTL:
+
+```python
+# Get the first healthy client (skips recently failed providers)
+client = registry.get_healthy_client()
+
+# Iterate with health-aware ordering (healthy providers first)
+for client, is_fallback, provider_config in registry.iter_clients_with_fallback():
+    try:
+        response = client.chat(messages)
+        registry.mark_healthy(provider_config)  # Clear any failure state
+        break
+    except Exception as e:
+        registry.mark_unhealthy(provider_config, error=e)  # Auto-classifies error
+        continue
+```
+
+Error types and recovery times:
+- **Rate limit**: 5 minutes
+- **Timeout**: 1 minute
+- **Server error**: 2 minutes  
+- **Auth error**: 1 hour
+- **Quota exceeded**: 1 hour
+
+Configure unhealthy TTL via environment:
+```bash
+export LLM_UNHEALTHY_TTL=300  # Default: 5 minutes
 ```
 
 ### Filter by Intelligence Level

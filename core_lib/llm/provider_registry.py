@@ -3,9 +3,27 @@
 This module provides a flexible way to configure multiple LLM providers with
 their credentials, models, and settings. It supports:
 - Loading from environment variables (JSON or individual vars)
-- Loading from configuration files (JSON/YAML)
+- Loading from configuration files (JSON/YAML) with environment variable substitution
 - Programmatic configuration via dictionaries
 - Automatic fallback selection when primary provider fails
+- Health-aware provider selection with automatic recovery
+
+Configuration Options (in priority order):
+    1. LLM_PROVIDERS_FILE: Path to YAML/JSON configuration file
+    2. LLM_PROVIDERS: JSON array in environment variable
+    3. Individual env vars: GEMINI_API_KEY, OPENAI_API_KEY, etc.
+
+Example YAML configuration file (llm_providers.yaml):
+    providers:
+      - provider: gemini
+        api_key: ${GEMINI_API_KEY}  # Environment variable substitution
+        model: gemini-2.0-flash
+        priority: 1
+        
+      - provider: ollama
+        host: ${OLLAMA_HOST:-http://localhost:11434}  # With default value
+        model: llama3.2
+        priority: 2
 
 Example environment variable (LLM_PROVIDERS):
     [
@@ -17,7 +35,7 @@ Example environment variable (LLM_PROVIDERS):
 Example usage:
     from core_lib.llm.provider_registry import ProviderRegistry
     
-    # Load from environment
+    # Load from environment (auto-detects file or env var)
     registry = ProviderRegistry.from_env()
     
     # Get primary provider client
@@ -26,12 +44,14 @@ Example usage:
     # Get fallback client (next available)
     fallback = registry.get_fallback_client()
     
-    # Iterate through all configured clients
-    for client, is_fallback in registry.iter_clients():
+    # Health-aware iteration with automatic fallback
+    for client, is_fallback in registry.iter_clients_with_fallback():
         try:
             response = client.chat(messages)
+            registry.mark_healthy(client)  # Success - mark as healthy
             break
-        except Exception:
+        except Exception as e:
+            registry.mark_unhealthy(client, error=e)  # Failure - mark for recovery
             continue
 """
 
@@ -39,12 +59,66 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from core_lib import get_module_logger
 
 logger = get_module_logger()
+
+
+# Environment variable substitution pattern: ${VAR} or ${VAR:-default}
+_ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(?::-([^}]*))?\}')
+
+
+def substitute_env_vars(value: Any) -> Any:
+    """Recursively substitute environment variables in a value.
+    
+    Supports patterns:
+        ${VAR_NAME}           - Required variable
+        ${VAR_NAME:-default}  - Variable with default value
+    
+    Args:
+        value: Value to process (str, dict, list, or other)
+        
+    Returns:
+        Value with environment variables substituted
+    
+    Example:
+        >>> os.environ["API_KEY"] = "secret123"
+        >>> substitute_env_vars("${API_KEY}")
+        'secret123'
+        >>> substitute_env_vars("${MISSING:-default_value}")
+        'default_value'
+        >>> substitute_env_vars({"key": "${API_KEY}", "host": "${HOST:-localhost}"})
+        {'key': 'secret123', 'host': 'localhost'}
+    """
+    if isinstance(value, str):
+        def replace_match(match: re.Match) -> str:
+            var_name = match.group(1)
+            default_value = match.group(2)  # May be None
+            
+            env_value = os.getenv(var_name)
+            if env_value is not None:
+                return env_value
+            elif default_value is not None:
+                return default_value
+            else:
+                # Return empty string for missing required vars (log warning)
+                logger.warning(f"Environment variable {var_name} not set and no default provided")
+                return ""
+        
+        return _ENV_VAR_PATTERN.sub(replace_match, value)
+    
+    elif isinstance(value, dict):
+        return {k: substitute_env_vars(v) for k, v in value.items()}
+    
+    elif isinstance(value, list):
+        return [substitute_env_vars(item) for item in value]
+    
+    else:
+        return value
 
 
 @dataclass
@@ -500,27 +574,57 @@ class ProviderRegistry:
         self._clients_cache.clear()
     
     @classmethod
-    def from_env(cls, env_var: str = "LLM_PROVIDERS") -> "ProviderRegistry":
+    def from_env(
+        cls,
+        env_var: str = "LLM_PROVIDERS",
+        file_env_var: str = "LLM_PROVIDERS_FILE",
+    ) -> "ProviderRegistry":
         """Load provider configurations from environment.
         
-        Checks for:
-        1. JSON list in the specified env var
-        2. Legacy individual environment variables
+        Checks for (in priority order):
+        1. Configuration file path in LLM_PROVIDERS_FILE
+        2. JSON list in the LLM_PROVIDERS env var
+        3. Legacy individual environment variables (GEMINI_API_KEY, etc.)
         
         Args:
             env_var: Environment variable name containing JSON config
+            file_env_var: Environment variable with path to config file
             
         Returns:
             ProviderRegistry instance
         """
         registry = cls()
         
-        # Try to load from JSON env var
+        # Priority 1: Check for config file path
+        config_file = os.getenv(file_env_var)
+        if config_file:
+            # Resolve relative paths
+            if not os.path.isabs(config_file):
+                # Try current directory first, then common config locations
+                for base in [os.getcwd(), os.path.dirname(__file__), "/etc/llm", "~/.config/llm"]:
+                    candidate = os.path.expanduser(os.path.join(base, config_file))
+                    if os.path.exists(candidate):
+                        config_file = candidate
+                        break
+            
+            if os.path.exists(config_file):
+                registry = cls.from_file(config_file, substitute_env=True)
+                if registry:
+                    logger.info(f"Loaded {len(registry)} providers from {config_file}")
+                    return registry
+                else:
+                    logger.warning(f"Config file {config_file} loaded but no providers found")
+            else:
+                logger.warning(f"Config file not found: {config_file}")
+        
+        # Priority 2: Try to load from JSON env var
         json_config = os.getenv(env_var)
         if json_config:
             try:
                 providers_data = json.loads(json_config)
                 if isinstance(providers_data, list):
+                    # Apply environment variable substitution
+                    providers_data = substitute_env_vars(providers_data)
                     for p in providers_data:
                         registry.add_from_dict(p)
                     logger.debug(f"Loaded {len(providers_data)} providers from {env_var}")
@@ -585,22 +689,24 @@ class ProviderRegistry:
             ))
     
     @classmethod
-    def from_file(cls, path: str) -> "ProviderRegistry":
+    def from_file(cls, path: str, substitute_env: bool = True) -> "ProviderRegistry":
         """Load provider configurations from a file.
         
-        Supports JSON and YAML formats.
+        Supports JSON and YAML formats with optional environment variable
+        substitution using ${VAR_NAME} or ${VAR_NAME:-default} syntax.
         
         Args:
             path: Path to configuration file
+            substitute_env: Whether to substitute environment variables in values
             
         Returns:
             ProviderRegistry instance
         """
-        import os.path
+        import os.path as ospath
         
         registry = cls()
         
-        if not os.path.exists(path):
+        if not ospath.exists(path):
             logger.warning(f"Configuration file not found: {path}")
             return registry
         
@@ -617,6 +723,10 @@ class ProviderRegistry:
                 return registry
         else:
             data = json.loads(content)
+        
+        # Apply environment variable substitution if enabled
+        if substitute_env:
+            data = substitute_env_vars(data)
         
         # Handle different config structures
         providers_list = data if isinstance(data, list) else data.get("providers", data.get("llm_providers", []))
@@ -641,6 +751,168 @@ class ProviderRegistry:
         for p in providers:
             registry.add_from_dict(p)
         return registry
+    
+    # -------------------------------------------------------------------------
+    # Health-Aware Provider Selection
+    # -------------------------------------------------------------------------
+    
+    def _get_health_tracker(self):
+        """Get the health tracker instance (lazy import to avoid circular deps)."""
+        from .provider_health import get_health_tracker
+        return get_health_tracker()
+    
+    def get_healthy_providers(
+        self,
+        intelligence_level: Optional[int] = None,
+    ) -> List[ProviderConfig]:
+        """Get all healthy providers, optionally filtered by intelligence level.
+        
+        Args:
+            intelligence_level: Optional intelligence level filter (0-10)
+            
+        Returns:
+            List of healthy ProviderConfig instances sorted by priority
+        """
+        if intelligence_level is not None:
+            providers = self.get_providers_for_level(intelligence_level)
+        else:
+            providers = self.providers
+        
+        tracker = self._get_health_tracker()
+        return tracker.filter_healthy(providers)
+    
+    def get_healthy_client(
+        self,
+        intelligence_level: Optional[int] = None,
+    ):
+        """Get the first healthy LLM client.
+        
+        Selects the highest priority healthy provider. If no providers are
+        healthy, falls back to the primary provider anyway.
+        
+        Args:
+            intelligence_level: Optional intelligence level filter
+            
+        Returns:
+            LLMClient instance
+        """
+        healthy_providers = self.get_healthy_providers(intelligence_level)
+        
+        if healthy_providers:
+            provider = healthy_providers[0]
+            cache_key = f"healthy_{provider.provider}_{provider.model}"
+            if cache_key not in self._clients_cache:
+                self._clients_cache[cache_key] = provider.to_client()
+            return self._clients_cache[cache_key]
+        
+        # All unhealthy - fall back to primary
+        logger.warning("All providers unhealthy, falling back to primary")
+        return self.get_client(0)
+    
+    def iter_clients_with_fallback(
+        self,
+        intelligence_level: Optional[int] = None,
+    ) -> Iterator[Tuple[Any, bool, ProviderConfig]]:
+        """Iterate through clients in health-aware order.
+        
+        Yields healthy providers first, then unhealthy ones as last resort.
+        
+        Args:
+            intelligence_level: Optional intelligence level filter
+            
+        Yields:
+            Tuple of (LLMClient, is_fallback, ProviderConfig)
+        """
+        if intelligence_level is not None:
+            all_providers = self.get_providers_for_level(intelligence_level)
+            if not all_providers:
+                all_providers = self.providers
+        else:
+            all_providers = self.providers
+        
+        tracker = self._get_health_tracker()
+        healthy = tracker.filter_healthy(all_providers)
+        unhealthy = [p for p in all_providers if p not in healthy]
+        
+        # Yield healthy providers first
+        for i, provider in enumerate(healthy):
+            cache_key = f"fallback_{provider.provider}_{provider.model}"
+            if cache_key not in self._clients_cache:
+                self._clients_cache[cache_key] = provider.to_client()
+            yield (self._clients_cache[cache_key], i > 0, provider)
+        
+        # Then yield unhealthy providers as last resort
+        for provider in unhealthy:
+            cache_key = f"fallback_{provider.provider}_{provider.model}"
+            if cache_key not in self._clients_cache:
+                self._clients_cache[cache_key] = provider.to_client()
+            yield (self._clients_cache[cache_key], True, provider)
+    
+    def mark_healthy(
+        self,
+        client_or_provider: Union[Any, ProviderConfig, str],
+        model: Optional[str] = None,
+    ) -> None:
+        """Mark a provider as healthy after successful request.
+        
+        Args:
+            client_or_provider: LLMClient, ProviderConfig, or provider name string
+            model: Model name (required if passing provider name string)
+        """
+        provider_name, model_name = self._resolve_provider_model(client_or_provider, model)
+        if provider_name and model_name:
+            tracker = self._get_health_tracker()
+            tracker.mark_healthy(provider_name, model_name)
+    
+    def mark_unhealthy(
+        self,
+        client_or_provider: Union[Any, ProviderConfig, str],
+        model: Optional[str] = None,
+        error: Optional[Exception] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Mark a provider as unhealthy after failure.
+        
+        Args:
+            client_or_provider: LLMClient, ProviderConfig, or provider name string
+            model: Model name (required if passing provider name string)
+            error: Optional exception that caused the failure
+            reason: Optional explicit reason string
+        """
+        provider_name, model_name = self._resolve_provider_model(client_or_provider, model)
+        if provider_name and model_name:
+            tracker = self._get_health_tracker()
+            
+            # Classify error if not explicitly provided
+            if reason is None and error is not None:
+                from .provider_health import classify_error
+                reason = classify_error(error)
+            elif reason is None:
+                reason = "unknown"
+            
+            tracker.mark_unhealthy(provider_name, model_name, reason=reason)
+    
+    def _resolve_provider_model(
+        self,
+        client_or_provider: Union[Any, ProviderConfig, str],
+        model: Optional[str],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Resolve provider and model names from various input types."""
+        if isinstance(client_or_provider, ProviderConfig):
+            return client_or_provider.provider, client_or_provider.model
+        
+        if isinstance(client_or_provider, str):
+            return client_or_provider, model
+        
+        # Try to extract from LLMClient
+        try:
+            config = getattr(client_or_provider, "config", None)
+            if config:
+                return getattr(config, "provider", None), getattr(config, "model", None)
+        except Exception:
+            pass
+        
+        return None, None
     
     def __len__(self) -> int:
         return len(self.providers)
