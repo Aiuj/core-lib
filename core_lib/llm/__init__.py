@@ -40,6 +40,11 @@ from .provider_health import (
     DEFAULT_UNHEALTHY_TTL,
     FAILURE_TTL_MAP,
 )
+from .fallback_client import (
+    FallbackLLMClient,
+    FallbackResult,
+    create_fallback_llm_client,
+)
 from .json_parser import clean_and_parse_json_response
 
 # LangChain adapter - optional import (requires langchain-core)
@@ -58,6 +63,11 @@ __all__ = [
     "OllamaConfig",
     "OpenAIConfig",
     "LLMClient",
+    
+    # Fallback client (automatic provider failover)
+    "FallbackLLMClient",
+    "FallbackResult",
+    "create_fallback_llm_client",
     
     # Provider registry (multi-provider configuration)
     "ProviderConfig",
