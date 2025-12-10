@@ -18,6 +18,7 @@ Docs: https://langfuse.com/integrations/model-providers/openai-py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
+import time
 
 from pydantic import BaseModel
 
@@ -211,7 +212,9 @@ class OpenAIProvider(BaseProvider):
                 create_kwargs["response_format"] = resp_format
 
             # Call API
+            start = time.perf_counter()
             completion = self._client.chat.completions.create(**create_kwargs)
+            latency_ms = (time.perf_counter() - start) * 1000
 
             # Extract message
             choice = completion.choices[0] if getattr(completion, "choices", []) else None
@@ -225,6 +228,33 @@ class OpenAIProvider(BaseProvider):
                 input_tokens = getattr(usage, "prompt_tokens", None) or (usage.get("prompt_tokens") if isinstance(usage, dict) else None)
                 output_tokens = getattr(usage, "completion_tokens", None) or (usage.get("completion_tokens") if isinstance(usage, dict) else None)
                 total_tokens = getattr(usage, "total_tokens", None) or (usage.get("total_tokens") if isinstance(usage, dict) else None)
+
+                if total_tokens is None and input_tokens is not None and output_tokens is not None:
+                    total_tokens = input_tokens + output_tokens
+
+                tokens_per_second = None
+                if total_tokens is not None and latency_ms > 0:
+                    tokens_per_second = (total_tokens / latency_ms) * 1000
+
+                if isinstance(usage, dict):
+                    usage["latency_ms"] = latency_ms
+                    if tokens_per_second is not None:
+                        usage["tokens_per_second"] = tokens_per_second
+
+                trace_metadata = {
+                    "gen_ai.system": "openai",
+                    "gen_ai.request.model": self.config.model,
+                    "gen_ai.usage.input_tokens": input_tokens,
+                    "gen_ai.usage.output_tokens": output_tokens,
+                    "tokens.total": total_tokens,
+                    "gen_ai.response.latency_ms": latency_ms,
+                    "latency_ms": latency_ms,
+                    "tokens_per_second": tokens_per_second,
+                    "features.structured_output": str(bool(structured_output)).lower(),
+                    "features.tools": str(bool(tools)).lower(),
+                    "features.search_grounding": str(use_search_grounding).lower(),
+                }
+                add_trace_metadata({k: v for k, v in trace_metadata.items() if v is not None})
                 
                 log_llm_usage(
                     provider="openai",
@@ -232,6 +262,7 @@ class OpenAIProvider(BaseProvider):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                    latency_ms=latency_ms,
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,

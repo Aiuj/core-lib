@@ -7,13 +7,13 @@ format='json'.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
+import time
 
 from pydantic import BaseModel
 
 from .base import BaseProvider
 from ..llm_config import LLMConfig
 from dataclasses import dataclass
-from typing import Optional
 
 from core_lib import get_module_logger
 from core_lib.tracing.service_usage import log_llm_usage
@@ -57,18 +57,25 @@ class OllamaConfig(LLMConfig):
     def from_env(cls) -> "OllamaConfig":
         import os
 
+        max_tokens_env = os.getenv("OLLAMA_MAX_TOKENS")
+        num_ctx_env = os.getenv("OLLAMA_NUM_CTX")
+        num_predict_env = os.getenv("OLLAMA_NUM_PREDICT")
+        repeat_penalty_env = os.getenv("OLLAMA_REPEAT_PENALTY")
+        top_k_env = os.getenv("OLLAMA_TOP_K")
+        top_p_env = os.getenv("OLLAMA_TOP_P")
+
         return cls(
             model=os.getenv("OLLAMA_MODEL", "qwen3:1.7b"),
             temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
-            max_tokens=int(os.getenv("OLLAMA_MAX_TOKENS")) if os.getenv("OLLAMA_MAX_TOKENS") else None,
+            max_tokens=int(max_tokens_env) if max_tokens_env is not None else None,
             thinking_enabled=os.getenv("OLLAMA_THINKING_ENABLED", "false").lower() == "true",
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             timeout=int(os.getenv("OLLAMA_TIMEOUT", "60")),
-            num_ctx=int(os.getenv("OLLAMA_NUM_CTX")) if os.getenv("OLLAMA_NUM_CTX") else None,
-            num_predict=int(os.getenv("OLLAMA_NUM_PREDICT")) if os.getenv("OLLAMA_NUM_PREDICT") else None,
-            repeat_penalty=float(os.getenv("OLLAMA_REPEAT_PENALTY")) if os.getenv("OLLAMA_REPEAT_PENALTY") else None,
-            top_k=int(os.getenv("OLLAMA_TOP_K")) if os.getenv("OLLAMA_TOP_K") else None,
-            top_p=float(os.getenv("OLLAMA_TOP_P")) if os.getenv("OLLAMA_TOP_P") else None,
+            num_ctx=int(num_ctx_env) if num_ctx_env is not None else None,
+            num_predict=int(num_predict_env) if num_predict_env is not None else None,
+            repeat_penalty=float(repeat_penalty_env) if repeat_penalty_env is not None else None,
+            top_k=int(top_k_env) if top_k_env is not None else None,
+            top_p=float(top_p_env) if top_p_env is not None else None,
         )
 
 class OllamaProvider(BaseProvider):
@@ -76,6 +83,8 @@ class OllamaProvider(BaseProvider):
 
     def __init__(self, config: OllamaConfig) -> None:  # type: ignore[override]
         super().__init__(config)
+        # Narrow the config type so mypy can see Ollama-specific fields like base_url.
+        self.config: OllamaConfig = config
         import ollama  # type: ignore
 
         self._ollama = ollama
@@ -121,6 +130,7 @@ class OllamaProvider(BaseProvider):
                     "search_grounding": use_search_grounding,
                 },
             )
+
             payload: Dict[str, Any] = {
                 "model": self.config.model,
                 "messages": messages,
@@ -131,30 +141,24 @@ class OllamaProvider(BaseProvider):
 
             resp_format: Optional[str] = None
             if structured_output is not None:
-                # Ollama supports format='json'. We'll validate with Pydantic if provided.
                 resp_format = "json"
-                # Some Ollama models accept a JSON schema directly; others use format='json'.
                 try:
                     payload["format"] = structured_output.model_json_schema()
                 except Exception:
                     payload["format"] = "json"
 
             # Thinking support per https://ollama.com/blog/thinking
-            # Two mechanisms:
-            # 1) If the selected model is a "think" model (e.g., llama3.1:8b-instruct-fp16-think), thoughts may be produced automatically.
-            # 2) When supported, pass options.thinking: { type: "enabled" } to enable chain-of-thought style output.
             if thinking_enabled is True:
                 try:
                     opts = payload.get("options", {}) or {}
-                    # Newer API supports a nested thinking config
                     if isinstance(opts, dict):
-                        # Conservative defaults: we only signal that thinking is enabled; providers decide budget
                         opts["thinking"] = opts.get("thinking", {"type": "enabled"})
                         payload["options"] = opts
                 except Exception:
                     pass
 
-            # Configure host via custom client if base_url differs
+            # Execute API call with latency measurement
+            start = time.perf_counter()
             if getattr(self.config, "base_url", None):
                 from ollama import Client  # type: ignore
 
@@ -162,26 +166,43 @@ class OllamaProvider(BaseProvider):
                 resp = client.chat(**payload)
             else:
                 resp = self._ollama.chat(**payload)
+            latency_ms = (time.perf_counter() - start) * 1000
 
             message = resp.get("message", {})
             content_text = message.get("content", "")
             tool_calls = message.get("tool_calls", []) or []
+
             usage = resp.get("usage", {}) or {}
-            
-            # Log service usage to OpenTelemetry/OpenSearch
+            if not usage:
+                usage = {
+                    "prompt_tokens": resp.get("prompt_eval_count"),
+                    "completion_tokens": resp.get("eval_count"),
+                    "total_tokens": resp.get("total_tokens"),
+                }
+
+            input_tokens = usage.get("prompt_tokens") or usage.get("prompt_eval_count")
+            output_tokens = usage.get("completion_tokens") or usage.get("eval_count")
+            total_tokens = usage.get("total_tokens")
+            if total_tokens is None and input_tokens and output_tokens:
+                total_tokens = input_tokens + output_tokens
+
+            tokens_per_second = None
+            if total_tokens is not None and latency_ms > 0:
+                tokens_per_second = (total_tokens / latency_ms) * 1000
+
+            if isinstance(usage, dict):
+                usage.setdefault("latency_ms", latency_ms)
+                if tokens_per_second is not None:
+                    usage.setdefault("tokens_per_second", tokens_per_second)
+
             try:
-                input_tokens = usage.get("prompt_tokens") or usage.get("prompt_eval_count")
-                output_tokens = usage.get("completion_tokens") or usage.get("eval_count")
-                total_tokens = usage.get("total_tokens")
-                if total_tokens is None and input_tokens and output_tokens:
-                    total_tokens = input_tokens + output_tokens
-                
                 log_llm_usage(
                     provider="ollama",
                     model=self.config.model,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                    latency_ms=latency_ms,
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
@@ -190,7 +211,6 @@ class OllamaProvider(BaseProvider):
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")
 
-            # If structured_output requested, attempt to validate
             if resp_format is not None and structured_output is not None:
                 try:
                     data = structured_output.model_validate_json(content_text)  # type: ignore[attr-defined]
@@ -220,8 +240,7 @@ class OllamaProvider(BaseProvider):
             }
         except Exception as e:  # pragma: no cover - runtime connectivity
             logger.exception("ollama.chat failed")
-            
-            # Log error to OpenTelemetry/OpenSearch
+
             try:
                 log_llm_usage(
                     provider="ollama",
@@ -233,7 +252,7 @@ class OllamaProvider(BaseProvider):
                 )
             except Exception:
                 pass
-            
+
             return {
                 "error": str(e),
                 "content": None,

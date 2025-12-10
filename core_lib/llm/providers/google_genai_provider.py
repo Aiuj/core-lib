@@ -8,6 +8,7 @@ GenerateContentConfig, and chat via client.chats.create(...).send_message(...).
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
+import time
 
 from pydantic import BaseModel
 
@@ -505,11 +506,13 @@ class GoogleGenAIProvider(BaseProvider):
                     use_search_grounding=use_search_grounding,
                     thinking_enabled_override=thinking_enabled,
                 )
+                start = time.perf_counter()
                 resp = self._client.models.generate_content(
                     model=self.config.model,
                     contents=user_text,
                     **extra,
                 )
+                latency_ms = (time.perf_counter() - start) * 1000
             else:
                 prompt = self._to_genai_messages(working_messages)
                 extra = self._build_config(
@@ -521,10 +524,13 @@ class GoogleGenAIProvider(BaseProvider):
                 )
                 # Preserve multi-turn via chats API
                 chat = self._client.chats.create(model=self.config.model)
+                start = time.perf_counter()
                 resp = chat.send_message(prompt, **extra)  # type: ignore[arg-type]
+                latency_ms = (time.perf_counter() - start) * 1000
 
             tool_calls: List[Dict[str, Any]] = []
-            usage = getattr(resp, "usage_metadata", {}) or {}
+            usage_metadata = getattr(resp, "usage_metadata", None)
+            usage: Dict[str, Any] = {}
 
             if getattr(resp, "function_calls", None):
                 for fc in resp.function_calls:  # type: ignore[attr-defined]
@@ -551,6 +557,39 @@ class GoogleGenAIProvider(BaseProvider):
                     input_tokens = getattr(usage_metadata, "prompt_token_count", None)
                     output_tokens = getattr(usage_metadata, "candidates_token_count", None)
                     total_tokens = getattr(usage_metadata, "total_token_count", None)
+
+                if input_tokens is not None:
+                    usage["prompt_tokens"] = input_tokens
+                if output_tokens is not None:
+                    usage["completion_tokens"] = output_tokens
+                if total_tokens is not None:
+                    usage["total_tokens"] = total_tokens
+
+                if total_tokens is None and input_tokens is not None and output_tokens is not None:
+                    total_tokens = input_tokens + output_tokens
+
+                tokens_per_second = None
+                if total_tokens is not None and "latency_ms" in locals() and latency_ms > 0:
+                    tokens_per_second = (total_tokens / latency_ms) * 1000
+                if "latency_ms" in locals():
+                    usage["latency_ms"] = latency_ms
+                if tokens_per_second is not None:
+                    usage["tokens_per_second"] = tokens_per_second
+
+                trace_metadata = {
+                    "gen_ai.system": "google-gemini",
+                    "gen_ai.request.model": self.config.model,
+                    "gen_ai.usage.input_tokens": input_tokens,
+                    "gen_ai.usage.output_tokens": output_tokens,
+                    "tokens.total": total_tokens,
+                    "gen_ai.response.latency_ms": latency_ms if "latency_ms" in locals() else None,
+                    "latency_ms": latency_ms if "latency_ms" in locals() else None,
+                    "tokens_per_second": tokens_per_second,
+                    "features.structured_output": str(bool(structured_output)).lower(),
+                    "features.tools": str(bool(tools)).lower(),
+                    "features.search_grounding": str(use_search_grounding).lower(),
+                }
+                add_trace_metadata({k: v for k, v in trace_metadata.items() if v is not None})
                 
                 log_llm_usage(
                     provider="google-gemini",
@@ -558,6 +597,7 @@ class GoogleGenAIProvider(BaseProvider):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
+                    latency_ms=latency_ms if "latency_ms" in locals() else None,
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,

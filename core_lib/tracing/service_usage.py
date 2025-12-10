@@ -166,7 +166,7 @@ def log_llm_usage(
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
     
-    # Calculate cost
+    # Calculate cost (single field; avoid duplicate aliases)
     cost = 0.0
     if input_tokens is not None and output_tokens is not None:
         cost = calculate_llm_cost(provider, model, input_tokens, output_tokens)
@@ -178,8 +178,7 @@ def log_llm_usage(
         "service.model": model,
         "gen_ai.request.model": model,  # OpenTelemetry semantic convention
         "gen_ai.system": provider,
-        "cost_usd": round(cost, 6),  # Always include cost (0.0 if unknown)
-        "gen_ai.usage.cost": round(cost, 6),  # Alias for easier querying
+        "gen_ai.usage.cost": round(cost, 6),
     }
     
     if host:
@@ -188,17 +187,15 @@ def log_llm_usage(
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
-        event["tokens.input"] = input_tokens
-    
+
     if output_tokens is not None:
         event["gen_ai.usage.output_tokens"] = output_tokens
-        event["tokens.output"] = output_tokens
-    
+
     if total_tokens is not None:
         event["tokens.total"] = total_tokens
     
     if latency_ms is not None:
-        event["latency_ms"] = latency_ms
+        event["gen_ai.response.latency_ms"] = latency_ms
         # Calculate tokens per second if we have the data
         if total_tokens and latency_ms > 0:
             event["tokens_per_second"] = (total_tokens / latency_ms) * 1000

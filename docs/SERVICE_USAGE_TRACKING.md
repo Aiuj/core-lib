@@ -9,13 +9,32 @@ The library automatically logs structured service usage events to OpenTelemetry/
 - **Embedding services** (OpenAI, Infinity, Ollama, Google GenAI)
 - **OCR services** (Azure Document Intelligence, Tesseract, etc.)
 
-These events include:
+These events include (deduped field set):
 - Service type, provider, and model
-- Token usage (input, output, total)
-- Performance metrics (latency, tokens/second)
-- **Automatic cost calculation** based on known pricing
+- Token usage (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `tokens.total`)
+- Performance metrics (`gen_ai.response.latency_ms`, `tokens_per_second`)
+- **Automatic cost calculation** (`gen_ai.usage.cost`)
 - Request context (user_id, session_id, company_id from `LoggingContext`)
 - Feature flags (structured output, tools, search grounding)
+- Host and system identifiers (`gen_ai.host`, `gen_ai.system`) for multi-provider dashboards
+
+## Field Reference (LLM logs)
+
+Each LLM event emitted by `log_llm_usage`/providers includes these standard attributes for dashboards:
+
+- `service.type`: always `llm`
+- `service.provider`: provider slug (`openai`, `google-gemini`, `ollama`)
+- `service.model` / `gen_ai.request.model`: model/deployment name
+- `gen_ai.system`: provider identifier (aligns with OTel semantic conventions)
+- `gen_ai.host`: base URL/endpoint (when available)
+- Tokens: `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `tokens.total` (computed when possible)
+- Performance: `gen_ai.response.latency_ms`, `tokens_per_second` (when total tokens and latency are known)
+- Cost: `gen_ai.usage.cost`
+- Feature flags: `features.structured_output`, `features.tools`, `features.search_grounding`
+- Status/error: `status` (`success`/`error`), `error` message when present
+- Context (if `LoggingContext` is set): `user.id`, `session.id`, `organization.id`, etc.
+
+Latency measurement: `gen_ai.response.latency_ms` is the wall-clock time spent waiting for the model API call (request → response) as measured by the client; `tokens_per_second` is derived from `tokens.total` and `gen_ai.response.latency_ms` when both are available. Duplicate cost/token aliases have been removed; use the `gen_ai.*` fields above.
 
 ## No Span Management Required
 
@@ -98,12 +117,10 @@ Every LLM request automatically logs:
     "gen_ai.system": "openai",
     "gen_ai.usage.input_tokens": 100,
     "gen_ai.usage.output_tokens": 50,
-    "tokens.input": 100,
-    "tokens.output": 50,
     "tokens.total": 150,
     "tokens_per_second": 100.0,
-    "latency_ms": 1500,
-    "cost_usd": 0.0045,
+    "gen_ai.response.latency_ms": 1500,
+    "gen_ai.usage.cost": 0.0045,
     "features.structured_output": false,
     "features.tools": true,
     "features.search_grounding": false,
