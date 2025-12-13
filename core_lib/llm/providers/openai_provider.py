@@ -46,7 +46,7 @@ class OpenAIConfig(LLMConfig):
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.2-preview",
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
@@ -77,7 +77,7 @@ class OpenAIConfig(LLMConfig):
 
         azure_endpoint = getenv("AZURE_OPENAI_ENDPOINT")
         api_key = getenv("AZURE_OPENAI_API_KEY", "OPENAI_API_KEY", default="") or ""
-        model = getenv("AZURE_OPENAI_DEPLOYMENT", "OPENAI_MODEL", default="gpt-4o-mini") or "gpt-4o-mini"
+        model = getenv("AZURE_OPENAI_DEPLOYMENT", "OPENAI_MODEL", default="gpt-5.2-preview") or "gpt-5.2-preview"
         temperature = float(getenv("OPENAI_TEMPERATURE", default="0.7") or 0.7)
         max_tokens_env = getenv("OPENAI_MAX_TOKENS")
         max_tokens = int(max_tokens_env) if max_tokens_env else None

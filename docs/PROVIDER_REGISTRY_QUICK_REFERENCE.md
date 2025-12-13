@@ -212,7 +212,7 @@ client = provider.to_client()          # LLMClient instance
 [
   {"provider": "ollama", "model": "qwen3:1.7b", "priority": 1, "min_level": 0, "max_level": 3, "tier": "low"},
   {"provider": "gemini", "api_key": "...", "model": "gemini-2.0-flash", "priority": 1, "min_level": 4, "max_level": 7, "tier": "standard"},
-  {"provider": "openai", "api_key": "...", "model": "gpt-4o", "priority": 1, "min_level": 8, "max_level": 10, "tier": "high"}
+  {"provider": "openai", "api_key": "...", "model": "gpt-5.2-preview", "priority": 1, "min_level": 8, "max_level": 10, "tier": "high"}
 ]
 ```
 
@@ -221,7 +221,7 @@ client = provider.to_client()          # LLMClient instance
 [
   {"provider": "ollama", "model": "llama3.2", "priority": 1, "tier": "low"},
   {"provider": "gemini", "api_key": "...", "model": "gemma-3-4b-it", "priority": 2, "tier": "low"},
-  {"provider": "openai", "api_key": "...", "model": "gpt-4o-mini", "priority": 3, "tier": "standard"}
+  {"provider": "openai", "api_key": "...", "model": "gpt-5.2-preview", "priority": 3, "tier": "standard"}
 ]
 ```
 
@@ -232,8 +232,8 @@ Intelligence levels (0-10) allow routing questions to appropriate models:
 | Level Range | Use Case | Typical Model |
 |-------------|----------|---------------|
 | 0-3 | Simple lookups, yes/no questions | `qwen3:1.7b`, `gemma-3-4b` |
-| 4-7 | Standard questions, moderate reasoning | `gemini-2.0-flash`, `gpt-4o-mini` |
-| 8-10 | Complex analysis, detailed synthesis | `gpt-4o`, `claude-sonnet` |
+| 4-7 | Standard questions, moderate reasoning | `gemini-2.0-flash`, `gpt-5.2-preview` |
+| 8-10 | Complex analysis, detailed synthesis | `gpt-5.2-preview`, `claude-sonnet` |
 
 ```python
 # Configure providers for different complexity levels
