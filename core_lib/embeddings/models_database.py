@@ -6,9 +6,10 @@ This database includes:
 - Context/token limits
 - Whether the model supports Matryoshka Representation Learning (MRL)
 - Provider information
+- Query/passage prefixes for asymmetric retrieval models
 """
 
-from typing import Dict, Optional, TypedDict
+from typing import Dict, Optional, Tuple, TypedDict
 
 
 class ModelSpec(TypedDict, total=False):
@@ -18,7 +19,24 @@ class ModelSpec(TypedDict, total=False):
     supports_matryoshka: bool
     provider: str
     supports_custom_dimensions: bool
+    query_prefix: str  # Prefix for queries (e.g., "query: " for E5 models)
+    passage_prefix: str  # Prefix for passages/documents (e.g., "passage: " for E5 models)
     notes: str
+
+
+# Model family prefix patterns for auto-detection
+# These are used when a model isn't in the database but matches a known family
+MODEL_FAMILY_PREFIXES: Dict[str, Tuple[str, str]] = {
+    # E5 models (intfloat) - multilingual and English
+    "e5": ("query: ", "passage: "),
+    "multilingual-e5": ("query: ", "passage: "),
+    # BGE models (BAAI) - query instruction prefix only
+    "bge": ("Represent this sentence for searching relevant passages: ", ""),
+    # Instructor models
+    "instructor": ("Represent the query for retrieval: ", "Represent the document for retrieval: "),
+    # GTE models (Alibaba)
+    "gte": ("query: ", ""),
+}
 
 
 # Comprehensive model database
@@ -159,19 +177,23 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "notes": "Large Arctic model.",
     },
     
-    # BGE Models (BAAI General Embedding)
+    # BGE Models (BAAI General Embedding) - use query instruction prefix
     "bge-large-en-v1.5": {
         "dimensions": 1024,
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "baai",
-        "notes": "Standard BGE model without MRL.",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
+        "notes": "Standard BGE model. Use query instruction prefix for best results.",
     },
     "bge-large-en-v1.5-mrl": {
         "dimensions": 1024,
         "context_size": 512,
         "supports_matryoshka": True,
         "provider": "baai",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
         "notes": "BGE with Matryoshka support.",
     },
     "bge-base-en-v1.5": {
@@ -179,6 +201,8 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "baai",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
         "notes": "Base BGE model.",
     },
     "bge-base-en-v1.5-mrl": {
@@ -186,6 +210,8 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "context_size": 512,
         "supports_matryoshka": True,
         "provider": "baai",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
         "notes": "Base BGE with MRL.",
     },
     "bge-m3": {
@@ -193,13 +219,17 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "context_size": 8192,
         "supports_matryoshka": True,
         "provider": "baai",
-        "notes": "Multilingual BGE with long context.",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
+        "notes": "Multilingual BGE with long context. Supports 100+ languages.",
     },
     "bge-small-en-v1.5": {
         "dimensions": 384,
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "baai",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
         "notes": "Small BGE model.",
     },
     "BAAI/bge-small-en-v1.5": {
@@ -207,6 +237,8 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "baai",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
         "notes": "Full HuggingFace path for small BGE.",
     },
     "BAAI/bge-base-en-v1.5": {
@@ -284,36 +316,89 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "provider": "google",
         "notes": "300M parameter multilingual embedding model. Supports 128-768 dimensions via MRL. Trained in 100+ languages. Optimized for on-device use.",
     },    
-    # E5 Models (Microsoft)
+    # E5 Models (Microsoft) - require "query: " and "passage: " prefixes
     "intfloat/e5-large-v2": {
         "dimensions": 1024,
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "microsoft",
-        "notes": "Large E5 model.",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Large E5 model. Use 'query: ' prefix for queries and 'passage: ' for documents.",
     },
     "intfloat/e5-base-v2": {
         "dimensions": 768,
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "microsoft",
-        "notes": "Base E5 model.",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Base E5 model. Use 'query: ' prefix for queries and 'passage: ' for documents.",
     },
     "intfloat/e5-small-v2": {
         "dimensions": 384,
         "context_size": 512,
         "supports_matryoshka": False,
         "provider": "microsoft",
-        "notes": "Small E5 model.",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Small E5 model. Use 'query: ' prefix for queries and 'passage: ' for documents.",
     },
     
-    # Multilingual E5
+    # Multilingual E5 - require "query: " and "passage: " prefixes
     "intfloat/multilingual-e5-large": {
         "dimensions": 1024,
         "context_size": 512,
-        "supports_matryoshka": False,
+        "supports_matryoshka": True,
         "provider": "microsoft",
-        "notes": "Multilingual E5 large model.",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 large model. 100 languages. Use 'query: ' and 'passage: ' prefixes.",
+    },
+    "intfloat/multilingual-e5-base": {
+        "dimensions": 768,
+        "context_size": 512,
+        "supports_matryoshka": True,
+        "provider": "microsoft",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 base model. 100 languages. Best quality/speed balance for multilingual.",
+    },
+    "intfloat/multilingual-e5-small": {
+        "dimensions": 384,
+        "context_size": 512,
+        "supports_matryoshka": True,
+        "provider": "microsoft",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 small model. 100 languages. Good for resource-constrained environments.",
+    },
+    "multilingual-e5-base": {
+        "dimensions": 768,
+        "context_size": 512,
+        "supports_matryoshka": True,
+        "provider": "microsoft",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 base (short name). 100 languages.",
+    },
+    "multilingual-e5-small": {
+        "dimensions": 384,
+        "context_size": 512,
+        "supports_matryoshka": True,
+        "provider": "microsoft",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 small (short name). 100 languages.",
+    },
+    "multilingual-e5-large": {
+        "dimensions": 1024,
+        "context_size": 512,
+        "supports_matryoshka": True,
+        "provider": "microsoft",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+        "notes": "Multilingual E5 large (short name). 100 languages.",
     },
     
     # IBM Granite Models
@@ -395,3 +480,114 @@ def supports_matryoshka(model_name: str) -> bool:
     """
     spec = get_model_spec(model_name)
     return spec.get("supports_matryoshka", False) if spec else False
+
+
+def get_model_prefixes(model_name: str) -> Tuple[str, str]:
+    """
+    Get query and passage prefixes for a model.
+    
+    Some embedding models (like E5, BGE) perform better when text is prefixed
+    with specific strings. This function returns the appropriate prefixes
+    for the given model.
+    
+    Args:
+        model_name: Model name or identifier
+        
+    Returns:
+        Tuple of (query_prefix, passage_prefix). Empty strings if no prefixes needed.
+    """
+    if not model_name:
+        return ("", "")
+    
+    # First, try to get prefixes from the model database
+    spec = get_model_spec(model_name)
+    if spec:
+        query_prefix = spec.get("query_prefix", "")
+        passage_prefix = spec.get("passage_prefix", "")
+        return (query_prefix, passage_prefix)
+    
+    # Fallback: try to match model family patterns
+    model_lower = model_name.lower()
+    
+    for family_pattern, (query_prefix, passage_prefix) in MODEL_FAMILY_PREFIXES.items():
+        if family_pattern.lower() in model_lower:
+            return (query_prefix, passage_prefix)
+    
+    # No prefixes needed for this model
+    return ("", "")
+
+
+def get_query_prefix(model_name: str) -> str:
+    """
+    Get the query prefix for a model.
+    
+    Args:
+        model_name: Model name or identifier
+        
+    Returns:
+        Query prefix string, or empty string if not needed.
+    """
+    query_prefix, _ = get_model_prefixes(model_name)
+    return query_prefix
+
+
+def get_passage_prefix(model_name: str) -> str:
+    """
+    Get the passage/document prefix for a model.
+    
+    Args:
+        model_name: Model name or identifier
+        
+    Returns:
+        Passage prefix string, or empty string if not needed.
+    """
+    _, passage_prefix = get_model_prefixes(model_name)
+    return passage_prefix
+
+
+def model_requires_prefixes(model_name: str) -> bool:
+    """
+    Check if a model requires query/passage prefixes for optimal performance.
+    
+    Args:
+        model_name: Model name or identifier
+        
+    Returns:
+        True if the model benefits from prefixes, False otherwise.
+    """
+    query_prefix, passage_prefix = get_model_prefixes(model_name)
+    return bool(query_prefix or passage_prefix)
+
+
+def apply_query_prefix(model_name: str, text: str) -> str:
+    """
+    Apply the appropriate query prefix to text for the given model.
+    
+    Args:
+        model_name: Model name or identifier
+        text: The query text to prefix
+        
+    Returns:
+        Text with query prefix applied (if applicable).
+    """
+    prefix = get_query_prefix(model_name)
+    if prefix and not text.startswith(prefix):
+        return f"{prefix}{text}"
+    return text
+
+
+def apply_passage_prefix(model_name: str, text: str) -> str:
+    """
+    Apply the appropriate passage/document prefix to text for the given model.
+    
+    Args:
+        model_name: Model name or identifier
+        text: The passage/document text to prefix
+        
+    Returns:
+        Text with passage prefix applied (if applicable).
+    """
+    prefix = get_passage_prefix(model_name)
+    if prefix and not text.startswith(prefix):
+        return f"{prefix}{text}"
+    return text

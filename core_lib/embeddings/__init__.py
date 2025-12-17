@@ -41,6 +41,12 @@ from .models_database import (
     get_model_dimension,
     get_model_context_size,
     supports_matryoshka,
+    get_model_prefixes,
+    get_query_prefix,
+    get_passage_prefix,
+    model_requires_prefixes,
+    apply_query_prefix,
+    apply_passage_prefix,
 )
 from .factory import (
     EmbeddingFactory,
@@ -107,6 +113,12 @@ __all__ = [
     "get_model_dimension",
     "get_model_context_size",
     "supports_matryoshka",
+    "get_model_prefixes",
+    "get_query_prefix",
+    "get_passage_prefix",
+    "model_requires_prefixes",
+    "apply_query_prefix",
+    "apply_passage_prefix",
     
     # Factory and convenience functions
     "EmbeddingFactory",

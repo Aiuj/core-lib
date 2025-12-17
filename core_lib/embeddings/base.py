@@ -6,7 +6,11 @@ import json
 
 from .embeddings_config import embeddings_settings
 from ..cache.cache_manager import cache_get, cache_set
-from .models_database import get_model_dimension, supports_matryoshka
+from .models_database import (
+    get_model_dimension,
+    supports_matryoshka,
+    get_model_prefixes,
+)
 from .embedding_utils import (
     normalize_embedding_dimension,
     get_best_normalization_method,
@@ -31,6 +35,12 @@ class BaseEmbeddingClient:
         - Cache is enabled by default with cache_duration_seconds > 0
         - Set cache_duration_seconds to 0 to disable caching entirely
         - When disabled, all embedding requests bypass the cache
+    
+    Prefix behavior:
+        - Some models (E5, BGE) require prefixes for optimal performance
+        - Prefixes are auto-detected from the model database by default
+        - Can be overridden via settings or constructor parameters
+        - Use query_prefix for search queries, passage_prefix for documents
     """
 
     def __init__(
@@ -40,6 +50,9 @@ class BaseEmbeddingClient:
         use_l2_norm: bool = True,
         cache_duration_seconds: int | None = None,
         norm_method: str | None = None,
+        query_prefix: str | None = None,
+        passage_prefix: str | None = None,
+        auto_detect_prefixes: bool | None = None,
     ):
         # Use provided values, otherwise fall back to settings defaults
         self.model = model if model is not None else embeddings_settings.model
@@ -63,12 +76,66 @@ class BaseEmbeddingClient:
                 target_dimension=self.embedding_dim,
             )
         
+        # Initialize prefix settings
+        self._init_prefixes(query_prefix, passage_prefix, auto_detect_prefixes)
+        
         logger.debug(
             f"Initialized embedding client: model={self.model}, "
             f"native_dim={self.model_native_dim}, target_dim={self.embedding_dim}, "
             f"norm_method={self.norm_method}, use_l2_norm={self.use_l2_norm}, "
-            f"cache_enabled={self.cache_duration_seconds > 0}"
+            f"cache_enabled={self.cache_duration_seconds > 0}, "
+            f"query_prefix='{self.query_prefix}', passage_prefix='{self.passage_prefix}'"
         )
+
+    def _init_prefixes(
+        self,
+        query_prefix: str | None,
+        passage_prefix: str | None,
+        auto_detect: bool | None,
+    ) -> None:
+        """Initialize query and passage prefixes for the embedding model.
+        
+        Priority:
+        1. Explicit constructor parameter (if not None)
+        2. Environment variable / settings (if not None)  
+        3. Auto-detect from model database (if auto_detect is True)
+        4. Empty string (no prefix)
+        
+        Args:
+            query_prefix: Explicit query prefix from constructor
+            passage_prefix: Explicit passage prefix from constructor
+            auto_detect: Whether to auto-detect from model database
+        """
+        # Determine if we should auto-detect
+        should_auto_detect = auto_detect if auto_detect is not None else embeddings_settings.auto_detect_prefixes
+        
+        # Get auto-detected prefixes from model database
+        auto_query_prefix, auto_passage_prefix = ("", "")
+        if should_auto_detect and self.model:
+            auto_query_prefix, auto_passage_prefix = get_model_prefixes(self.model)
+        
+        # Priority: constructor param > settings > auto-detect > empty
+        # For query_prefix
+        if query_prefix is not None:
+            self.query_prefix = query_prefix
+        elif embeddings_settings.query_prefix is not None:
+            self.query_prefix = embeddings_settings.query_prefix
+        else:
+            self.query_prefix = auto_query_prefix
+        
+        # For passage_prefix
+        if passage_prefix is not None:
+            self.passage_prefix = passage_prefix
+        elif embeddings_settings.passage_prefix is not None:
+            self.passage_prefix = embeddings_settings.passage_prefix
+        else:
+            self.passage_prefix = auto_passage_prefix
+
+    def _apply_prefix(self, text: str, prefix: str) -> str:
+        """Apply a prefix to text if not already present."""
+        if prefix and not text.startswith(prefix):
+            return f"{prefix}{text}"
+        return text
 
     def _generate_cache_key(self, text: str) -> str:
         """Generate a cache key for the given text and model configuration."""
@@ -177,6 +244,57 @@ class BaseEmbeddingClient:
         # Sort results by original index and return embeddings in order
         results.sort(key=lambda x: x[0])
         return [embedding for _, embedding in results]
+
+    def generate_query_embedding(self, query: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
+        """Generate embeddings for search queries with appropriate prefix.
+        
+        Use this method when embedding search queries. For models like E5 or BGE,
+        this will automatically apply the query prefix (e.g., "query: ").
+        
+        Args:
+            query: Query text or list of query texts
+            
+        Returns:
+            Embedding vector(s) for the query/queries
+        """
+        if isinstance(query, str):
+            prefixed_query = self._apply_prefix(query, self.query_prefix)
+            return self.generate_embedding_single(prefixed_query)
+        elif isinstance(query, list):
+            prefixed_queries = [self._apply_prefix(q, self.query_prefix) for q in query]
+            return self.generate_embedding_batch(prefixed_queries)
+        else:
+            raise ValueError("Input must be a string or list of strings")
+
+    def generate_passage_embedding(self, passage: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:
+        """Generate embeddings for documents/passages with appropriate prefix.
+        
+        Use this method when embedding documents, passages, or any content that
+        will be retrieved. For models like E5, this will automatically apply
+        the passage prefix (e.g., "passage: ").
+        
+        Args:
+            passage: Document/passage text or list of texts
+            
+        Returns:
+            Embedding vector(s) for the passage(s)
+        """
+        if isinstance(passage, str):
+            prefixed_passage = self._apply_prefix(passage, self.passage_prefix)
+            return self.generate_embedding_single(prefixed_passage)
+        elif isinstance(passage, list):
+            prefixed_passages = [self._apply_prefix(p, self.passage_prefix) for p in passage]
+            return self.generate_embedding_batch(prefixed_passages)
+        else:
+            raise ValueError("Input must be a string or list of strings")
+
+    def has_prefixes(self) -> bool:
+        """Check if this client has query/passage prefixes configured.
+        
+        Returns:
+            True if either query_prefix or passage_prefix is non-empty
+        """
+        return bool(self.query_prefix or self.passage_prefix)
 
     def _generate_embedding_raw(self, texts: List[str]) -> List[List[float]]:
         """Abstract method for generating raw embeddings without normalization.

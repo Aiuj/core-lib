@@ -184,13 +184,26 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             
         except requests.exceptions.HTTPError as e:
             self.embedding_time_ms = (time.time() - start_time) * 1000
-            error_msg = f"Infinity server returned HTTP error: {e}"
-            logger.error(error_msg)
+            
+            # Try to extract detailed error message
+            detailed_msg = None
             try:
                 error_detail = response.json()
+                if 'error' in error_detail and 'message' in error_detail['error']:
+                    detailed_msg = error_detail['error']['message']
                 logger.error(f"Error detail: {error_detail}")
             except:
                 pass
+            
+            # Build user-friendly error message
+            if detailed_msg and "not found" in detailed_msg.lower():
+                error_msg = f"Model '{self.model}' not available in Infinity server. {detailed_msg}"
+            elif detailed_msg:
+                error_msg = f"Infinity server error: {detailed_msg}"
+            else:
+                error_msg = f"Infinity server returned HTTP error: {e}"
+            
+            logger.error(error_msg)
             raise EmbeddingGenerationError(error_msg)
             
         except Exception as e:

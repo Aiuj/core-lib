@@ -53,6 +53,13 @@ class EmbeddingsSettings(BaseSettings):
     # Cache settings
     cache_duration_seconds: int = 7200
     
+    # Prefix settings for asymmetric retrieval models (E5, BGE, etc.)
+    # If None, prefixes are auto-detected based on model name
+    # Set to empty string "" to explicitly disable prefixes
+    query_prefix: Optional[str] = None
+    passage_prefix: Optional[str] = None
+    auto_detect_prefixes: bool = True  # Auto-detect prefixes from model database
+    
     @classmethod
     def from_env(
         cls,
@@ -108,6 +115,10 @@ class EmbeddingsSettings(BaseSettings):
             "trust_remote_code": EnvParser.get_env("EMBEDDING_TRUST_REMOTE_CODE", default=False, env_type=bool),
             "use_sentence_transformers": EnvParser.get_env("EMBEDDING_USE_SENTENCE_TRANSFORMERS", default=True, env_type=bool),
             "cache_duration_seconds": EnvParser.get_env("EMBEDDING_CACHE_DURATION_SECONDS", default=7200, env_type=int),
+            # Prefix settings - None means auto-detect, "" means disable
+            "query_prefix": EnvParser.get_env("EMBEDDING_QUERY_PREFIX"),
+            "passage_prefix": EnvParser.get_env("EMBEDDING_PASSAGE_PREFIX"),
+            "auto_detect_prefixes": EnvParser.get_env("EMBEDDING_AUTO_DETECT_PREFIXES", default=True, env_type=bool),
         }
         
         settings_dict.update(overrides)
@@ -139,4 +150,7 @@ class EmbeddingsSettings(BaseSettings):
             "trust_remote_code": self.trust_remote_code,
             "use_sentence_transformers": self.use_sentence_transformers,
             "cache_duration_seconds": self.cache_duration_seconds,
+            "query_prefix": self.query_prefix,
+            "passage_prefix": self.passage_prefix,
+            "auto_detect_prefixes": self.auto_detect_prefixes,
         }
