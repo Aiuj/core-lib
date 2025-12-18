@@ -1,5 +1,6 @@
 """Ollama embedding client implementation."""
 import time
+import math
 import ollama
 from typing import List, Union, cast
 
@@ -7,6 +8,7 @@ from .embeddings_config import embeddings_settings
 from .base import BaseEmbeddingClient, EmbeddingGenerationError
 from .models import EmbeddingResponse
 from core_lib.tracing.logger import get_module_logger
+from core_lib.tracing.service_usage import log_embedding_usage
 
 logger = get_module_logger()
 
@@ -108,6 +110,29 @@ class OllamaEmbeddingClient(BaseEmbeddingClient):
                 raise EmbeddingGenerationError("Unexpected embedding format from Ollama")
 
             embeddings_list = cast(List[List[float]], embeddings_raw)
+            
+            # Sanitize embeddings: replace any NaN or Inf values with 0
+            # This can happen with some Ollama models under certain conditions
+            embeddings_list = self._sanitize_embeddings(embeddings_list)
+            
+            # Log service usage to OpenTelemetry/OpenSearch
+            try:
+                # Ollama doesn't return token counts, estimate from text length
+                # Rough estimate: ~4 chars per token for English text
+                estimated_tokens = sum(len(text) // 4 for text in input_data)
+                
+                log_embedding_usage(
+                    provider="ollama",
+                    model=self.model,
+                    input_tokens=estimated_tokens,
+                    num_texts=len(input_data),
+                    embedding_dim=self.embedding_dim or len(embeddings_list[0]) if embeddings_list else None,
+                    latency_ms=self.embedding_time_ms,
+                    host=self.base_url,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log embedding usage: {e}")
+            
             return embeddings_list
         
         except ollama.ResponseError as e:  # Use library's exception
@@ -136,3 +161,38 @@ class OllamaEmbeddingClient(BaseEmbeddingClient):
         except Exception as e:
             logger.error(f"Ollama health check failed: {e}")
             return False
+
+    def _sanitize_embeddings(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Sanitize embeddings by replacing NaN and Inf values with 0.
+        
+        Ollama can occasionally return NaN or Inf values due to numerical issues
+        in certain models or configurations. This method detects and replaces such
+        values to prevent JSON serialization errors.
+        
+        Args:
+            embeddings: List of embedding vectors potentially containing NaN/Inf values
+            
+        Returns:
+            Sanitized embeddings with NaN/Inf values replaced by 0
+        """
+        sanitized = []
+        had_invalid = False
+        
+        for vec in embeddings:
+            sanitized_vec = []
+            for val in vec:
+                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                    sanitized_vec.append(0.0)
+                    had_invalid = True
+                else:
+                    sanitized_vec.append(val)
+            sanitized.append(sanitized_vec)
+        
+        if had_invalid:
+            logger.warning(
+                f"Detected and sanitized NaN/Inf values in {len(embeddings)} embeddings. "
+                "This may indicate numerical instability in the Ollama model. "
+                "Consider restarting Ollama or using a different model."
+            )
+        
+        return sanitized

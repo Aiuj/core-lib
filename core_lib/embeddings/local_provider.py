@@ -1,5 +1,6 @@
 """Local embedding client implementation using HuggingFace models."""
 import time
+import math
 from typing import List, Optional, Union, Dict, Any
 import os
 
@@ -26,6 +27,7 @@ from .embeddings_config import embeddings_settings
 from .base import BaseEmbeddingClient, EmbeddingGenerationError
 from .models import EmbeddingResponse
 from core_lib.tracing.logger import get_module_logger
+from core_lib.tracing.service_usage import log_embedding_usage
 
 logger = get_module_logger()
 
@@ -135,6 +137,28 @@ class LocalEmbeddingClient(BaseEmbeddingClient):
             self.embedding_time_ms = (time.time() - start_time) * 1000
             logger.debug(f"Generated {len(embeddings)} embeddings in {self.embedding_time_ms:.2f}ms")
             
+            # Sanitize embeddings: replace any NaN or Inf values with 0
+            # This can happen with some models under certain conditions
+            embeddings = self._sanitize_embeddings(embeddings)
+            
+            # Log service usage to OpenTelemetry/OpenSearch
+            try:
+                # Local models don't have explicit token counts, estimate from text length
+                # Rough estimate: ~4 chars per token for English text
+                estimated_tokens = sum(len(text) // 4 for text in texts)
+                
+                log_embedding_usage(
+                    provider="local",
+                    model=self.model,
+                    input_tokens=estimated_tokens,
+                    num_texts=len(texts),
+                    embedding_dim=self.embedding_dim or len(embeddings[0]) if embeddings else None,
+                    latency_ms=self.embedding_time_ms,
+                    host="local",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log embedding usage: {e}")
+            
             return embeddings
             
         except Exception as e:
@@ -187,6 +211,46 @@ class LocalEmbeddingClient(BaseEmbeddingClient):
         except Exception as e:
             logger.warning(f"Local model health check failed: {e}")
             return False
+
+    def _sanitize_embeddings(self, embeddings: List[List[float]]) -> List[List[float]]:
+        """Sanitize embeddings by replacing NaN and Inf values with 0.
+        
+        Local models can occasionally return NaN or Inf values due to numerical issues
+        in certain configurations or inputs. This method detects and replaces such
+        values to prevent JSON serialization errors.
+        
+        Args:
+            embeddings: List of embedding vectors potentially containing NaN/Inf values
+            
+        Returns:
+            Sanitized embeddings with NaN/Inf values replaced by 0
+        """
+        sanitized = []
+        had_invalid = False
+        
+        for vec in embeddings:
+            sanitized_vec = []
+            for val in vec:
+                # Handle both float and numpy float types
+                try:
+                    if math.isnan(val) or math.isinf(val):
+                        sanitized_vec.append(0.0)
+                        had_invalid = True
+                    else:
+                        sanitized_vec.append(float(val))
+                except (TypeError, ValueError):
+                    # If value can't be checked, try to convert to float
+                    sanitized_vec.append(float(val))
+            sanitized.append(sanitized_vec)
+        
+        if had_invalid:
+            logger.warning(
+                f"Detected and sanitized NaN/Inf values in {len(embeddings)} embeddings. "
+                "This may indicate numerical instability in the model. "
+                "Consider checking your inputs or model configuration."
+            )
+        
+        return sanitized
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model."""
