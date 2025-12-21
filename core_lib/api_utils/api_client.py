@@ -6,16 +6,27 @@ for time-based HMAC authentication, legacy API key authentication, and no auth.
 """
 
 import httpx
+import re
 from typing import Optional, Dict, Any, Tuple, BinaryIO, Union
 from pathlib import Path
 from .time_based_auth import generate_time_key
 
 try:
     from core_lib import get_module_logger
+    from core_lib.exceptions import ConfigurationError, APIError, TimeoutError as CoreTimeoutError
     logger = get_module_logger()
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+    # Fallback if exceptions not available
+    class ConfigurationError(Exception):
+        def __init__(self, message, error_type=None, details=None):
+            super().__init__(message)
+            self.error_type = error_type
+    class APIError(Exception):
+        pass
+    class CoreTimeoutError(Exception):
+        pass
 
 
 class APIClient:
@@ -161,17 +172,51 @@ class APIClient:
             
         Returns:
             Standardized error response dictionary
+            
+        Raises:
+            ConfigurationError: For configuration issues that shouldn't be retried
+            CoreTimeoutError: For timeout errors (may be retryable)
         """
         if isinstance(error, httpx.HTTPStatusError):
             error_code = f"HTTP_{error.response.status_code}"
-            error_description = f"HTTP {error.response.status_code}: {error.response.text}"
+            error_text = error.response.text
+            error_description = f"HTTP {error.response.status_code}: {error_text}"
             status_code = error.response.status_code
             
             logger.error(
                 f"HTTP error during {operation} - "
                 f"Code: {error_code}, Status: {status_code}, "
-                f"Response: {error.response.text}"
+                f"Response: {error_text}"
             )
+            
+            # Detect configuration errors in the response
+            error_lower = error_text.lower()
+            
+            # Check for Ollama model not found
+            if 'model' in error_lower and 'not found' in error_lower:
+                model_match = re.search(r'model "([^"]+)" not found', error_text)
+                model_name = model_match.group(1) if model_match else "unknown"
+                
+                friendly_msg = (
+                    f"Embedding model '{model_name}' is not available. "
+                    f"Please install the model using: ollama pull {model_name}"
+                )
+                logger.error(f"Configuration error detected: {friendly_msg}")
+                
+                raise ConfigurationError(
+                    friendly_msg,
+                    error_type="MISSING_EMBEDDING_MODEL",
+                    details={"model_name": model_name, "status_code": status_code}
+                )
+            
+            # Check for authentication/API key issues
+            if any(phrase in error_lower for phrase in ['unauthorized', 'api key', 'authentication']):
+                if 'invalid' in error_lower or 'missing' in error_lower:
+                    raise ConfigurationError(
+                        f"Authentication configuration error: {error_text}",
+                        error_type="INVALID_API_KEY",
+                        details={"status_code": status_code}
+                    )
             
             return {
                 "success": False,
@@ -186,11 +231,12 @@ class APIClient:
             
             logger.error(f"Timeout error during {operation} - {error_description}")
             
-            return {
-                "success": False,
-                "error_code": error_code,
-                "error_description": error_description
-            }
+            # Raise TimeoutError for better handling
+            raise CoreTimeoutError(
+                error_description,
+                timeout_seconds=self.timeout,
+                details={"operation": operation}
+            )
         
         elif isinstance(error, httpx.RequestError):
             error_code = "REQUEST_ERROR"

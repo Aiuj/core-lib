@@ -138,6 +138,41 @@ class OllamaEmbeddingClient(BaseEmbeddingClient):
         except ollama.ResponseError as e:  # Use library's exception
             error_msg = f"Ollama API error: {e}"
             logger.error(error_msg)
+            
+            # If this is a NaN error, try processing items individually as a fallback
+            if "NaN" in str(e) or "nan" in str(e).lower():
+                logger.warning(
+                    f"NaN error in Ollama batch embeddings for model '{self.model}'. "
+                    f"Input batch size: {len(input_data)}. "
+                    f"Sample input lengths: {[len(t) for t in input_data[:3]]}. "
+                    f"Attempting individual processing as fallback..."
+                )
+                
+                # Try processing each item individually
+                try:
+                    embeddings_list = []
+                    for i, text in enumerate(input_data):
+                        try:
+                            single_response = self.client.embed(model=self.model, input=[text])
+                            single_resp_data = single_response if isinstance(single_response, dict) else single_response.__dict__
+                            single_embedding = single_resp_data.get('embedding') or single_resp_data.get('embeddings', [[]])[0]
+                            embeddings_list.append(single_embedding if isinstance(single_embedding, list) else list(single_embedding))
+                        except Exception as inner_e:
+                            logger.error(f"Failed to generate embedding for item {i} (length={len(text)}): {inner_e}")
+                            # Use zero vector for failed items
+                            if embeddings_list:
+                                dim = len(embeddings_list[0])
+                            else:
+                                dim = self.embedding_dim or 1024
+                            embeddings_list.append([0.0] * dim)
+                    
+                    # Sanitize and return
+                    embeddings_list = self._sanitize_embeddings(embeddings_list)
+                    logger.info(f"Successfully processed {len(embeddings_list)} embeddings individually after batch NaN error")
+                    return embeddings_list
+                except Exception as fallback_error:
+                    logger.error(f"Individual processing fallback also failed: {fallback_error}")
+            
             raise EmbeddingGenerationError(error_msg)
         except Exception as e:
             error_msg = f"Unexpected error during embedding generation: {e}"

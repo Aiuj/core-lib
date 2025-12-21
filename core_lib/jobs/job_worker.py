@@ -149,11 +149,36 @@ class JobWorker:
             logger.info(f"[JobWorker] Job {job_id} completed successfully")
             return True
             
+        except ConfigurationError as e:
+            # Handle configuration errors - these should NOT be retried
+            error_type = getattr(e, 'error_type', 'CONFIGURATION_ERROR')
+            error_msg = str(e)
+            
+            logger.warning(
+                f"[JobWorker] Job {job_id} failed due to configuration error [{error_type}]. "
+                f"Marking as failed without retrying: {error_msg}"
+            )
+            self.job_queue.fail_job(job_id, f"Configuration error: {error_msg}")
+            return False
+            
         except Exception as e:
             error_msg = f"Job processing failed: {str(e)}"
             logger.error(f"[JobWorker] Job {job_id} failed: {error_msg}", exc_info=True)
             
-            # Check retry count
+            # Backward compatibility: Check if this is a configuration error via string prefix
+            is_config_error = str(e).startswith("CONFIG_ERROR:")
+            
+            if is_config_error:
+                # Configuration errors should not be retried
+                clean_error = str(e).replace("CONFIG_ERROR: ", "")
+                logger.warning(
+                    f"[JobWorker] Job {job_id} failed due to configuration error. "
+                    f"Marking as failed without retrying: {clean_error}"
+                )
+                self.job_queue.fail_job(job_id, f"Configuration error: {clean_error}")
+                return False
+            
+            # Check retry count for other errors
             retry_count = job.metadata.get('retry_count', 0) if job.metadata else 0
             
             if retry_count < self.max_retries:

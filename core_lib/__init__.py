@@ -44,6 +44,11 @@ from .api_utils import (
 )
 
 # Reranker support
+# Exception types
+from .exceptions import (
+    CoreLibError, ConfigurationError, APIError, TimeoutError
+)
+
 from .reranker import (
     BaseRerankerClient, RerankerError, RerankResult,
     RerankerSettings, reranker_settings,
