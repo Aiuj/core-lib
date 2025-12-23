@@ -610,7 +610,7 @@ class ProviderRegistry:
             if os.path.exists(config_file):
                 registry = cls.from_file(config_file, substitute_env=True)
                 if registry:
-                    logger.info(f"Loaded {len(registry)} providers from {config_file}")
+                    logger.debug(f"Loaded {len(registry)} providers from {config_file}")
                     return registry
                 else:
                     logger.warning(f"Config file {config_file} loaded but no providers found")

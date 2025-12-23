@@ -236,6 +236,7 @@ def log_embedding_usage(
     embedding_dim: Optional[int] = None,
     latency_ms: Optional[float] = None,
     host: Optional[str] = None,
+    cost_override: Optional[float] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -250,6 +251,7 @@ def log_embedding_usage(
         latency_ms: Request latency in milliseconds
         host: Service host URL (e.g., "http://localhost:7997" for Infinity,
               "https://api.openai.com" for OpenAI)
+        cost_override: Manual cost override (e.g. 0.0 for cached hits)
         metadata: Additional context
         error: Error message if the request failed
         
@@ -266,7 +268,9 @@ def log_embedding_usage(
         ```
     """
     cost = 0.0
-    if input_tokens is not None:
+    if cost_override is not None:
+        cost = cost_override
+    elif input_tokens is not None:
         cost = calculate_embedding_cost(provider, model, input_tokens)
     
     event = {
@@ -309,6 +313,60 @@ def log_embedding_usage(
     
     logger.info(
         f"Embedding usage: {provider}/{model} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
+        extra={"extra_attrs": event}
+    )
+
+
+def log_reranker_usage(
+    provider: str,
+    model: str,
+    num_documents: int,
+    latency_ms: Optional[float] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Log reranker usage to OpenTelemetry/OpenSearch.
+    
+    Args:
+        provider: Provider name (e.g., "infinity", "cohere")
+        model: Model name
+        num_documents: Number of documents reranked
+        latency_ms: Request latency in milliseconds
+        metadata: Additional context
+        error: Error message if the request failed
+    """
+    # Reranking cost is typically negligible or included in subscription, 
+    # but we can add pricing logic later if needed.
+    cost = 0.0
+    
+    event = {
+        "service.type": "reranker",
+        "service.provider": provider,
+        "service.model": model,
+        "gen_ai.request.model": model,
+        "gen_ai.system": provider,
+        "reranker.num_documents": num_documents,
+        "cost_usd": round(cost, 6),
+    }
+    
+    if latency_ms is not None:
+        event["latency_ms"] = latency_ms
+        if num_documents and latency_ms > 0:
+            event["documents_per_second"] = (num_documents / latency_ms) * 1000
+            
+    if metadata:
+        for key, value in metadata.items():
+            if key not in event:
+                event[f"custom.{key}"] = value
+                
+    if error:
+        event["error"] = error
+        event["status"] = "error"
+    else:
+        event["status"] = "success"
+        
+    logger.info(
+        f"Reranker usage: {provider}/{model} - {num_documents} documents, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 

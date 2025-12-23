@@ -6,7 +6,9 @@ import json
 
 from .reranker_config import reranker_settings
 from ..cache.cache_manager import cache_get, cache_set
+from core_lib.tracing.service_usage import log_reranker_usage
 from core_lib.tracing.logger import get_module_logger
+import time
 
 logger = get_module_logger()
 
@@ -124,7 +126,17 @@ class BaseRerankerClient:
                 ]
         
         # Generate new reranking
+        start_time = time.time()
         results = self._rerank_raw(query, documents, top_k)
+        latency_ms = (time.time() - start_time) * 1000
+        
+        # Log usage
+        log_reranker_usage(
+            provider=self.__class__.__name__.replace("RerankerClient", "").lower(),
+            model=self.model,
+            num_documents=len(documents),
+            latency_ms=latency_ms
+        )
         
         # Add document text if requested
         if self.return_documents:

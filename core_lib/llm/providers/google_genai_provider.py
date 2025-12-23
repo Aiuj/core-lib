@@ -457,7 +457,7 @@ class GoogleGenAIProvider(BaseProvider):
         # This avoids wasting retries on known unsupported features
         use_fallback_json = structured_output is not None and not self._supports_json_mode()
         if use_fallback_json:
-            logger.info(
+            logger.debug(
                 f"Model {self.config.model} does not support native JSON mode, "
                 "using fallback text-based JSON parsing"
             )

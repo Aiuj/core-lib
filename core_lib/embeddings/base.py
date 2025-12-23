@@ -16,6 +16,8 @@ from .embedding_utils import (
     get_best_normalization_method,
 )
 from core_lib.tracing.logger import get_module_logger
+from core_lib.tracing.service_usage import log_embedding_usage
+import time
 
 logger = get_module_logger()
 
@@ -166,10 +168,36 @@ class BaseEmbeddingClient:
             cached_result = cache_get(cache_key)
             if cached_result is not None:
                 logger.debug(f"Cache hit for embedding: {cache_key}")
+                # Log cached usage
+                estimated_tokens = len(text) // 4
+                log_embedding_usage(
+                    provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
+                    model=self.model,
+                    input_tokens=estimated_tokens,
+                    num_texts=1,
+                    embedding_dim=self.embedding_dim,
+                    latency_ms=0,
+                    cost_override=0.0,
+                    metadata={"cached": True}
+                )
                 return cached_result
         
+        start_time = time.time()
         # Generate new embedding
         embeddings = self._generate_embedding_raw([text])
+        latency_ms = (time.time() - start_time) * 1000
+        
+        # Log usage
+        # Estimate tokens (rough approximation: 1 token ~= 4 chars)
+        estimated_tokens = len(text) // 4
+        log_embedding_usage(
+            provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
+            model=self.model,
+            input_tokens=estimated_tokens,
+            num_texts=1,
+            embedding_dim=self.embedding_dim,
+            latency_ms=latency_ms
+        )
         
         # Apply dimension normalization first (before L2 norm)
         if self.embedding_dim is not None:
@@ -207,6 +235,18 @@ class BaseEmbeddingClient:
                 cached_result = cache_get(cache_key)
                 if cached_result is not None:
                     logger.debug(f"Cache hit for embedding: {cache_key}")
+                    # Log cached usage for individual hit
+                    estimated_tokens = len(text) // 4
+                    log_embedding_usage(
+                        provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
+                        model=self.model,
+                        input_tokens=estimated_tokens,
+                        num_texts=1,
+                        embedding_dim=self.embedding_dim,
+                        latency_ms=0,
+                        cost_override=0.0,
+                        metadata={"cached": True}
+                    )
                     results.append((i, cached_result))
                 else:
                     uncached_texts.append(text)
@@ -218,7 +258,21 @@ class BaseEmbeddingClient:
         
         # Generate embeddings for uncached texts
         if uncached_texts:
+            start_time = time.time()
             embeddings = self._generate_embedding_raw(uncached_texts)
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Log usage
+            # Estimate tokens (rough approximation: 1 token ~= 4 chars)
+            estimated_tokens = sum(len(t) for t in uncached_texts) // 4
+            log_embedding_usage(
+                provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
+                model=self.model,
+                input_tokens=estimated_tokens,
+                num_texts=len(uncached_texts),
+                embedding_dim=self.embedding_dim,
+                latency_ms=latency_ms
+            )
             
             # Apply dimension normalization first (before L2 norm)
             if self.embedding_dim is not None:
