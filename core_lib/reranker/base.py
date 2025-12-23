@@ -1,6 +1,6 @@
 """Base reranker client interface and helpers."""
 from dataclasses import dataclass
-from typing import List, Optional, Union, Any
+from typing import List, Optional, Union, Any, Tuple, Dict
 import hashlib
 import json
 
@@ -127,7 +127,7 @@ class BaseRerankerClient:
         
         # Generate new reranking
         start_time = time.time()
-        results = self._rerank_raw(query, documents, top_k)
+        results, usage = self._rerank_raw(query, documents, top_k)
         latency_ms = (time.time() - start_time) * 1000
         
         # Log usage
@@ -135,6 +135,8 @@ class BaseRerankerClient:
             provider=self.__class__.__name__.replace("RerankerClient", "").lower(),
             model=self.model,
             num_documents=len(documents),
+            input_tokens=usage.get("input_tokens") if usage else None,
+            output_tokens=usage.get("output_tokens") if usage else None,
             latency_ms=latency_ms
         )
         
@@ -186,7 +188,7 @@ class BaseRerankerClient:
         query: str,
         documents: List[str],
         top_k: int,
-    ) -> List[RerankResult]:
+    ) -> Tuple[List[RerankResult], Optional[Dict[str, int]]]:
         """Abstract method for performing the actual reranking.
         
         Args:
@@ -195,7 +197,7 @@ class BaseRerankerClient:
             top_k: Number of top results to return
             
         Returns:
-            List of RerankResult objects (not necessarily sorted)
+            Tuple of (List[RerankResult], usage_dict)
         """
         raise NotImplementedError()
 

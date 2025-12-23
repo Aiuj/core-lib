@@ -321,6 +321,8 @@ def log_reranker_usage(
     provider: str,
     model: str,
     num_documents: int,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
     latency_ms: Optional[float] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
@@ -331,6 +333,8 @@ def log_reranker_usage(
         provider: Provider name (e.g., "infinity", "cohere")
         model: Model name
         num_documents: Number of documents reranked
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
         latency_ms: Request latency in milliseconds
         metadata: Additional context
         error: Error message if the request failed
@@ -349,6 +353,14 @@ def log_reranker_usage(
         "cost_usd": round(cost, 6),
     }
     
+    if input_tokens is not None:
+        event["gen_ai.usage.input_tokens"] = input_tokens
+        event["tokens.input"] = input_tokens
+
+    if output_tokens is not None:
+        event["gen_ai.usage.output_tokens"] = output_tokens
+        event["tokens.output"] = output_tokens
+
     if latency_ms is not None:
         event["latency_ms"] = latency_ms
         if num_documents and latency_ms > 0:

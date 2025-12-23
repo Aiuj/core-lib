@@ -384,6 +384,7 @@ def setup_logging(
             "primp", "primp.client", "primp.response",  # HTTP client used by duckduckgo-search
             # Database and cache clients
             "opensearch", "psycopg2", "redis", "asyncpg", "elasticsearch",
+            "fakeredis", "docket", "docket.worker",
             # AI/ML providers
             "google_genai", "ollama", "serpapi", "tavily",
             # MCP protocol

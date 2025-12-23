@@ -4,7 +4,7 @@ Cohere provides cloud-based reranking API with high-quality models.
 Documentation: https://docs.cohere.com/reference/rerank
 """
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 
 try:
     import cohere
@@ -83,7 +83,7 @@ class CohereRerankerClient(BaseRerankerClient):
         query: str,
         documents: List[str],
         top_k: int,
-    ) -> List[RerankResult]:
+    ) -> Tuple[List[RerankResult], Optional[Dict[str, int]]]:
         """Perform reranking using Cohere API."""
         start_time = time.time()
         
@@ -97,6 +97,28 @@ class CohereRerankerClient(BaseRerankerClient):
                 return_documents=self.return_documents,
             )
             
+            # Extract usage
+            usage = None
+            if hasattr(response, 'meta') and response.meta:
+                meta = response.meta
+                billed_units = None
+                if isinstance(meta, dict):
+                    billed_units = meta.get('billed_units')
+                elif hasattr(meta, 'billed_units'):
+                    billed_units = meta.billed_units
+                
+                if billed_units:
+                    # Handle both dict and object access for billed_units
+                    def get_val(obj, key):
+                        if isinstance(obj, dict):
+                            return obj.get(key, 0)
+                        return getattr(obj, key, 0)
+                        
+                    usage = {
+                        'input_tokens': get_val(billed_units, 'input_tokens'),
+                        'output_tokens': get_val(billed_units, 'output_tokens')
+                    }
+
             # Extract results
             results = []
             for item in response.results:
@@ -113,7 +135,7 @@ class CohereRerankerClient(BaseRerankerClient):
                 f"using Cohere ({self.model})"
             )
             
-            return results
+            return results, usage
             
         except Exception as e:
             self.rerank_time_ms = (time.time() - start_time) * 1000

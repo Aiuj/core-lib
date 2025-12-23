@@ -7,7 +7,7 @@ local reranking server.
 Documentation: https://github.com/michaelfeil/infinity
 """
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 
 try:
     import requests
@@ -97,7 +97,7 @@ class InfinityRerankerClient(BaseRerankerClient):
         query: str,
         documents: List[str],
         top_k: int,
-    ) -> List[RerankResult]:
+    ) -> Tuple[List[RerankResult], Optional[Dict[str, int]]]:
         """Perform reranking using Infinity API.
         
         Infinity uses a reranking endpoint that accepts query-document pairs.
@@ -134,6 +134,20 @@ class InfinityRerankerClient(BaseRerankerClient):
             # Parse response
             data = response.json()
             
+            # Extract usage
+            usage = None
+            if 'usage' in data:
+                usage = {
+                    'input_tokens': data['usage'].get('prompt_tokens', 0),
+                    'output_tokens': data['usage'].get('completion_tokens', 0) or data['usage'].get('total_tokens', 0) - data['usage'].get('prompt_tokens', 0)
+                }
+            elif 'meta' in data and 'billed_units' in data['meta']:
+                billed = data['meta']['billed_units']
+                usage = {
+                    'input_tokens': billed.get('input_tokens', 0),
+                    'output_tokens': billed.get('output_tokens', 0)
+                }
+
             # Extract results
             # Response format: {"results": [{"index": 0, "relevance_score": 0.95, "document": {...}}, ...]}
             results = []
@@ -151,7 +165,7 @@ class InfinityRerankerClient(BaseRerankerClient):
                 f"using Infinity ({self.model})"
             )
             
-            return results
+            return results, usage
             
         except requests.exceptions.Timeout:
             self.rerank_time_ms = (time.time() - start_time) * 1000

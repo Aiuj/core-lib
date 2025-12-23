@@ -4,7 +4,7 @@ Uses sentence-transformers or transformers library to run cross-encoder
 reranking models locally.
 """
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 
 from .reranker_config import reranker_settings
 from .base import BaseRerankerClient, RerankerError, RerankResult
@@ -99,7 +99,7 @@ class LocalRerankerClient(BaseRerankerClient):
         query: str,
         documents: List[str],
         top_k: int,
-    ) -> List[RerankResult]:
+    ) -> Tuple[List[RerankResult], Optional[Dict[str, int]]]:
         """Perform reranking using local cross-encoder."""
         start_time = time.time()
         
@@ -126,7 +126,7 @@ class LocalRerankerClient(BaseRerankerClient):
                 f"using local model ({self.model})"
             )
             
-            return results
+            return results, None
             
         except Exception as e:
             self.rerank_time_ms = (time.time() - start_time) * 1000
