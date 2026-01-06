@@ -6,8 +6,8 @@ higher confidentiality requirements.
 
 Confidentiality Levels:
 - 10 (public): Publicly shareable information
-- 30 (prospect): Information suitable for prospects/potential customers
-- 50 (customer): Information for existing customers (DEFAULT)
+- 30 (prospect): Information suitable for prospects/potential customers (DEFAULT)
+- 50 (customer): Information for existing customers
 - 70 (internal): Internal use only, not for external sharing
 - 90 (confidential): Highly sensitive, restricted access
 
@@ -40,8 +40,8 @@ CONFIDENTIALITY_LEVEL_NAMES: Dict[int, str] = {
     90: "confidential",
 }
 
-# Default confidentiality level (customer)
-DEFAULT_CONFIDENTIALITY_LEVEL: int = 50
+# Default confidentiality level (prospect - suitable for RFx management)
+DEFAULT_CONFIDENTIALITY_LEVEL: int = 30
 
 # Valid range for confidentiality levels
 MIN_CONFIDENTIALITY_LEVEL: int = 0
@@ -51,7 +51,7 @@ MAX_CONFIDENTIALITY_LEVEL: int = 99
 CONFIDENTIALITY_LEVEL_DESCRIPTION = (
     "Data access clearance level (0-99). Only retrieves data at or below this level. "
     "Higher confidentiality results are prioritized when relevance is equal. "
-    "Levels: 10=public, 30=prospect, 50=customer (default), 70=internal, 90=confidential."
+    "Levels: 10=public, 30=prospect (default), 50=customer, 70=internal, 90=confidential."
 )
 
 
