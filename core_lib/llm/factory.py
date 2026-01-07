@@ -348,8 +348,8 @@ class LLMFactory:
         Returns:
             Provider name based on available environment variables
         """
-        # Check explicit provider setting
-        provider = os.environ.get("LLM_PROVIDER")
+        # Check explicit provider setting (support multiple env var names)
+        provider = os.environ.get("LLM_PROVIDER") or os.environ.get("AI_PROVIDER")
         if provider:
             return provider.lower()
         

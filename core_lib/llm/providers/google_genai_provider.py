@@ -29,6 +29,42 @@ logger = get_module_logger()
 _instrumentation_initialized = False
 
 
+def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove additionalProperties from JSON schema recursively.
+    
+    The Gemini API does not support the 'additionalProperties' field in JSON schemas.
+    When Pydantic models have extra='forbid', they generate additionalProperties: false,
+    which causes Gemini API errors. This function recursively removes that field.
+    
+    Args:
+        schema: JSON schema dictionary (from Pydantic's model_json_schema())
+        
+    Returns:
+        Cleaned schema without additionalProperties
+    """
+    if not isinstance(schema, dict):
+        return schema
+    
+    cleaned = {}
+    for key, value in schema.items():
+        # Skip additionalProperties entirely
+        if key == "additionalProperties":
+            continue
+        # Recursively clean nested dicts
+        if isinstance(value, dict):
+            cleaned[key] = _clean_schema_for_gemini(value)
+        # Recursively clean lists of dicts
+        elif isinstance(value, list):
+            cleaned[key] = [
+                _clean_schema_for_gemini(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            cleaned[key] = value
+    
+    return cleaned
+
+
 @dataclass
 class GeminiConfig(LLMConfig):
     api_key: str
@@ -333,11 +369,24 @@ class GoogleGenAIProvider(BaseProvider):
 
         if structured_output is not None:
             # Use official structured output support
-            cfg = {
-                **cfg,
-                "response_mime_type": "application/json",
-                "response_schema": structured_output,
-            }
+            # Clean the schema to remove additionalProperties which Gemini doesn't support
+            # The SDK accepts either a Pydantic model or a JSON schema dict
+            # We convert to dict and clean it for maximum compatibility
+            try:
+                json_schema = structured_output.model_json_schema()
+                cleaned_schema = _clean_schema_for_gemini(json_schema)
+                cfg = {
+                    **cfg,
+                    "response_mime_type": "application/json",
+                    "response_schema": cleaned_schema,
+                }
+            except AttributeError:
+                # Fallback: if not a Pydantic model, pass through as-is
+                cfg = {
+                    **cfg,
+                    "response_mime_type": "application/json",
+                    "response_schema": structured_output,
+                }
         return {"config": types.GenerateContentConfig(**cfg)}
 
     def _build_tools(self, tools: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
