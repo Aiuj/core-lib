@@ -102,15 +102,20 @@ class ProviderHealthTracker:
         self._local_health: Dict[str, HealthStatus] = {}  # Fallback when no Redis
     
     def _get_cache(self) -> Optional[Any]:
-        """Get the cache client, initializing if needed."""
+        """Get the cache wrapper, initializing if needed.
+        
+        Returns the BaseCache wrapper (not raw client) for proper set/get with TTL support.
+        """
         if self._cache_client is not None:
             return self._cache_client
         
         try:
-            from core_lib.cache import get_cache_client
-            client = get_cache_client()
-            if client and client.connected:
-                return client
+            from core_lib.cache import get_cache
+            cache = get_cache()
+            # get_cache() returns False if caching is disabled/failed
+            if cache and cache is not False and cache.connected:
+                # Return the wrapper for proper set/get with TTL support
+                return cache
         except Exception as e:
             logger.debug(f"Cache not available for health tracking: {e}")
         

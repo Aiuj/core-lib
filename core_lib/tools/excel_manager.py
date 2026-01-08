@@ -344,88 +344,63 @@ class ExcelManager:
 
         for sheet_name in self.wb.sheetnames:
             ws = self.wb[sheet_name]
+            
+            # Get initial bounds from worksheet dimension (fast)
+            min_col = min_row = max_col = max_row = None
+            used_cols = set()
+            
             try:
-                dim = ws.calculate_dimension()
+                dim = ws.calculate_dimension(force=True)
+                from openpyxl.utils import range_boundaries
                 min_col, min_row, max_col, max_row = range_boundaries(dim)
             except Exception:
-                dim = None
-                min_col = min_row = max_col = max_row = None
-
-            def _scan_bounds():
-                nonlocal min_col, min_row, max_col, max_row
-                min_col = None
-                min_row = None
-                max_col = None
-                max_row = None
+                # Fallback: use worksheet properties
                 try:
-                    max_r = ws.max_row or 1
-                    max_c = ws.max_column or 1
-                    for r in range(1, max_r + 1):
-                        row_has = False
-                        row_min_c = None
-                        row_max_c = None
-                        for c in range(1, max_c + 1):
-                            val = self.clean_cell(ws.cell(row=r, column=c).value)
-                            if val not in (None, ''):
-                                row_has = True
-                                row_min_c = c if row_min_c is None else min(row_min_c, c)
-                                row_max_c = c if row_max_c is None else max(row_max_c, c)
-                        if row_has:
-                            if min_row is None:
-                                min_row = r
-                            max_row = r
-                            if row_min_c is not None:
-                                min_col = row_min_c if min_col is None else min(min_col, row_min_c)
-                            if row_max_c is not None:
-                                max_col = row_max_c if max_col is None else max(max_col, row_max_c)
+                    min_col = ws.min_column or 1
+                    min_row = ws.min_row or 1
+                    max_col = ws.max_column or 1
+                    max_row = ws.max_row or 1
                 except Exception:
-                    pass
-
-            if not (isinstance(min_col, int) and isinstance(min_row, int) and isinstance(max_col, int) and isinstance(max_row, int)) or (min_col == max_col == 1 and min_row == max_row == 1):
-                _scan_bounds()
-
-            if not all(isinstance(v, int) and v >= 1 for v in [min_col, min_row, max_col, max_row]) or (min_col == max_col == 1 and min_row == max_row == 1):
+                    min_col = min_row = 1
+                    max_col = max_row = 100  # Reasonable default
+            
+            # Validate bounds are reasonable
+            if not all(isinstance(v, int) and v >= 1 for v in [min_col, min_row, max_col, max_row]):
+                min_col = min_row = 1
+                max_col = max_row = 100
+            
+            # Limit scan to reasonable bounds to avoid hanging on huge sparse sheets
+            MAX_SCAN_ROWS = 500  # Scan first N rows to detect used columns
+            MAX_SCAN_COLS = 100  # Reasonable max columns to check
+            
+            actual_max_col = min(max_col, min_col + MAX_SCAN_COLS - 1) if max_col else min_col + MAX_SCAN_COLS - 1
+            actual_max_row = min(max_row, min_row + MAX_SCAN_ROWS - 1) if max_row else min_row + MAX_SCAN_ROWS - 1
+            
+            # Fast column detection: sample rows to find which columns have data
+            try:
+                for row in ws.iter_rows(min_row=min_row, max_row=actual_max_row, 
+                                        min_col=min_col, max_col=actual_max_col, 
+                                        values_only=True):
+                    for c_idx, val in enumerate(row, start=min_col):
+                        val = self.clean_cell(val)
+                        if val not in (None, ''):
+                            used_cols.add(c_idx)
+            except Exception:
+                pass
+            
+            # Also check if there's data beyond our scan range by sampling a few distant cells
+            if max_col and max_col > actual_max_col:
                 try:
-                    if full_wb is None:
-                        from openpyxl import load_workbook as _lb
-                        # Prefer loading from in-memory bytes when available to avoid temp files
-                        if self.excel_bytes is not None:
+                    # Sample the last few columns
+                    for sample_col in range(max(actual_max_col + 1, max_col - 5), max_col + 1):
+                        for sample_row in [min_row, min_row + 1, min_row + 5] if max_row > min_row + 5 else range(min_row, min(min_row + 3, max_row + 1)):
                             try:
-                                from io import BytesIO
-                                _bio = BytesIO(self.excel_bytes)
-                                full_wb = _lb(_bio, read_only=False, data_only=True)
+                                val = self.clean_cell(ws.cell(row=sample_row, column=sample_col).value)
+                                if val not in (None, ''):
+                                    used_cols.add(sample_col)
+                                    break
                             except Exception:
-                                # Fallback to path if bytes loading fails
-                                full_wb = _lb(self.excel_path, read_only=False, data_only=True)
-                        else:
-                            full_wb = _lb(self.excel_path, read_only=False, data_only=True)
-
-                    full_ws = full_wb[sheet_name]
-                    f_min_r = f_min_c = None
-                    f_max_r = f_max_c = None
-                    for row in full_ws.iter_rows(values_only=False):
-                        row_has = False
-                        r_index = None
-                        r_min_c = None
-                        r_max_c = None
-                        for cell in row:
-                            r_index = cell.row
-                            val = self.clean_cell(cell.value)
-                            if val not in (None, ''):
-                                row_has = True
-                                c_index = cell.column
-                                r_min_c = c_index if r_min_c is None else min(r_min_c, c_index)
-                                r_max_c = c_index if r_max_c is None else max(r_max_c, c_index)
-                        if row_has:
-                            if f_min_r is None:
-                                f_min_r = r_index
-                            f_max_r = r_index
-                            if r_min_c is not None:
-                                f_min_c = r_min_c if f_min_c is None else min(f_min_c, r_min_c)
-                            if r_max_c is not None:
-                                f_max_c = r_max_c if f_max_c is None else max(f_max_c, r_max_c)
-                    if all(isinstance(v, int) and v >= 1 for v in [f_min_c, f_min_r, f_max_c, f_max_r]):
-                        min_col, min_row, max_col, max_row = f_min_c, f_min_r, f_max_c, f_max_r
+                                pass
                 except Exception:
                     pass
 
@@ -437,6 +412,8 @@ class ExcelManager:
 
             columns = {}
             headers_for_md = []
+            columns_to_include = []  # Track which columns to include in output
+            
             for col_idx in range(min_col, max_col + 1):
                 col_letter = get_column_letter(col_idx)
                 _ws_for_header = None
@@ -446,42 +423,72 @@ class ExcelManager:
                     _ws_for_header = ws
                 raw_header = _ws_for_header.cell(row=min_row, column=col_idx).value
                 header_val = self.clean_cell(raw_header)
-                header_val = header_val if (isinstance(header_val, str) and header_val.strip() != '') else (header_val if header_val not in (None, '') else f"Column {col_letter}")
-                columns[col_letter] = {"header": header_val}
-                headers_for_md.append(header_val)
+                
+                has_data = col_idx in used_cols
+                has_explicit_header = isinstance(header_val, str) and header_val.strip() != ''
+                
+                # Only include columns that have data OR have an explicit header
+                if has_data or has_explicit_header:
+                    if not has_explicit_header:
+                        header_val = f"Column {col_letter}"
+                    columns[col_letter] = {
+                        "header": header_val,
+                        "has_data": has_data
+                    }
+                    columns_to_include.append(col_idx)
+                    headers_for_md.append(header_val)
 
             data_rows = []
             md_rows = []
             max_data_rows = (max_rows if max_rows is not None else (max_row - min_row))
             current_count = 0
-            for row_idx in range(min_row + 1, max_row + 1):
-                cells_obj = {}
-                row_vals_md = []
-                is_non_empty = False
-                for col_idx in range(min_col, max_col + 1):
-                    col_letter = get_column_letter(col_idx)
-                    _ws_for_cell = None
-                    try:
-                        _ws_for_cell = full_wb[sheet_name] if full_wb is not None else ws
-                    except Exception:
-                        _ws_for_cell = ws
-                    val = self.clean_cell(_ws_for_cell.cell(row=row_idx, column=col_idx).value)
-                    if val not in (None, ''):
-                        is_non_empty = True
-                    cells_obj[col_letter] = val
-                    row_vals_md.append(val)
-
-                if not is_non_empty:
-                    continue
-
-                data_rows.append({
-                    "row": row_idx,
-                    "cells": cells_obj
-                })
-                md_rows.append(row_vals_md)
-                current_count += 1
-                if current_count >= max_data_rows:
-                    break
+            
+            # Use iter_rows for efficient batch reading instead of cell-by-cell access
+            # Limit the row range to avoid iterating unnecessarily
+            row_limit = min(max_row, min_row + max_data_rows + 100)  # +100 buffer for empty rows
+            
+            # Build a set of column indices we're including for fast lookup
+            columns_to_include_set = set(columns_to_include)
+            
+            try:
+                for row_idx, row in enumerate(
+                    ws.iter_rows(min_row=min_row + 1, max_row=row_limit,
+                                 min_col=min_col, max_col=max_col,
+                                 values_only=True),
+                    start=min_row + 1
+                ):
+                    if current_count >= max_data_rows:
+                        break
+                    
+                    cells_obj = {}
+                    row_vals_md = []
+                    is_non_empty = False
+                    
+                    for col_offset, val in enumerate(row):
+                        col_idx = min_col + col_offset
+                        
+                        # Skip columns we're not including
+                        if col_idx not in columns_to_include_set:
+                            continue
+                            
+                        col_letter = get_column_letter(col_idx)
+                        val = self.clean_cell(val)
+                        if val not in (None, ''):
+                            is_non_empty = True
+                            cells_obj[col_letter] = val
+                        row_vals_md.append(val)
+                    
+                    if not is_non_empty:
+                        continue
+                    
+                    data_rows.append({
+                        "row": row_idx,
+                        "cells": cells_obj
+                    })
+                    md_rows.append(row_vals_md)
+                    current_count += 1
+            except Exception as e:
+                logger.warning(f"Error iterating rows for sheet {sheet_name}: {e}")
 
             md_table = tabulate(md_rows, headers=headers_for_md, tablefmt='github') if headers_for_md else ''
             all_md_snippets.append(f"## {sheet_name}\n{md_table}")

@@ -1,6 +1,7 @@
 """Factory class for creating LLM clients with simplified configuration."""
 
 import os
+import warnings
 from typing import Optional, Dict, Any, Union, Type
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from .llm_client import LLMClient
@@ -347,9 +348,27 @@ class LLMFactory:
         
         Returns:
             Provider name based on available environment variables
+            
+        Note:
+            AI_PROVIDER is deprecated. Use LLM_PROVIDERS_FILE for multi-provider
+            configuration with fallback, or LLM_PROVIDER for single provider mode.
         """
-        # Check explicit provider setting (support multiple env var names)
-        provider = os.environ.get("LLM_PROVIDER") or os.environ.get("AI_PROVIDER")
+        # Check explicit provider setting
+        provider = os.environ.get("LLM_PROVIDER")
+        
+        # Deprecated: AI_PROVIDER (emit warning)
+        if not provider:
+            ai_provider = os.environ.get("AI_PROVIDER")
+            if ai_provider:
+                warnings.warn(
+                    "AI_PROVIDER is deprecated. Use LLM_PROVIDERS_FILE for multi-provider "
+                    "configuration with automatic fallback, or LLM_PROVIDER for single "
+                    "provider mode. See core_lib.llm.FallbackLLMClient for details.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                provider = ai_provider
+        
         if provider:
             return provider.lower()
         

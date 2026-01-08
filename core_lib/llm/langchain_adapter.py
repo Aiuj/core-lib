@@ -56,6 +56,10 @@ except ImportError:
     ChatResult = object  # type: ignore
 
 from .llm_client import LLMClient
+from .fallback_client import FallbackLLMClient
+
+# Type alias for client that can be either LLMClient or FallbackLLMClient
+LLMClientType = Union[LLMClient, FallbackLLMClient]
 
 
 def _convert_message_to_dict(message: BaseMessage) -> Dict[str, str]:
@@ -168,27 +172,36 @@ def _convert_langchain_tools_to_openai(
 
 
 class CoreLibChatModel(BaseChatModel):
-    """LangChain-compatible wrapper for core-lib LLMClient.
+    """LangChain-compatible wrapper for core-lib LLMClient or FallbackLLMClient.
     
-    This adapter enables using core-lib's LLMClient with LangChain and LangGraph
-    while preserving all the benefits of core-lib:
+    This adapter enables using core-lib's LLMClient or FallbackLLMClient with
+    LangChain and LangGraph while preserving all the benefits of core-lib:
     - Unified tracing via Langfuse/OpenTelemetry
     - Cost tracking and usage metrics
-    - Error handling with fallback support
+    - Error handling with automatic fallback support
     - Multi-provider support (Gemini, OpenAI, Ollama)
+    - Intelligence-level-based provider selection (with FallbackLLMClient)
+    
+    When using FallbackLLMClient:
+    - Set intelligence_level to route to appropriate model tier
+    - Light (0-3): Quick checks, simple classification
+    - Standard (4-6): Normal analysis, classification
+    - High (7-10): Complex reasoning, agentic workflows
     
     Attributes:
-        client: The core-lib LLMClient instance to wrap
+        client: The core-lib LLMClient or FallbackLLMClient instance to wrap
         bound_tools: Tools bound to this model instance
         structured_output_schema: Pydantic model for structured output
+        intelligence_level: Intelligence level for FallbackLLMClient routing
         
     Example:
         ```python
-        from core_lib.llm import create_client_from_env
+        from core_lib.llm import create_fallback_llm_client
         from core_lib.llm.langchain_adapter import CoreLibChatModel
         
-        client = create_client_from_env()
-        model = CoreLibChatModel(client=client)
+        # With FallbackLLMClient for automatic failover
+        client = create_fallback_llm_client(intelligence_level=7)
+        model = CoreLibChatModel(client=client, intelligence_level=7)
         
         # Simple invocation
         response = model.invoke([HumanMessage(content="Hello!")])
@@ -206,8 +219,8 @@ class CoreLibChatModel(BaseChatModel):
     # Pydantic model configuration
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
-    # Required fields
-    client: LLMClient = Field(..., description="The core-lib LLMClient instance")
+    # Required fields - accepts both LLMClient and FallbackLLMClient
+    client: Any = Field(..., description="The core-lib LLMClient or FallbackLLMClient instance")
     
     # Optional bound configuration
     bound_tools: List[Dict[str, Any]] = Field(
@@ -226,6 +239,10 @@ class CoreLibChatModel(BaseChatModel):
         default=None,
         description="Override for thinking/reasoning mode"
     )
+    intelligence_level: Optional[int] = Field(
+        default=None,
+        description="Intelligence level for FallbackLLMClient routing (0-10)"
+    )
     
     def __init__(self, **data: Any) -> None:
         """Initialize the adapter.
@@ -243,12 +260,25 @@ class CoreLibChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         """Return a unique identifier for this model type."""
+        if isinstance(self.client, FallbackLLMClient):
+            # FallbackLLMClient may not have a provider yet (determined at call time)
+            if self.client.last_used_provider:
+                return f"core-lib-fallback-{self.client.last_used_provider}"
+            return "core-lib-fallback"
+        
         model_info = self.client.get_model_info()
         return f"core-lib-{model_info.get('provider', 'unknown')}"
     
     @property
     def _identifying_params(self) -> Dict[str, Any]:
         """Return parameters that identify this model for tracing."""
+        if isinstance(self.client, FallbackLLMClient):
+            return {
+                "type": "fallback",
+                "last_provider": self.client.last_used_provider,
+                "last_model": self.client.last_used_model,
+                "intelligence_level": self.intelligence_level,
+            }
         return self.client.get_model_info()
     
     def _generate(
@@ -287,14 +317,21 @@ class CoreLibChatModel(BaseChatModel):
         # Get structured output schema
         structured_output = kwargs.get("structured_output") or self.structured_output_schema
         
+        # Build chat kwargs - common parameters
+        chat_kwargs = {
+            "messages": formatted_messages,
+            "tools": tools if tools else None,
+            "structured_output": structured_output,
+            "use_search_grounding": kwargs.get("use_search_grounding", self.use_search_grounding),
+            "thinking_enabled": kwargs.get("thinking_enabled", self.thinking_enabled),
+        }
+        
+        # Add intelligence_level for FallbackLLMClient
+        if isinstance(self.client, FallbackLLMClient) and self.intelligence_level is not None:
+            chat_kwargs["intelligence_level"] = self.intelligence_level
+        
         # Call the core-lib client
-        result = self.client.chat(
-            messages=formatted_messages,
-            tools=tools if tools else None,
-            structured_output=structured_output,
-            use_search_grounding=kwargs.get("use_search_grounding", self.use_search_grounding),
-            thinking_enabled=kwargs.get("thinking_enabled", self.thinking_enabled),
-        )
+        result = self.client.chat(**chat_kwargs)
         
         # Check for errors
         if result.get("error"):
@@ -391,6 +428,7 @@ class CoreLibChatModel(BaseChatModel):
             structured_output_schema=self.structured_output_schema,
             use_search_grounding=self.use_search_grounding,
             thinking_enabled=self.thinking_enabled,
+            intelligence_level=self.intelligence_level,
         )
     
     def with_structured_output(
@@ -429,6 +467,7 @@ class CoreLibChatModel(BaseChatModel):
             structured_output_schema=schema,
             use_search_grounding=self.use_search_grounding,
             thinking_enabled=self.thinking_enabled,
+            intelligence_level=self.intelligence_level,
         )
     
     def with_config(
@@ -436,6 +475,7 @@ class CoreLibChatModel(BaseChatModel):
         *,
         use_search_grounding: Optional[bool] = None,
         thinking_enabled: Optional[bool] = None,
+        intelligence_level: Optional[int] = None,
         **kwargs: Any,
     ) -> "CoreLibChatModel":
         """Return a model with modified configuration.
@@ -443,6 +483,7 @@ class CoreLibChatModel(BaseChatModel):
         Args:
             use_search_grounding: Enable/disable search grounding
             thinking_enabled: Enable/disable thinking mode
+            intelligence_level: Intelligence level for FallbackLLMClient (0-10)
             **kwargs: Additional arguments
             
         Returns:
@@ -454,22 +495,29 @@ class CoreLibChatModel(BaseChatModel):
             structured_output_schema=self.structured_output_schema,
             use_search_grounding=use_search_grounding if use_search_grounding is not None else self.use_search_grounding,
             thinking_enabled=thinking_enabled if thinking_enabled is not None else self.thinking_enabled,
+            intelligence_level=intelligence_level if intelligence_level is not None else self.intelligence_level,
         )
 
 
 # Convenience function for creating the adapter
 def create_langchain_model(
-    client: Optional[LLMClient] = None,
+    client: Optional[LLMClientType] = None,
+    intelligence_level: Optional[int] = None,
+    use_fallback: bool = False,
     **kwargs: Any,
 ) -> CoreLibChatModel:
     """Create a LangChain-compatible chat model from core-lib.
     
-    This is a convenience function that either wraps an existing LLMClient
+    This is a convenience function that either wraps an existing LLMClient/FallbackLLMClient
     or creates one from environment variables.
     
     Args:
-        client: Optional existing LLMClient to wrap. If not provided,
-               creates one using create_client_from_env()
+        client: Optional existing LLMClient or FallbackLLMClient to wrap.
+               If not provided, creates one based on use_fallback setting.
+        intelligence_level: Intelligence level for FallbackLLMClient routing (0-10).
+               Only used when use_fallback=True or client is FallbackLLMClient.
+        use_fallback: If True and no client provided, creates a FallbackLLMClient
+               from environment (LLM_PROVIDERS_FILE). Defaults to False.
         **kwargs: Additional arguments passed to CoreLibChatModel
         
     Returns:
@@ -479,17 +527,66 @@ def create_langchain_model(
         ```python
         from core_lib.llm.langchain_adapter import create_langchain_model
         
-        # Auto-create from environment
+        # Auto-create from environment (single provider)
         model = create_langchain_model()
         
+        # With fallback support from LLM_PROVIDERS_FILE
+        model = create_langchain_model(use_fallback=True, intelligence_level=7)
+        
         # Or wrap existing client
-        from core_lib.llm import create_openai_client
-        client = create_openai_client(model="gpt-4")
-        model = create_langchain_model(client=client)
+        from core_lib.llm import create_fallback_llm_client
+        client = create_fallback_llm_client(intelligence_level=5)
+        model = create_langchain_model(client=client, intelligence_level=5)
         ```
     """
     if client is None:
-        from .factory import create_client_from_env
-        client = create_client_from_env()
+        if use_fallback:
+            from .fallback_client import create_fallback_llm_client
+            client = create_fallback_llm_client(intelligence_level=intelligence_level)
+        else:
+            from .factory import create_client_from_env
+            client = create_client_from_env()
     
-    return CoreLibChatModel(client=client, **kwargs)
+    return CoreLibChatModel(client=client, intelligence_level=intelligence_level, **kwargs)
+
+
+def create_langchain_model_with_fallback(
+    intelligence_level: int = 5,
+    **kwargs: Any,
+) -> CoreLibChatModel:
+    """Create a LangChain-compatible chat model with automatic fallback.
+    
+    This is a convenience function that creates a FallbackLLMClient from
+    environment configuration (LLM_PROVIDERS_FILE or LLM_PROVIDERS) and
+    wraps it in a CoreLibChatModel.
+    
+    Intelligence levels guide provider selection:
+    - 0-3: Light tier - Quick checks, simple classification
+    - 4-6: Standard tier - Normal analysis and classification
+    - 7-10: High tier - Complex reasoning, agentic workflows
+    
+    Args:
+        intelligence_level: Intelligence level for provider routing (0-10).
+               Default is 5 (standard tier).
+        **kwargs: Additional arguments passed to CoreLibChatModel
+        
+    Returns:
+        CoreLibChatModel instance with FallbackLLMClient for automatic failover
+        
+    Example:
+        ```python
+        from core_lib.llm.langchain_adapter import create_langchain_model_with_fallback
+        
+        # Standard tier for normal analysis
+        model = create_langchain_model_with_fallback(intelligence_level=5)
+        
+        # High tier for agentic reasoning
+        agent_model = create_langchain_model_with_fallback(intelligence_level=8)
+        
+        # Light tier for quick classification
+        classifier = create_langchain_model_with_fallback(intelligence_level=2)
+        ```
+    """
+    from .fallback_client import create_fallback_llm_client
+    client = create_fallback_llm_client(intelligence_level=intelligence_level)
+    return CoreLibChatModel(client=client, intelligence_level=intelligence_level, **kwargs)

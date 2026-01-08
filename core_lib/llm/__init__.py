@@ -49,11 +49,16 @@ from .json_parser import clean_and_parse_json_response
 
 # LangChain adapter - optional import (requires langchain-core)
 try:
-    from .langchain_adapter import CoreLibChatModel, create_langchain_model
+    from .langchain_adapter import (
+        CoreLibChatModel,
+        create_langchain_model,
+        create_langchain_model_with_fallback,
+    )
     _LANGCHAIN_AVAILABLE = True
 except ImportError:
     CoreLibChatModel = None  # type: ignore
     create_langchain_model = None  # type: ignore
+    create_langchain_model_with_fallback = None  # type: ignore
     _LANGCHAIN_AVAILABLE = False
 
 __all__ = [
@@ -100,6 +105,7 @@ __all__ = [
     # LangChain adapter (optional - requires langchain-core)
     "CoreLibChatModel",
     "create_langchain_model",
+    "create_langchain_model_with_fallback",
     
     # Utilities
     "clean_and_parse_json_response"
