@@ -36,7 +36,7 @@ Example:
 import hmac
 import hashlib
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterable, Optional, Union
 
 
 class TimeBasedAuthError(Exception):
@@ -120,7 +120,7 @@ def generate_time_key(
 
 def verify_time_key(
     provided_key: str,
-    private_key: str,
+    private_key: Union[str, Iterable[str]],
     dt: Optional[datetime] = None,
     encoding: str = "utf-8"
 ) -> bool:
@@ -128,34 +128,45 @@ def verify_time_key(
     
     Checks if the provided key matches any of the valid time windows
     (previous hour, current hour, next hour) to handle hour transitions
-    gracefully.
+    gracefully. Supports multiple private keys for key rotation.
     
     Args:
         provided_key: The authentication key to verify
-        private_key: Secret private key shared between client and server
+        private_key: Secret private key(s) - can be a single string or iterable of strings
         dt: Datetime to verify against. If None, uses current UTC time.
         encoding: String encoding to use (default: utf-8)
         
     Returns:
-        True if the key is valid for any of the 3 time windows, False otherwise
+        True if the key is valid for any of the time windows with any private key
         
     Raises:
-        TimeBasedAuthError: If private_key is empty or invalid
+        TimeBasedAuthError: If no private keys are provided
         
     Example:
         ```python
+        # Single key
         private_key = "my-secret-key-12345"
-        client_key = request.headers.get("x-auth-key")
-        
         if verify_time_key(client_key, private_key):
-            # Authentication successful
             proceed_with_request()
-        else:
-            # Authentication failed
-            raise HTTPException(401)
+        
+        # Multiple keys (for rotation)
+        private_keys = ["current-key", "old-key-still-valid"]
+        if verify_time_key(client_key, private_keys):
+            proceed_with_request()
         ```
     """
-    if not private_key or not private_key.strip():
+    # Handle single key or iterable of keys
+    if isinstance(private_key, str):
+        private_keys = [private_key]
+    else:
+        private_keys = list(private_key)
+    
+    if not private_keys:
+        raise TimeBasedAuthError("At least one private key must be provided")
+    
+    # Filter out empty keys
+    private_keys = [k for k in private_keys if k and k.strip()]
+    if not private_keys:
         raise TimeBasedAuthError("Private key cannot be empty")
     
     if not provided_key or not provided_key.strip():
@@ -164,16 +175,17 @@ def verify_time_key(
     # Get all valid time windows (previous, current, next hour)
     windows = _get_time_window_keys(dt)
     
-    key_bytes = private_key.encode(encoding)
-    
-    # Check if provided key matches any of the valid windows
-    for window in windows:
-        message_bytes = window.encode(encoding)
-        hmac_obj = hmac.new(key_bytes, message_bytes, hashlib.sha256)
-        expected_key = hmac_obj.hexdigest()
+    # Check if provided key matches any combination of private key and time window
+    for pk in private_keys:
+        key_bytes = pk.encode(encoding)
         
-        # Use constant-time comparison to prevent timing attacks
-        if hmac.compare_digest(provided_key, expected_key):
-            return True
+        for window in windows:
+            message_bytes = window.encode(encoding)
+            hmac_obj = hmac.new(key_bytes, message_bytes, hashlib.sha256)
+            expected_key = hmac_obj.hexdigest()
+            
+            # Use constant-time comparison to prevent timing attacks
+            if hmac.compare_digest(provided_key, expected_key):
+                return True
     
     return False

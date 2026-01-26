@@ -1,7 +1,7 @@
-"""FastAPI middleware and utilities for time-based authentication.
+"""FastAPI middleware and utilities for authentication.
 
 Provides ready-to-use FastAPI middleware and dependency injection for
-securing FastAPI endpoints with time-based HMAC authentication.
+securing FastAPI endpoints with time-based HMAC and/or static API key authentication.
 
 Example:
     ```python
@@ -25,6 +25,7 @@ Example:
     ```
 """
 
+import hmac
 from typing import Optional, Callable
 
 try:
@@ -49,10 +50,41 @@ from .time_based_auth import verify_time_key
 from .auth_settings import AuthSettings
 
 
-class TimeBasedAuthMiddleware(BaseHTTPMiddleware):  # type: ignore
-    """FastAPI middleware for time-based authentication.
+def verify_auth_key(provided_key: str, settings: AuthSettings) -> bool:
+    """Verify an authentication key against configured auth methods.
     
-    Automatically validates time-based auth keys on all requests.
+    Checks the provided key against:
+    1. Static API keys (if configured) - exact match
+    2. Time-based HMAC keys (if configured) - validated against all private keys
+    
+    Args:
+        provided_key: The authentication key to verify
+        settings: AuthSettings instance with configured keys
+        
+    Returns:
+        True if the key is valid via any configured method
+    """
+    if not provided_key or not provided_key.strip():
+        return False
+    
+    # Check static keys first (faster - just a set lookup)
+    if settings.has_static_auth():
+        if settings.is_valid_static_key(provided_key):
+            return True
+    
+    # Check time-based HMAC keys
+    if settings.has_hmac_auth():
+        if verify_time_key(provided_key, settings.auth_private_keys):
+            return True
+    
+    return False
+
+
+class TimeBasedAuthMiddleware(BaseHTTPMiddleware):  # type: ignore
+    """FastAPI middleware for authentication.
+    
+    Automatically validates authentication keys on all requests using
+    either time-based HMAC or static API keys (or both).
     Can be configured with path exclusions for health checks, etc.
     
     Args:
@@ -112,8 +144,8 @@ class TimeBasedAuthMiddleware(BaseHTTPMiddleware):  # type: ignore
                 }
             )
         
-        # Verify the time-based key
-        if not verify_time_key(auth_key, self.settings.auth_private_key):
+        # Verify the key using all configured methods
+        if not verify_auth_key(auth_key, self.settings):
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Invalid or expired authentication key"}
@@ -172,7 +204,7 @@ def create_auth_dependency(settings: AuthSettings):
                 detail=f"Missing authentication header: {settings.auth_key_header_name}"
             )
         
-        if not verify_time_key(api_key, settings.auth_private_key):
+        if not verify_auth_key(api_key, settings):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired authentication key"
@@ -224,7 +256,7 @@ async def verify_auth_dependency(
             detail=f"Missing authentication header: {settings.auth_key_header_name}"
         )
     
-    if not verify_time_key(auth_key, settings.auth_private_key):
+    if not verify_auth_key(auth_key, settings):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication key"
