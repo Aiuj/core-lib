@@ -45,23 +45,25 @@ All fields are optional."""
 # Centralized description for 'intelligence_level' parameter used across applications
 INTELLIGENCE_LEVEL_DESCRIPTION = """Intelligence level (0-10) controlling search depth, quality, and cost.
 
-Higher levels use more sophisticated retrieval and generation techniques:
+Higher levels use more sophisticated retrieval and analysis:
 
-| Level | Name         | Search Methods           | QA Cache | Query Expansion | Context |
-|-------|--------------|--------------------------|----------|-----------------|----------|
-| 0     | Minimal      | Lexical only             | Yes      | None            | 5 chunks |
-| 1     | Basic        | Lexical + keywords       | Yes      | Keywords        | 8 chunks |
-| 3     | Enhanced     | Lexical + Semantic + KW  | Yes      | Keywords        | 10 chunks|
-| 5     | Standard     | Full hybrid RAG          | Yes      | Keywords        | 15 chunks|
-| 7     | High         | Hybrid + better filtering| Yes      | Hybrid (KW+LLM) | 20 chunks|
-| 8     | Advanced     | Hybrid + reranking       | Context* | Hybrid          | 25 chunks|
-| 9     | Expert       | Advanced + multi-hop     | Context* | LLM             | 30 chunks|
-| 10    | Maximum      | All features enabled     | Context* | LLM             | 40 chunks|
+| Level | Name | Search Methods | QA Cache | Query Expansion | Context | Reranking | Search Quality |
+|---|---|---|---|---|---|---|---|
+| 0 | Minimal | Lexical only | No | None | 1 chunk | No | No |
+| 1 | Mini | Lexical only | Direct | None | 2 chunks | No | No |
+| 2 | Basic (Low) | Lexical + semantic QA | Direct + context | None | 3 chunks | No | No |
+| 3 | Basic | Lexical + semantic QA | Direct + context | Keywords | 4 chunks | No | No |
+| 4 | Standard (Low) | Hybrid + chunks | Direct + context | Keywords | 5 chunks | No | No |
+| 5 | Standard (Default) | Hybrid + chunks | Direct + context | Hybrid | 8 chunks | No | No |
+| 6 | High (Low) | Hybrid + chunks | Direct + context | Hybrid | 10 chunks | No | No |
+| 7 | High | Hybrid + chunks | Direct + context | LLM | 12 chunks | Conditional | Yes |
+| 8 | Max (Low) | Hybrid + chunks | Context only* | LLM | 15 chunks | Always | Yes |
+| 9 | Max | Hybrid + chunks | Context only* | LLM | 20 chunks | Always | Yes |
+| 10 | Ultimate | Hybrid + chunks | Context only* | LLM | 30 chunks | Always | Yes |
 
-*Levels 8-10 don't use QA cache for direct answers (RAG generation only), but QA pairs are still used as context.
+*Levels 8-10 don't use QA cache for direct answers, but QA pairs are still used as context.
 
-Default: 5 (Standard) - Recommended for most use cases.
-Higher levels = better quality but slower and more expensive.
+Default: 5 (Standard). Higher levels = better quality but slower and more expensive.
 Lower levels = faster and cheaper but may miss nuanced information."""
 
 
