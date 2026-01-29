@@ -50,6 +50,10 @@ class ApiSettings(BaseSettings):
     # Default server host and port for API servers (configurable via SERVER_HOST/SERVER_PORT env vars)
     server_host: str = "0.0.0.0"
     server_port: int = 8080
+
+    # Authentication settings (JWT + legacy)
+    auth_enabled: bool = False
+    auth_mode: Optional[str] = None
     
     # Optional service configurations for API servers
     cache: Optional[CacheSettings] = None
@@ -139,6 +143,15 @@ class ApiSettings(BaseSettings):
         server_port = overrides.get("server_port")
         if server_port is None:
             server_port = EnvParser.get_env("SERVER_PORT", env_type=int, default=8080)
+
+        # Parse auth settings from environment
+        auth_enabled = overrides.get("auth_enabled")
+        if auth_enabled is None:
+            auth_enabled = EnvParser.get_env("AUTH_ENABLED", default=False, env_type=bool)
+
+        auth_mode = overrides.get("auth_mode")
+        if auth_mode is None:
+            auth_mode = EnvParser.get_env("AUTH_MODE", default=None)
         
         # Build the settings dict
         settings_dict = {
@@ -147,6 +160,8 @@ class ApiSettings(BaseSettings):
             # Server host and port
             "server_host": server_host,
             "server_port": server_port,
+            "auth_enabled": auth_enabled,
+            "auth_mode": auth_mode,
             # Service configurations
             "cache": cache_config,
             "tracing": tracing_config,

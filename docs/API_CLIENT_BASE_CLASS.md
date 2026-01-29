@@ -6,8 +6,9 @@ The `APIClient` base class provides a reusable foundation for building HTTP API 
 
 ## Features
 
-- **Time-based HMAC authentication** (recommended) - Secure, time-limited auth
-- **Legacy API key authentication** - Backward compatibility
+- **JWT Bearer token authentication** (recommended) - Platform-standard auth
+- **Time-based HMAC authentication** (legacy) - Secure, time-limited auth
+- **Static API key authentication** - Backward compatibility
 - **No authentication** - For public APIs
 - **Automatic header generation** - Auth headers added automatically
 - **Standardized error handling** - Consistent error responses
@@ -16,20 +17,20 @@ The `APIClient` base class provides a reusable foundation for building HTTP API 
 
 ## Quick Start
 
-### Basic Usage
+### JWT Authentication (Recommended)
 
 ```python
 from core_lib.api_utils import APIClient
 
-# Create a simple client with time-based auth
+# Create a client with JWT authentication
 client = APIClient(
     base_url="https://api.example.com",
-    auth_enabled=True,
-    auth_private_key="your-secret-key-minimum-16-chars"
+    jwt_token="eyJ..."  # Access token from Django Admin
 )
 
 # Prepare headers for requests
 headers = client._prepare_headers()
+# Results in: {"Authorization": "Bearer eyJ...", "Content-Type": "application/json"}
 
 # Use with httpx
 import httpx
@@ -37,6 +38,48 @@ response = httpx.get(
     f"{client.base_url}/endpoint",
     headers=headers
 )
+```
+
+### Token Refresh Pattern
+
+```python
+from core_lib.api_utils import APIClient
+import httpx
+
+class RefreshableAPIClient(APIClient):
+    """Client with automatic token refresh."""
+    
+    def __init__(self, base_url: str, refresh_token: str, token_endpoint: str):
+        super().__init__(base_url=base_url)
+        self.refresh_token = refresh_token
+        self.token_endpoint = token_endpoint
+        self._refresh_access_token()
+    
+    def _refresh_access_token(self):
+        """Get new access token using refresh token."""
+        response = httpx.post(
+            self.token_endpoint,
+            json={"refresh_token": self.refresh_token}
+        )
+        response.raise_for_status()
+        data = response.json()
+        self.jwt_token = data["access_token"]
+    
+    def _make_request(self, method: str, url: str, **kwargs):
+        """Make request with automatic retry on 401."""
+        headers = self._prepare_headers()
+        kwargs["headers"] = headers
+        
+        with self._create_client() as client:
+            response = getattr(client, method)(url, **kwargs)
+            
+            if response.status_code == 401:
+                # Token expired, refresh and retry
+                self._refresh_access_token()
+                kwargs["headers"] = self._prepare_headers()
+                response = getattr(client, method)(url, **kwargs)
+            
+            return response
 ```
 
 ### Creating a Custom API Client
@@ -73,6 +116,7 @@ class MyAPIClient(APIClient):
 ```python
 APIClient(
     base_url: str,
+    jwt_token: Optional[str] = None,
     api_key: Optional[str] = None,
     auth_enabled: bool = False,
     auth_private_key: Optional[str] = None,
@@ -88,13 +132,23 @@ APIClient(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `base_url` | str | *required* | Base URL of the API (e.g., `http://localhost:9095`) |
+| `jwt_token` | Optional[str] | None | JWT access token for Bearer authentication (recommended) |
 | `api_key` | Optional[str] | None | Static API key for legacy authentication |
-| `auth_enabled` | bool | False | Enable time-based HMAC authentication |
+| `auth_enabled` | bool | False | Enable time-based HMAC authentication (legacy) |
 | `auth_private_key` | Optional[str] | None | Private key for time-based auth (required if `auth_enabled=True`) |
 | `auth_header_name` | str | `"x-auth-key"` | HTTP header name for time-based auth |
 | `api_key_header_name` | str | `"x-api-key"` | HTTP header name for legacy API key |
 | `timeout` | float | 30.0 | Default request timeout in seconds |
 | `verify_ssl` | bool | True | Whether to verify SSL certificates |
+
+## Authentication Priority
+
+The client uses authentication in this priority order:
+
+1. **JWT Bearer Token** (if `jwt_token` is set) — Standard `Authorization: Bearer <token>` header
+2. **Time-based HMAC** (if `auth_enabled=True` and `auth_private_key` is set) — Legacy HMAC auth
+3. **Static API key** (if `api_key` is set) — Simple API key header
+4. **No authentication**
 
 ## Protected Methods
 
@@ -161,20 +215,37 @@ Get the current authentication method as a string.
 
 ```python
 auth_method = client._get_auth_method()
-# Returns: "time-based HMAC", "static API key", or "none"
+# Returns: "JWT Bearer", "time-based HMAC", "static API key", or "none"
 ```
-
-## Authentication Priority
-
-The client uses authentication in this priority order:
-
-1. **Time-based HMAC** (if `auth_enabled=True` and `auth_private_key` is set)
-2. **Legacy API key** (if `api_key` is set)
-3. **No authentication**
 
 ## Environment-Based Configuration
 
-Use a custom prefix for environment variables:
+### JWT Configuration (Recommended)
+
+```python
+import os
+from core_lib.api_utils import APIClient
+
+def create_api_client_from_env(prefix: str) -> APIClient:
+    """Create API client from environment variables with JWT support."""
+    return APIClient(
+        base_url=os.getenv(f"{prefix}_URL"),
+        jwt_token=os.getenv(f"{prefix}_JWT_TOKEN"),
+    )
+
+# Usage with KB_API_ prefix
+client = create_api_client_from_env("KB_API")
+```
+
+**Environment variables:**
+```bash
+KB_API_URL=http://localhost:9095
+KB_API_JWT_TOKEN=eyJ...
+```
+
+### Legacy HMAC Configuration
+
+For backwards compatibility with time-based HMAC:
 
 ```python
 import os
@@ -251,7 +322,13 @@ class UserAPIClient(APIClient):
         except Exception as e:
             return self._handle_response_error(e, operation=f"getting user {user_id}")
 
-# Initialize with time-based auth
+# Initialize with JWT auth (recommended)
+client = UserAPIClient(
+    base_url="https://api.example.com",
+    jwt_token="eyJ..."  # From Django Admin token exchange
+)
+
+# Or with legacy time-based auth
 client = UserAPIClient(
     base_url="https://api.example.com",
     auth_enabled=True,
@@ -372,7 +449,16 @@ The `_handle_response_error` method returns standardized error responses:
 import pytest
 from my_module import MyAPIClient
 
-def test_client_initialization():
+def test_jwt_client_initialization():
+    client = MyAPIClient(
+        base_url="https://api.test.com",
+        jwt_token="eyJ..."
+    )
+    
+    assert client.base_url == "https://api.test.com"
+    assert client._get_auth_method() == "JWT Bearer"
+
+def test_legacy_client_initialization():
     client = MyAPIClient(
         base_url="https://api.test.com",
         auth_enabled=True,
@@ -383,7 +469,17 @@ def test_client_initialization():
     assert client.auth_enabled is True
     assert client._get_auth_method() == "time-based HMAC"
 
-def test_header_generation():
+def test_jwt_header_generation():
+    client = MyAPIClient(
+        base_url="https://api.test.com",
+        jwt_token="test-token-12345"
+    )
+    
+    headers = client._prepare_headers()
+    assert headers["Authorization"] == "Bearer test-token-12345"
+    assert "Content-Type" in headers
+
+def test_hmac_header_generation():
     client = MyAPIClient(
         base_url="https://api.test.com",
         auth_enabled=True,
@@ -399,7 +495,9 @@ def test_header_generation():
 ## Examples
 
 See `examples/example_api_client_usage.py` for comprehensive examples including:
-- Simple API client with time-based auth
+- JWT Bearer token authentication
+- Automatic token refresh
+- Simple API client with time-based auth (legacy)
 - API client with multiple endpoints
 - Environment-based configuration
 - Custom headers and conditional auth
@@ -407,8 +505,9 @@ See `examples/example_api_client_usage.py` for comprehensive examples including:
 
 ## Related Documentation
 
-- [Time-Based Authentication](API_AUTH_QUICK_REFERENCE.md) - HMAC auth system details
-- [KB API Authentication](../../agent-rfx/docs/KB_API_AUTHENTICATION.md) - Real-world usage example
+- [API_AUTH_QUICK_REFERENCE.md](API_AUTH_QUICK_REFERENCE.md) — Platform authentication architecture
+- [JWT_SWAGGER_AUTH_GUIDE.md](JWT_SWAGGER_AUTH_GUIDE.md) — JWT implementation details
+- [saas-admin README](../../saas-admin/README.md) — Creating Service Accounts and obtaining tokens
 
 ## License
 
