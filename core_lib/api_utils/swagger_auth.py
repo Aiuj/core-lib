@@ -49,8 +49,8 @@ except ImportError:
 # Custom JavaScript for Swagger UI token auto-injection
 # This script runs on Swagger UI load and:
 # 1. Checks for ?token= in URL
-# 2. Stores the token in localStorage
-# 3. Pre-populates the auth dialog
+# 2. Waits for Swagger UI to initialize
+# 3. Pre-authorizes the API using Swagger UI's API
 SWAGGER_TOKEN_INIT_SCRIPT = """
 (function() {
     // Extract token from URL if present
@@ -58,32 +58,25 @@ SWAGGER_TOKEN_INIT_SCRIPT = """
     const token = urlParams.get('token');
     
     if (token) {
-        // Store token in localStorage for Swagger UI
-        const authKey = 'authorized';
-        const authData = {
-            BearerAuth: {
-                name: 'BearerAuth',
-                schema: {
-                    type: 'http',
-                    scheme: 'bearer',
-                    bearerFormat: 'JWT'
-                },
-                value: token
-            }
-        };
+        // Clean up URL (remove token param for security)
+        urlParams.delete('token');
+        const cleanUrl = window.location.pathname + 
+            (urlParams.toString() ? '?' + urlParams.toString() : '');
+        window.history.replaceState({}, document.title, cleanUrl);
         
-        try {
-            localStorage.setItem(authKey, JSON.stringify(authData));
-            console.log('[Swagger Auth] Token auto-applied from URL');
-            
-            // Clean up URL (remove token param for security)
-            urlParams.delete('token');
-            const cleanUrl = window.location.pathname + 
-                (urlParams.toString() ? '?' + urlParams.toString() : '');
-            window.history.replaceState({}, document.title, cleanUrl);
-        } catch (e) {
-            console.warn('[Swagger Auth] Could not store token:', e);
+        // Wait for Swagger UI to initialize, then apply the token
+        function applyToken() {
+            if (window.ui && window.ui.preauthorizeApiKey) {
+                window.ui.preauthorizeApiKey('BearerAuth', token);
+                console.log('[Swagger Auth] Token auto-applied from URL');
+            } else {
+                // Swagger UI not ready yet, try again
+                setTimeout(applyToken, 100);
+            }
         }
+        
+        // Start trying to apply token after a short delay
+        setTimeout(applyToken, 200);
     }
 })();
 """

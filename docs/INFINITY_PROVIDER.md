@@ -337,6 +337,137 @@ client_quality = create_infinity_client(
 )
 ```
 
+## High Availability & Failover Configuration
+
+Similar to LLM provider configuration (see `llm_providers.yaml.example`), embedding servers can be configured with automatic failover for production reliability. The `FallbackEmbeddingClient` provides transparent failover between multiple embedding providers or hosts.
+
+### Why Failover Matters
+
+- **High Availability**: If one server goes down, requests automatically route to backups
+- **Load Distribution**: Spread load across multiple servers
+- **Rate Limit Handling**: Automatic retry on 429/503 errors with smart health tracking
+- **Zero Configuration**: `create_embedding_client()` auto-detects HA setup from environment
+
+### Environment Variable Configuration (Recommended)
+
+The simplest approach uses comma-separated URLs:
+
+```bash
+# .env - Multiple Infinity hosts with automatic failover
+EMBEDDING_PROVIDER=infinity
+INFINITY_BASE_URL=http://infinity1:7997,http://infinity2:7997,http://infinity3:7997
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIMENSION=384
+EMBEDDING_TIMEOUT=30
+```
+
+When `create_embedding_client()` detects comma-separated URLs, it automatically creates a `FallbackEmbeddingClient`:
+
+```python
+from core_lib.embeddings import create_embedding_client
+
+# Automatically uses FallbackEmbeddingClient with 3 hosts
+client = create_embedding_client()
+
+# Transparent failover - if infinity1 fails, tries infinity2, then infinity3
+embedding = client.generate_embedding("Production text")
+```
+
+### Per-Host Token Authentication
+
+You can specify separate authentication tokens for each host:
+
+```bash
+# .env - Per-host tokens (matched by position)
+EMBEDDING_PROVIDER=infinity
+INFINITY_BASE_URL=http://infinity1:7997,http://infinity2:7997
+INFINITY_TOKEN=token-for-host1,token-for-host2
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+```
+
+Or use a single shared token:
+
+```bash
+INFINITY_TOKEN=shared-secret-token
+```
+
+### Programmatic Configuration
+
+For more control, use `FallbackEmbeddingClient.from_config()`:
+
+```python
+from core_lib.embeddings import FallbackEmbeddingClient
+
+# Multiple Infinity hosts for redundancy
+client = FallbackEmbeddingClient.from_config([
+    {"provider": "infinity", "base_url": "http://infinity1:7997"},
+    {"provider": "infinity", "base_url": "http://infinity2:7997"},
+    {"provider": "infinity", "base_url": "http://infinity3:7997"},
+])
+
+# Mixed providers with fallback to cloud
+client = FallbackEmbeddingClient.from_config([
+    {"provider": "infinity", "base_url": "http://localhost:7997"},
+    {"provider": "ollama", "base_url": "http://localhost:11434"},
+    {"provider": "openai", "api_key": "sk-..."},
+])
+```
+
+### Failover Behavior
+
+The `FallbackEmbeddingClient` uses smart health tracking:
+
+| Feature | Description |
+|---------|-------------|
+| **Preferred Provider Caching** | Remembers which provider succeeded last to avoid unnecessary retries |
+| **Health Status TTL** | Healthy providers cached for 5 minutes |
+| **Failure Recovery** | Failed providers rechecked after 60 seconds |
+| **Overload Detection** | 503/429 errors use shorter 30-second TTL for faster recovery |
+| **Retry Logic** | Configurable retries per provider before moving to next |
+
+### Monitoring Provider Health
+
+```python
+# Check if at least one provider is healthy
+if client.health_check():
+    print("Embedding service available")
+
+# Get detailed provider statistics
+stats = client.get_provider_stats()
+print(f"Active provider: {stats['current_provider']}/{stats['total_providers']}")
+print(f"Provider failures: {stats['provider_failures']}")
+print(f"Provider overloads: {stats['provider_overloads']}")
+
+for p in stats['providers']:
+    print(f"  {p['index']}: {p['base_url']} - healthy={p['cached_healthy']}")
+```
+
+### Resetting Provider State
+
+```python
+# Reset all failure counters and health cache
+client.reset_failures()
+
+# Force use of a specific provider
+client.force_provider(0)  # Use first provider
+```
+
+### Integration with mcp-doc-qa
+
+For mcp-doc-qa projects, configure multiple embedding servers the same way you configure LLM providers:
+
+```bash
+# .env for mcp-doc-qa with embedding failover
+EMBEDDING_PROVIDER=infinity
+INFINITY_BASE_URL=http://infinity-primary:7997,http://infinity-secondary:7997
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIMENSION=384
+EMBEDDING_TIMEOUT=30
+EMBEDDING_CACHE_DURATION_SECONDS=7200
+```
+
+This mirrors the LLM provider pattern in `llm_providers.yaml` where multiple providers are configured for failover, but uses environment variables since embedding models must remain consistent (switching models would invalidate vector indices).
+
 ## References
 
 - [Infinity GitHub](https://github.com/michaelfeil/infinity)

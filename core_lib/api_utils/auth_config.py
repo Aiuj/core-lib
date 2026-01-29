@@ -214,10 +214,18 @@ def authenticate_request(
     if mode in (AuthMode.LEGACY, AuthMode.BOTH):
         auth_key = legacy_header_value
         if auth_key and legacy_settings and legacy_settings.auth_enabled:
-            if verify_time_key(auth_key, legacy_settings.auth_private_key):
-                return AuthResult(success=True, method="legacy")
-            if mode == AuthMode.LEGACY:
-                return AuthResult(success=False, error="Invalid or expired authentication key")
+            if not legacy_settings.auth_private_key:
+                if mode == AuthMode.LEGACY:
+                    return AuthResult(
+                        success=False,
+                        error="Legacy auth private key is not configured",
+                    )
+                # If BOTH, fall through to allow other auth methods
+            else:
+                if verify_time_key(auth_key, legacy_settings.auth_private_key):
+                    return AuthResult(success=True, method="legacy")
+                if mode == AuthMode.LEGACY:
+                    return AuthResult(success=False, error="Invalid or expired authentication key")
     
     # No valid authentication found
     if mode == AuthMode.BOTH:
