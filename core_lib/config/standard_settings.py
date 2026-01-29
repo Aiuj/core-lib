@@ -112,6 +112,10 @@ class StandardSettings(ApiSettings):
         settings_dict = {
             # Core app settings component from ApiSettings
             "app": api_settings.app,
+            # Server and auth settings from ApiSettings
+            "server_host": api_settings.server_host,
+            "server_port": api_settings.server_port,
+            "auth_mode": api_settings.auth_mode,
             # Additional StandardSettings services
             "llm": llm_config,
             "embeddings": embeddings_config,
