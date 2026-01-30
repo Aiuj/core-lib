@@ -6,6 +6,41 @@ This document tracks the main evolutions of the core-lib project, a Python utili
 
 ---
 
+## Release process
+
+To create a new release, use this prompt:
+
+```
+Can you look at github history, update the version number in pyproject and library setup.py accordingly.
+Then update the release notes and eventually the todo docs as implementation done must be removed. 
+```
+
+And once we are sure everything is pushed and commited:
+
+```
+Then commit, push and tag this new version in github and create a release for this tag in github with proper description in valid markdown format.
+```
+
+---
+
+## January 2026
+
+### v0.3.4 - Auth, Reliability & Usage Tracking (Jan 30, 2026)
+
+- **Authentication Enhancements**: Added JWT auth support and FastMCP v2 middleware, improved legacy auth handling and error messaging
+  - Updated ApiSettings/StandardSettings authentication mode handling
+  - Added support for static API keys and multiple private keys
+- **LLM Reliability & Selection**: Added FallbackLLMClient and ProviderRegistry health-aware selection with env var substitution
+  - Added latency measurement and usage tracking for LLM providers
+  - Updated OpenAI default model to gpt-5.2-preview
+- **Embeddings & Reranker Improvements**: Added usage metrics with latency/cost tracking and reranker token usage
+  - Added embedding sanitization for NaN/Inf values in Local and Ollama clients
+  - Added query/passage prefix settings for asymmetric retrieval models
+- **Miscellaneous Updates**: Added custom exceptions for configuration/API errors and updated docs/instructions
+  - Added LangChain integration fallback support and improved ExcelManager efficiency
+  - Added additional env var support for LLM providers and Gemini schema cleaning
+  - Updated default confidentiality level to prospect
+
 ## November 2025
 
 ### v0.3.3 - Search Usage & Logging Improvements (Nov 27, 2025)
