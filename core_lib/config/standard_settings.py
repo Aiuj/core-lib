@@ -115,6 +115,7 @@ class StandardSettings(ApiSettings):
             # Server and auth settings from ApiSettings
             "server_host": api_settings.server_host,
             "server_port": api_settings.server_port,
+            "server_mode": api_settings.server_mode,
             "auth_mode": api_settings.auth_mode,
             # Additional StandardSettings services
             "llm": llm_config,

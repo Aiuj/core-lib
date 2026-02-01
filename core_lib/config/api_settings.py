@@ -50,6 +50,10 @@ class ApiSettings(BaseSettings):
     # Default server host and port for API servers (configurable via SERVER_HOST/SERVER_PORT env vars)
     server_host: str = "0.0.0.0"
     server_port: int = 8080
+    
+    # Server mode for unified servers: "api", "mcp", or "both" (default: "both")
+    # Controls which servers are mounted in unified server deployments
+    server_mode: str = "both"
 
     # Authentication mode: "jwt", "legacy", "both", or "none" (default: "both")
     # Use "none" to disable authentication
@@ -143,6 +147,12 @@ class ApiSettings(BaseSettings):
         server_port = overrides.get("server_port")
         if server_port is None:
             server_port = EnvParser.get_env("SERVER_PORT", env_type=int, default=8080)
+        
+        # Parse server mode from environment (default: "both")
+        # Controls which servers are mounted: api, mcp, or both
+        server_mode = overrides.get("server_mode")
+        if server_mode is None:
+            server_mode = EnvParser.get_env("SERVER_MODE", default="both")
 
         # Parse auth mode from environment (default: "both")
         # Use AUTH_MODE=none to disable authentication
@@ -157,6 +167,7 @@ class ApiSettings(BaseSettings):
             # Server host and port
             "server_host": server_host,
             "server_port": server_port,
+            "server_mode": server_mode,
             "auth_mode": auth_mode,
             # Service configurations
             "cache": cache_config,

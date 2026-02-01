@@ -161,6 +161,26 @@ OLLAMA_THINKING_ENABLED=true
 # GEMINI_TEMPERATURE=0.3
 ```
 
+## Server Configuration
+
+### Unified Server Settings
+
+For applications running both FastAPI and MCP servers in a single process:
+
+```bash
+export SERVER_HOST=0.0.0.0                   # Server bind address
+export SERVER_PORT=8080                      # Server port (default: 8080)
+export SERVER_MODE=both                      # Server mode: api | mcp | both (default: both)
+export AUTH_MODE=both                        # Authentication mode: jwt | legacy | both | none
+```
+
+**SERVER_MODE options:**
+- `api` - Only mount FastAPI HTTP endpoints
+- `mcp` - Only mount MCP protocol endpoints
+- `both` - Mount both FastAPI and MCP (default)
+
+Useful for container deployments where you want to run separate API and MCP containers, or when you only need one protocol.
+
 ## Logging Configuration
 
 ### Basic Logging
