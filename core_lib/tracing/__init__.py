@@ -20,6 +20,9 @@ from .service_usage import (
     log_search_usage,
     calculate_llm_cost,
     calculate_embedding_cost,
+    set_llm_purpose,
+    set_embedding_purpose,
+    clear_purposes,
 )
 from .service_pricing import (
     LLM_PRICING,
@@ -57,6 +60,9 @@ __all__ = [
     "log_search_usage",
     "calculate_llm_cost",
     "calculate_embedding_cost",
+    "set_llm_purpose",
+    "set_embedding_purpose",
+    "clear_purposes",
     "LLM_PRICING",
     "EMBEDDING_PRICING",
     "OCR_PRICING",

@@ -116,7 +116,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         # Generate unique identifier for this fallback client config
         self._client_id = self._generate_client_id()
         
-        logger.info(
+        logger.debug(
             f"Initialized FallbackEmbeddingClient with {len(providers)} providers: "
             f"model={model}, embedding_dim={embedding_dim}, "
             f"health_cache={'enabled' if use_health_cache else 'disabled'}"
@@ -508,7 +508,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             
             provider_configs.append(config)
         
-        logger.info(
+        logger.debug(
             f"Creating FallbackEmbeddingClient with {len(provider_configs)} {provider} "
             f"instances from environment: {[c['base_url'] for c in provider_configs]}"
         )

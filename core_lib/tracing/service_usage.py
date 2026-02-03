@@ -46,11 +46,40 @@ The logs are sent to OpenSearch with structured attributes that enable queries l
 import time
 from typing import Any, Dict, Optional
 from enum import Enum
+from contextvars import ContextVar
 
 from .logger import get_module_logger
 from .service_pricing import get_llm_pricing, get_embedding_pricing
 
 logger = get_module_logger()
+
+# Context variables for tracking purpose of LLM/embedding calls
+_llm_purpose: ContextVar[Optional[str]] = ContextVar('llm_purpose', default=None)
+_embedding_purpose: ContextVar[Optional[str]] = ContextVar('embedding_purpose', default=None)
+
+
+def set_llm_purpose(purpose: str) -> None:
+    """Set the purpose for LLM calls in the current context.
+    
+    Args:
+        purpose: What the LLM is being used for (e.g., "answer-generation", "grounding")
+    """
+    _llm_purpose.set(purpose)
+
+
+def set_embedding_purpose(purpose: str) -> None:
+    """Set the purpose for embedding calls in the current context.
+    
+    Args:
+        purpose: What embeddings are for (e.g., "query-search", "qa-storage")
+    """
+    _embedding_purpose.set(purpose)
+
+
+def clear_purposes() -> None:
+    """Clear both LLM and embedding purposes from context."""
+    _llm_purpose.set(None)
+    _embedding_purpose.set(None)
 
 
 class ServiceType(str, Enum):
@@ -125,6 +154,7 @@ def log_llm_usage(
     has_tools: bool = False,
     search_grounding: bool = False,
     host: Optional[str] = None,
+    purpose: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -146,6 +176,7 @@ def log_llm_usage(
         search_grounding: Whether search grounding was enabled
         host: Service host URL (e.g., "http://localhost:11434" for Ollama,
               "https://api.openai.com" for OpenAI)
+        purpose: What the LLM call is for (e.g., "answer-generation", "grounding", "translation")
         metadata: Additional context (user_id, session_id, etc.) - automatically
                  included from LoggingContext if set
         error: Error message if the request failed
@@ -171,6 +202,9 @@ def log_llm_usage(
     if input_tokens is not None and output_tokens is not None:
         cost = calculate_llm_cost(provider, model, input_tokens, output_tokens)
     
+    # Get purpose from context if not explicitly provided
+    effective_purpose = purpose or _llm_purpose.get()
+    
     # Build structured event
     event = {
         "service.type": ServiceType.LLM.value,
@@ -184,6 +218,9 @@ def log_llm_usage(
     if host:
         event["gen_ai.host"] = host
         event["server.address"] = host  # OTel semantic convention
+    
+    if effective_purpose:
+        event["gen_ai.purpose"] = effective_purpose
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
@@ -222,8 +259,9 @@ def log_llm_usage(
     # The LoggingContextFilter will automatically add user_id, session_id, etc.
     # The OTLPHandler will send this to OpenSearch
     host_str = f" ({host})" if host else ""
+    purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     logger.info(
-        f"LLM usage: {provider}/{model}{host_str} - {total_tokens or 0} tokens, ${cost:.6f}",
+        f"LLM usage{purpose_str}: {provider}/{model}{host_str} - {total_tokens or 0} tokens, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 
@@ -236,6 +274,7 @@ def log_embedding_usage(
     embedding_dim: Optional[int] = None,
     latency_ms: Optional[float] = None,
     host: Optional[str] = None,
+    purpose: Optional[str] = None,
     cost_override: Optional[float] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
@@ -251,6 +290,7 @@ def log_embedding_usage(
         latency_ms: Request latency in milliseconds
         host: Service host URL (e.g., "http://localhost:7997" for Infinity,
               "https://api.openai.com" for OpenAI)
+        purpose: What the embedding is for (e.g., "query-search", "qa-storage", "document-indexing")
         cost_override: Manual cost override (e.g. 0.0 for cached hits)
         metadata: Additional context
         error: Error message if the request failed
@@ -273,6 +313,9 @@ def log_embedding_usage(
     elif input_tokens is not None:
         cost = calculate_embedding_cost(provider, model, input_tokens)
     
+    # Get purpose from context if not explicitly provided
+    effective_purpose = purpose or _embedding_purpose.get()
+    
     event = {
         "service.type": ServiceType.EMBEDDING.value,
         "service.provider": provider,
@@ -284,6 +327,9 @@ def log_embedding_usage(
     
     if host:
         event["gen_ai.host"] = host
+    
+    if effective_purpose:
+        event["embedding.purpose"] = effective_purpose
     
     if input_tokens is not None:
         event["tokens.input"] = input_tokens
@@ -311,8 +357,10 @@ def log_embedding_usage(
     else:
         event["status"] = "success"
     
+    host_str = f" ({host})" if host else ""
+    purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     logger.info(
-        f"Embedding usage: {provider}/{model} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
+        f"Embedding usage{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 

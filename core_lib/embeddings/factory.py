@@ -408,7 +408,7 @@ def create_embedding_client(
     # If comma-separated URLs detected, use FallbackEmbeddingClient
     if url_to_check and "," in url_to_check:
         from .fallback_client import FallbackEmbeddingClient
-        logger.info(f"Detected comma-separated URLs for provider '{provider_name}', using FallbackEmbeddingClient for HA")
+        logger.debug(f"Detected comma-separated URLs for provider '{provider_name}', using FallbackEmbeddingClient for HA")
         return FallbackEmbeddingClient.from_env(provider=provider_name)
     
     # Otherwise use single provider
