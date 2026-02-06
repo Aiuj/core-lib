@@ -43,6 +43,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 from pydantic import BaseModel
 
 from core_lib.tracing.logger import get_module_logger
+from core_lib.tracing.service_usage import set_intelligence_level
 
 from .llm_client import LLMClient
 from .provider_health import classify_error, get_health_tracker, ProviderHealthTracker
@@ -150,9 +151,17 @@ class FallbackLLMClient:
         # Client cache to avoid recreating clients
         self._client_cache: Dict[str, LLMClient] = {}
         
+        # Log providers in priority order with their level ranges
+        provider_details = []
+        for p in sorted(registry.providers, key=lambda x: x.priority):
+            tier_info = f" [{p.tier}]" if hasattr(p, 'tier') and p.tier else ""
+            level_info = f" (IQ{p.min_intelligence_level}-{p.max_intelligence_level})" if p.min_intelligence_level is not None else ""
+            provider_details.append(
+                f"{p.provider}:{p.model}{tier_info}{level_info} #{p.priority}"
+            )
+        
         logger.info(
-            f"Initialized FallbackLLMClient with {len(registry.providers)} providers: "
-            + ", ".join(f"{p.provider}:{p.model}" for p in registry.providers)
+            f"Initialized FallbackLLMClient with {len(registry.providers)} providers: {', '.join(provider_details)}"
         )
     
     def _get_client(self, config: ProviderConfig) -> LLMClient:
@@ -237,6 +246,27 @@ class FallbackLLMClient:
         
         level = intelligence_level or self._default_intelligence_level
         
+        # Log provider selection context
+        if level is not None:
+            eligible_providers = self._registry.get_providers_for_level(level)
+            if eligible_providers:
+                eligible_details = []
+                for p in sorted(eligible_providers, key=lambda x: x.priority):
+                    tier = f" [{p.tier}]" if hasattr(p, 'tier') and p.tier else ""
+                    eligible_details.append(
+                        f"{p.provider}:{p.model}{tier} #{p.priority}"
+                    )
+                logger.debug(
+                    f"IQ{level}: Eligible providers: "
+                    + ", ".join(eligible_details)
+                )
+            else:
+                logger.warning(
+                    f"No providers match IQ{level}. Using all {len(self._registry.providers)} providers."
+                )
+        else:
+            logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
+        
         for config, is_fallback in self._iter_providers(level):
             provider_id = f"{config.provider}:{config.model}"
             
@@ -244,9 +274,28 @@ class FallbackLLMClient:
             for retry in range(self._max_retries):
                 attempts += 1
                 
+                # Log provider selection reasoning
+                if retry == 0:
+                    tier_info = f" [{config.tier}]" if hasattr(config, 'tier') and config.tier else ""
+                    level_match = ""
+                    if level is not None:
+                        if config.min_intelligence_level is not None and config.max_intelligence_level is not None:
+                            level_match = f" (matches IQ{level}: range {config.min_intelligence_level}-{config.max_intelligence_level})"
+                        else:
+                            level_match = f" (no IQ restriction)"
+                    
+                    status = "fallback" if is_fallback else "primary"
+                    logger.debug(
+                        f"Trying {status}: {provider_id}{tier_info} #{config.priority}{level_match}"
+                    )
+                
                 try:
                     client = self._get_client(config)
                     start_time = time.time()
+                    
+                    # Set intelligence level in context for usage logging
+                    if level is not None:
+                        set_intelligence_level(level)
                     
                     response = client.chat(
                         messages=messages,
@@ -271,13 +320,20 @@ class FallbackLLMClient:
                     self.last_was_fallback = is_fallback
                     self.last_attempts = attempts
                     
+                    tier_info = f" [{config.tier}]" if hasattr(config, 'tier') and config.tier else ""
+                    level_info = f" IQ{level}" if level is not None else ""
+                    
                     if is_fallback:
                         logger.info(
-                            f"Fallback to {provider_id} succeeded in {elapsed_ms:.0f}ms "
-                            f"(attempt {attempts}, tried: {', '.join(providers_tried)})"
+                            f"✓ Fallback{level_info}: {provider_id}{tier_info} #{config.priority} "
+                            f"succeeded in {elapsed_ms:.0f}ms (attempt {attempts}, "
+                            f"tried: {', '.join(providers_tried)})"
                         )
                     else:
-                        logger.debug(f"Primary provider {provider_id} succeeded in {elapsed_ms:.0f}ms")
+                        logger.info(
+                            f"✓ Selected{level_info}: {provider_id}{tier_info} #{config.priority} "
+                            f"({elapsed_ms:.0f}ms)"
+                        )
                     
                     if return_fallback_result:
                         return FallbackResult(

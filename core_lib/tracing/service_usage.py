@@ -56,6 +56,7 @@ logger = get_module_logger()
 # Context variables for tracking purpose of LLM/embedding calls
 _llm_purpose: ContextVar[Optional[str]] = ContextVar('llm_purpose', default=None)
 _embedding_purpose: ContextVar[Optional[str]] = ContextVar('embedding_purpose', default=None)
+_intelligence_level: ContextVar[Optional[int]] = ContextVar('intelligence_level', default=None)
 
 
 def set_llm_purpose(purpose: str) -> None:
@@ -76,10 +77,20 @@ def set_embedding_purpose(purpose: str) -> None:
     _embedding_purpose.set(purpose)
 
 
+def set_intelligence_level(level: int) -> None:
+    """Set the intelligence level for LLM calls in the current context.
+    
+    Args:
+        level: Intelligence level (0-10)
+    """
+    _intelligence_level.set(level)
+
+
 def clear_purposes() -> None:
     """Clear both LLM and embedding purposes from context."""
     _llm_purpose.set(None)
     _embedding_purpose.set(None)
+    _intelligence_level.set(None)
 
 
 class ServiceType(str, Enum):
@@ -155,6 +166,7 @@ def log_llm_usage(
     search_grounding: bool = False,
     host: Optional[str] = None,
     purpose: Optional[str] = None,
+    intelligence_level: Optional[int] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -177,6 +189,7 @@ def log_llm_usage(
         host: Service host URL (e.g., "http://localhost:11434" for Ollama,
               "https://api.openai.com" for OpenAI)
         purpose: What the LLM call is for (e.g., "answer-generation", "grounding", "translation")
+        intelligence_level: Intelligence level requested (0-10)
         metadata: Additional context (user_id, session_id, etc.) - automatically
                  included from LoggingContext if set
         error: Error message if the request failed
@@ -202,8 +215,9 @@ def log_llm_usage(
     if input_tokens is not None and output_tokens is not None:
         cost = calculate_llm_cost(provider, model, input_tokens, output_tokens)
     
-    # Get purpose from context if not explicitly provided
+    # Get purpose and intelligence level from context if not explicitly provided
     effective_purpose = purpose or _llm_purpose.get()
+    effective_intelligence_level = intelligence_level if intelligence_level is not None else _intelligence_level.get()
     
     # Build structured event
     event = {
@@ -221,6 +235,9 @@ def log_llm_usage(
     
     if effective_purpose:
         event["gen_ai.purpose"] = effective_purpose
+    
+    if effective_intelligence_level is not None:
+        event["gen_ai.intelligence_level"] = effective_intelligence_level
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
@@ -260,8 +277,9 @@ def log_llm_usage(
     # The OTLPHandler will send this to OpenSearch
     host_str = f" ({host})" if host else ""
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
+    iq_str = f" IQ{effective_intelligence_level}" if effective_intelligence_level is not None else ""
     logger.info(
-        f"LLM usage{purpose_str}: {provider}/{model}{host_str} - {total_tokens or 0} tokens, ${cost:.6f}",
+        f"LLM usage{purpose_str}: {provider}/{model}{host_str}{iq_str} - {total_tokens or 0} tokens, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 

@@ -22,6 +22,7 @@ from .service_usage import (
     calculate_embedding_cost,
     set_llm_purpose,
     set_embedding_purpose,
+    set_intelligence_level,
     clear_purposes,
 )
 from .service_pricing import (
@@ -62,6 +63,7 @@ __all__ = [
     "calculate_embedding_cost",
     "set_llm_purpose",
     "set_embedding_purpose",
+    "set_intelligence_level",
     "clear_purposes",
     "LLM_PRICING",
     "EMBEDDING_PRICING",
