@@ -377,10 +377,18 @@ def log_embedding_usage(
     
     host_str = f" ({host})" if host else ""
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
-    logger.info(
-        f"Embedding usage{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
-        extra={"extra_attrs": event}
-    )
+    
+    # Use different log level and message format for errors
+    if error:
+        logger.error(
+            f"Embedding FAILED{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens - Error: {error}",
+            extra={"extra_attrs": event}
+        )
+    else:
+        logger.info(
+            f"Embedding usage{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
+            extra={"extra_attrs": event}
+        )
 
 
 def log_reranker_usage(

@@ -283,18 +283,58 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         # Otherwise use normal health check interval
         return (now - last_check) >= self.health_check_interval
     
+    def _is_connection_error(self, error: Exception) -> bool:
+        """Determine if an error indicates server is unreachable.
+        
+        Connection error indicators:
+        - ConnectionError, ConnectTimeout
+        - Name resolution failed
+        - Connection refused
+        - Network unreachable
+        
+        Returns:
+            True if server is unreachable, False otherwise
+        """
+        error_str = str(error).lower()
+        
+        # Check for connection-related exception types
+        # Note: requests.exceptions.ConnectionError includes multiple underlying errors
+        if 'connectionerror' in type(error).__name__.lower():
+            return True
+        
+        # Check error message for connection indicators
+        connection_indicators = [
+            'connection refused',
+            'connection reset',
+            'network unreachable',
+            'no route to host',
+            'name resolution failed',
+            'nodename nor servname provided',
+            'failed to connect',
+            'cannot connect',
+            'host is unreachable',
+        ]
+        
+        return any(indicator in error_str for indicator in connection_indicators)
+    
     def _is_overload_error(self, error: Exception) -> bool:
         """Determine if an error indicates temporary overload vs permanent failure.
         
         Overload indicators:
         - HTTP 503 (Service Unavailable)
         - HTTP 429 (Too Many Requests)
-        - Timeout errors (server too busy to respond)
+        - Timeout errors (server connected but slow to respond)
         - Connection pool exhausted
+        
+        Note: This returns False for connection errors (see _is_connection_error)
         
         Returns:
             True if error indicates temporary overload, False for permanent failure
         """
+        # First check if this is a connection error - those are NOT overload
+        if self._is_connection_error(error):
+            return False
+        
         error_str = str(error).lower()
         
         # Check for HTTP status codes indicating overload
@@ -611,18 +651,32 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     self.provider_failures[idx] = self.provider_failures.get(idx, 0) + 1
                     providers_tried.append(f"{idx}:{type(provider).__name__}")
                     
-                    # Determine if this is temporary overload or permanent failure
+                    # Get provider info for logging
+                    provider_info = type(provider).__name__
+                    if hasattr(provider, 'base_url'):
+                        provider_info = f"{provider_info} ({provider.base_url})"
+                    
+                    # Determine error type: connection error vs overload vs other failure
+                    is_connection_error = self._is_connection_error(e)
                     is_overload = self._is_overload_error(e)
                     
-                    if is_overload:
+                    if is_connection_error:
+                        # Server is unreachable (network issue, host down)
+                        logger.warning(
+                            f"Provider {idx} ({provider_info}) is unreachable "
+                            f"(retry {retry + 1}/{self.max_retries_per_provider}): {e}"
+                        )
+                    elif is_overload:
+                        # Server is reachable but overloaded/slow
                         self.provider_overloads[idx] = self.provider_overloads.get(idx, 0) + 1
                         logger.warning(
-                            f"Provider {idx} ({type(provider).__name__}) is overloaded "
+                            f"Provider {idx} ({provider_info}) is overloaded "
                             f"(retry {retry + 1}/{self.max_retries_per_provider}): {e}"
                         )
                     else:
+                        # Other type of failure
                         logger.warning(
-                            f"Provider {idx} ({type(provider).__name__}) failed "
+                            f"Provider {idx} ({provider_info}) failed "
                             f"(retry {retry + 1}/{self.max_retries_per_provider}): {e}"
                         )
                     

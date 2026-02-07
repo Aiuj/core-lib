@@ -157,7 +157,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             
         except requests.exceptions.Timeout:
             self.embedding_time_ms = (time.time() - start_time) * 1000
-            error_msg = f"Infinity request timed out after {self.timeout}s"
+            error_msg = f"Infinity request timed out after {self.timeout}s (server: {self.base_url})"
             logger.error(error_msg)
             
             # Log error to OpenTelemetry/OpenSearch
