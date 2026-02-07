@@ -1,5 +1,5 @@
 """Factory helpers to create reranker client instances based on configuration."""
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from .reranker_config import reranker_settings
 from .base import BaseRerankerClient
@@ -286,4 +286,83 @@ def get_reranker_client() -> BaseRerankerClient:
 
     This will attempt to create a client automatically based on configuration.
     """
+    return create_client_from_env()
+
+
+def create_fallback_reranker(
+    configs: List[Dict[str, Any]],
+    **fallback_kwargs
+) -> 'FallbackRerankerClient':
+    """Create a fallback reranker client from provider configuration list.
+    
+    Args:
+        configs: List of provider configurations, each a dict with:
+            - provider: Provider name ('infinity', 'cohere', 'local')
+            - Additional provider-specific params (base_url, api_key, etc.)
+        **fallback_kwargs: Arguments for FallbackRerankerClient constructor
+        
+    Returns:
+        Configured fallback reranker client
+        
+    Example:
+        ```python
+        from core_lib.reranker import create_fallback_reranker
+        
+        client = create_fallback_reranker([
+            {"provider": "infinity", "base_url": "http://server1:7997"},
+            {"provider": "infinity", "base_url": "http://server2:7997"},
+            {"provider": "cohere", "api_key": "..."},
+        ], max_retries_per_provider=2)
+        ```
+    """
+    from .fallback_client import FallbackRerankerClient
+    return FallbackRerankerClient.from_config(configs, **fallback_kwargs)
+
+
+def create_reranker_from_env_with_fallback() -> BaseRerankerClient:
+    """Create reranker client with automatic multi-URL failover from environment.
+    
+    Checks if INFINITY_BASE_URL contains comma-separated URLs and creates
+    a fallback client automatically if multiple URLs are detected.
+    
+    Returns:
+        Single provider client or fallback client based on environment config
+        
+    Example:
+        ```bash
+        # Single URL - creates InfinityRerankerClient
+        INFINITY_BASE_URL=http://localhost:7997
+        
+        # Multiple URLs - creates FallbackRerankerClient
+        INFINITY_BASE_URL=http://server1:7997,http://server2:7997,http://server3:7997
+        ```
+    """
+    from .fallback_client import FallbackRerankerClient
+    import os
+    
+    # Check if we have comma-separated URLs for Infinity
+    infinity_url = os.getenv('INFINITY_BASE_URL') or reranker_settings.infinity_url
+    
+    if infinity_url and ',' in infinity_url:
+        # Multiple URLs detected - create fallback client
+        logger.info(f"Creating fallback reranker with multi-URL support: {infinity_url}")
+        
+        # Create a provider for each URL
+        configs = [
+            {
+                "provider": "infinity",
+                "base_url": url.strip(),
+                "model": reranker_settings.model,
+                "timeout": reranker_settings.infinity_timeout,
+                "token": reranker_settings.infinity_token,
+            }
+            for url in infinity_url.split(',')
+        ]
+        
+        return FallbackRerankerClient.from_config(
+            configs,
+            cache_duration_seconds=reranker_settings.cache_duration_seconds,
+        )
+    
+    # Single URL or other provider - use standard creation
     return create_client_from_env()

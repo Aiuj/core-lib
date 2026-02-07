@@ -15,6 +15,9 @@ from .time_based_auth import (
 from .auth_settings import AuthSettings
 from .api_client import APIClient
 
+# Infinity API client (always available)
+from .infinity_api import InfinityAPIClient, InfinityAPIError
+
 # JWT authentication (always available)
 from .jwt_auth import (
     JWTAuthSettings,
@@ -125,6 +128,10 @@ __all__ = [
     "TimeBasedAuthError",
     "AuthSettings",
     "APIClient",
+    
+    # Infinity API client
+    "InfinityAPIClient",
+    "InfinityAPIError",
     
     # FastMCP integration
     "create_auth_middleware",

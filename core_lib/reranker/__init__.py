@@ -58,6 +58,9 @@ except ImportError:
     LocalRerankerClient = None
     _local_available = False
 
+# Fallback client (always available as it doesn't require optional dependencies)
+from .fallback_client import FallbackRerankerClient
+
 from .factory import (
     RerankerFactory,
     create_reranker_client,
@@ -65,6 +68,8 @@ from .factory import (
     create_infinity_reranker,
     create_cohere_reranker,
     create_local_reranker,
+    create_fallback_reranker,
+    create_reranker_from_env_with_fallback,
     get_reranker_client,
 )
 
@@ -78,6 +83,9 @@ __all__ = [
     "RerankerSettings",
     "reranker_settings",
     
+    # Fallback/Multi-provider client
+    "FallbackRerankerClient",
+    
     # Factory and convenience functions
     "RerankerFactory",
     "create_reranker_client",
@@ -85,6 +93,8 @@ __all__ = [
     "create_infinity_reranker",
     "create_cohere_reranker",
     "create_local_reranker",
+    "create_fallback_reranker",
+    "create_reranker_from_env_with_fallback",
     "get_reranker_client",
 ]
 

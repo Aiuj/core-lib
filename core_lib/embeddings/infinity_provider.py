@@ -4,16 +4,14 @@ Infinity is a high-throughput, low-latency REST API for serving text embeddings
 using the OpenAI-compatible API format. It supports multiple models and provides
 an efficient local embedding server.
 
+Supports multi-server failover via comma-separated URLs for high availability.
+
 Documentation: https://github.com/michaelfeil/infinity
 """
 import time
 from typing import List, Optional
 
-try:
-    import requests
-except ImportError:
-    requests = None
-
+from core_lib.api_utils import InfinityAPIClient, InfinityAPIError
 from .embeddings_config import embeddings_settings
 from .base import BaseEmbeddingClient, EmbeddingGenerationError
 from core_lib.tracing.logger import get_module_logger
@@ -27,6 +25,9 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
     
     Infinity provides an OpenAI-compatible embedding API running locally.
     It supports various embedding models with high throughput and low latency.
+    
+    Supports multi-server failover by providing comma-separated URLs:
+        INFINITY_BASE_URL=http://server1:7997,http://server2:7997,http://server3:7997
     """
 
     def __init__(
@@ -45,49 +46,47 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             model: Model name (e.g., 'BAAI/bge-small-en-v1.5', 'sentence-transformers/all-MiniLM-L6-v2')
             embedding_dim: Target embedding dimension
             use_l2_norm: Whether to apply L2 normalization
-            base_url: Base URL of the Infinity server (default: http://localhost:7997)
+            base_url: Base URL(s) - single or comma-separated (default: http://localhost:7997)
             timeout: Request timeout in seconds (default: 30)
             token: Authentication token for secured Infinity servers
             **kwargs: Additional parameters
         """
-        if requests is None:
-            raise ImportError(
-                "requests is required for InfinityEmbeddingClient. "
-                "Install with: pip install requests"
-            )
-
         super().__init__(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm)
         
         # Set base URL with sensible defaults
         # Priority: explicit param > INFINITY_BASE_URL > EMBEDDING_BASE_URL > fallback to localhost
-        self.base_url = (
+        base_url = (
             base_url 
             or embeddings_settings.infinity_url 
             or embeddings_settings.base_url
             or "http://localhost:7997"
         )
-        self.base_url = self.base_url.rstrip('/')
+        
+        # Set timeout
+        # Priority: explicit param > INFINITY_TIMEOUT > EMBEDDING_TIMEOUT > OLLAMA_TIMEOUT > default 30s
+        timeout = timeout or embeddings_settings.infinity_timeout or embeddings_settings.ollama_timeout or 30
         
         # Set token for authentication
         # Priority: explicit param > INFINITY_TOKEN > EMBEDDING_TOKEN
-        self.token = (
+        token = (
             token
             or embeddings_settings.infinity_token
         )
         
-        # Set timeout
-        # Priority: explicit param > INFINITY_TIMEOUT > EMBEDDING_TIMEOUT > OLLAMA_TIMEOUT > default 30s
-        self.timeout = timeout or embeddings_settings.infinity_timeout or embeddings_settings.ollama_timeout or 30
+        # Create shared API client with multi-URL failover support
+        self._api_client = InfinityAPIClient(
+            base_urls=base_url,
+            timeout=timeout,
+            token=token,
+        )
         
         # Set default model if not provided
         if not self.model:
             self.model = "BAAI/bge-small-en-v1.5"
         
-        # Log which URL source was used for debugging
-        url_source = "parameter" if base_url else (
-            "INFINITY_BASE_URL" if embeddings_settings.infinity_url else (
-                "EMBEDDING_BASE_URL" if embeddings_settings.base_url else "default"
-            )
+        logger.debug(
+            f"Initialized Infinity embedding client: model={self.model}, "
+            f"servers={len(self._api_client.base_urls)}"
         )
 
     def _generate_embedding_raw(self, texts: List[str]) -> List[List[float]]:
@@ -109,31 +108,18 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             if self.embedding_dim:
                 request_body['dimensions'] = self.embedding_dim
             
-            # Prepare headers
-            headers = {'Content-Type': 'application/json'}
-            if self.token:
-                headers['Authorization'] = f'Bearer {self.token}'
-            
-            # Make request to Infinity server
-            response = requests.post(
-                f"{self.base_url}/embeddings",
-                json=request_body,
-                headers=headers,
-                timeout=self.timeout
-            )
-            
-            # Raise exception for HTTP errors
-            response.raise_for_status()
-            
-            # Parse response (OpenAI-compatible format)
-            data = response.json()
+            # Make request via shared API client with automatic failover
+            data, used_url = self._api_client.post('/embeddings', json=request_body)
             
             # Extract embeddings from response
             # Response format: {"object": "list", "data": [{"object": "embedding", "embedding": [...], "index": 0}, ...]}
             embeddings = [item['embedding'] for item in sorted(data['data'], key=lambda x: x['index'])]
             
             self.embedding_time_ms = (time.time() - start_time) * 1000
-            logger.debug(f"Generated {len(embeddings)} embeddings in {self.embedding_time_ms:.2f}ms using Infinity")
+            logger.debug(
+                f"Generated {len(embeddings)} embeddings in {self.embedding_time_ms:.2f}ms "
+                f"using Infinity @ {used_url}"
+            )
             
             # Log service usage to OpenTelemetry/OpenSearch
             try:
@@ -148,16 +134,16 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
                     num_texts=len(texts),
                     embedding_dim=self.embedding_dim or len(embeddings[0]) if embeddings else None,
                     latency_ms=self.embedding_time_ms,
-                    host=self.base_url,
+                    host=used_url,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log embedding usage: {e}")
             
             return embeddings
             
-        except requests.exceptions.Timeout:
+        except InfinityAPIError as e:
             self.embedding_time_ms = (time.time() - start_time) * 1000
-            error_msg = f"Infinity request timed out after {self.timeout}s (server: {self.base_url})"
+            error_msg = f"Infinity embedding failed: {e}"
             logger.error(error_msg)
             
             # Log error to OpenTelemetry/OpenSearch
@@ -168,42 +154,11 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
                     num_texts=len(texts),
                     embedding_dim=self.embedding_dim,
                     latency_ms=self.embedding_time_ms,
-                    error=error_msg,
-                    host=self.base_url,
+                    error=str(e),
                 )
             except Exception:
                 pass
             
-            raise EmbeddingGenerationError(error_msg)
-            
-        except requests.exceptions.ConnectionError as e:
-            self.embedding_time_ms = (time.time() - start_time) * 1000
-            error_msg = f"Failed to connect to Infinity server at {self.base_url}: {e}"
-            logger.error(error_msg)
-            raise EmbeddingGenerationError(error_msg)
-            
-        except requests.exceptions.HTTPError as e:
-            self.embedding_time_ms = (time.time() - start_time) * 1000
-            
-            # Try to extract detailed error message
-            detailed_msg = None
-            try:
-                error_detail = response.json()
-                if 'error' in error_detail and 'message' in error_detail['error']:
-                    detailed_msg = error_detail['error']['message']
-                logger.error(f"Error detail: {error_detail}")
-            except:
-                pass
-            
-            # Build user-friendly error message
-            if detailed_msg and "not found" in detailed_msg.lower():
-                error_msg = f"Model '{self.model}' not available in Infinity server. {detailed_msg}"
-            elif detailed_msg:
-                error_msg = f"Infinity server error: {detailed_msg}"
-            else:
-                error_msg = f"Infinity server returned HTTP error: {e}"
-            
-            logger.error(error_msg)
             raise EmbeddingGenerationError(error_msg)
             
         except Exception as e:
@@ -214,42 +169,13 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
 
     def health_check(self) -> bool:
         """Check if the Infinity service is accessible and healthy."""
-        try:
-            # Try the health endpoint first
-            response = requests.get(
-                f"{self.base_url}/health",
-                timeout=5
-            )
-            if response.status_code == 200:
-                return True
-            
-            # Fallback: try to generate a simple embedding
-            response = requests.post(
-                f"{self.base_url}/embeddings",
-                json={
-                    'model': self.model,
-                    'input': ["test"],
-                    'encoding_format': 'float'
-                },
-                headers={'Content-Type': 'application/json'},
-                timeout=5
-            )
-            return response.status_code == 200
-            
-        except Exception as e:
-            logger.warning(f"Infinity health check failed: {e}")
-            return False
+        return self._api_client.health_check()
 
     def get_available_models(self) -> List[str]:
         """Get list of available models from Infinity server."""
         try:
-            response = requests.get(
-                f"{self.base_url}/models",
-                timeout=5
-            )
-            response.raise_for_status()
+            data, _ = self._api_client.get('/models')
             
-            data = response.json()
             # Response format: {"object": "list", "data": [{"id": "model_name", ...}, ...]}
             if 'data' in data and isinstance(data['data'], list):
                 return [model['id'] for model in data['data'] if 'id' in model]
@@ -263,13 +189,8 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
     def get_model_info(self) -> dict:
         """Get information about the current model from Infinity server."""
         try:
-            response = requests.get(
-                f"{self.base_url}/models",
-                timeout=5
-            )
-            response.raise_for_status()
+            data, _ = self._api_client.get('/models')
             
-            data = response.json()
             if 'data' in data and isinstance(data['data'], list):
                 for model_info in data['data']:
                     if model_info.get('id') == self.model:
