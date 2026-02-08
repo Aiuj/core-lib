@@ -125,7 +125,7 @@ class TestInfinityRerankerClient:
     @pytest.fixture
     def mock_requests(self):
         """Mock requests module."""
-        with patch('core_lib.reranker.infinity_provider.requests') as mock:
+        with patch('core_lib.reranker.infinity_provider.requests', create=True) as mock:
             yield mock
     
     def test_infinity_client_initialization(self, mock_requests):
