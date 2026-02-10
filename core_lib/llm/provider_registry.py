@@ -165,6 +165,8 @@ class ProviderConfig:
     azure_api_version: Optional[str] = None
     organization: Optional[str] = None
     project: Optional[str] = None
+    location: Optional[str] = None
+    service_account_file: Optional[str] = None
     
     def __post_init__(self):
         """Normalize provider name and set defaults."""
@@ -256,6 +258,13 @@ class ProviderConfig:
         # OpenAI-specific
         normalized["organization"] = data.get("organization") or data.get("org")
         normalized["project"] = data.get("project")
+        normalized["location"] = data.get("location") or data.get("region")
+        normalized["service_account_file"] = (
+            data.get("service_account_file") or 
+            data.get("serviceAccountFile") or 
+            data.get("credentials_file") or
+            data.get("google_application_credentials")
+        )
         
         # Collect remaining keys as extra
         known_keys = {
@@ -263,7 +272,8 @@ class ProviderConfig:
             "host", "base_url", "baseUrl", "endpoint", "temperature", "max_tokens",
             "maxTokens", "thinking_enabled", "thinkingEnabled", "thinking", "priority",
             "enabled", "azure_endpoint", "azureEndpoint", "azure_api_version",
-            "azureApiVersion", "organization", "org", "project"
+            "azureApiVersion", "organization", "org", "project", "location", "region",
+            "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials"
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
@@ -279,12 +289,15 @@ class ProviderConfig:
         if self.provider == "gemini":
             from .providers.google_genai_provider import GeminiConfig
             return GeminiConfig(
-                api_key=self.api_key or "",
+                api_key=self.api_key,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
+                project=self.project,
+                location=self.location,
+                service_account_file=self.service_account_file,
             )
         
         elif self.provider in ("openai", "azure-openai"):
@@ -336,7 +349,20 @@ class ProviderConfig:
         if not self.enabled:
             return False
         
-        if self.provider in ("gemini", "openai"):
+        if self.provider == "gemini":
+            # AI Studio (API Key) OR Vertex AI (Project + Location)
+            # Check configured values or environment fallback
+            has_api_key = bool(self.api_key)
+            
+            # For Vertex, we need project and location (either in config or env)
+            has_project = bool(self.project) or bool(os.getenv("GOOGLE_CLOUD_PROJECT")) or bool(os.getenv("GOOGLE_PROJECT_ID"))
+            has_location = bool(self.location) or bool(os.getenv("GOOGLE_CLOUD_LOCATION")) or bool(os.getenv("GOOGLE_CLOUD_REGION"))
+            
+            has_vertex = has_project and has_location
+            
+            return has_api_key or has_vertex
+            
+        elif self.provider == "openai":
             return bool(self.api_key)
         elif self.provider == "azure-openai":
             return bool(self.api_key) and bool(self.azure_endpoint)

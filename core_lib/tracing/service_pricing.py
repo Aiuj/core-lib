@@ -29,7 +29,9 @@ LLM_PRICING = {
     # Google Gemini models
     # Source: https://ai.google.dev/gemini-api/docs/pricing
     # Gemini 2.5 models (per 1M tokens in API docs, converted to per 1K)
+    "gemini-3-pro-preview": {"input": 0.002, "output": 0.012},  # $2/$12.00 per 1M tokens (<= 200k prompts)
     "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},  # $1.25/$10.00 per 1M tokens (<= 200k prompts)
+    "gemini-3-flash-preview": {"input": 0.0005, "output": 0.003},  # $0.5/$1.00 per 1M tokens (<= 200k prompts)
     "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},  # $0.30/$2.50 per 1M tokens
     "gemini-2.5-flash-preview": {"input": 0.0003, "output": 0.0025},
     "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},  # $0.10/$0.40 per 1M tokens

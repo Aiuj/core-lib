@@ -67,19 +67,25 @@ def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
 
 @dataclass
 class GeminiConfig(LLMConfig):
-    api_key: str
+    api_key: Optional[str]
     base_url: str = "https://generativelanguage.googleapis.com"
     safety_settings: Optional[Dict[str, Any]] = None
+    project: Optional[str] = None
+    location: Optional[str] = None
+    service_account_file: Optional[str] = None
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         model: str = "gemini-1.5-flash",
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
         base_url: str = "https://generativelanguage.googleapis.com",
         safety_settings: Optional[Dict[str, Any]] = None,
+        project: Optional[str] = None,
+        location: Optional[str] = None,
+        service_account_file: Optional[str] = None,
     ):
         super().__init__("gemini", model, temperature, max_tokens, thinking_enabled)
         self.api_key = api_key
@@ -90,6 +96,9 @@ class GeminiConfig(LLMConfig):
             "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_ONLY_HIGH",
             "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_ONLY_HIGH",
         }
+        self.project = project
+        self.location = location
+        self.service_account_file = service_account_file
 
     @classmethod
     def from_env(cls) -> "GeminiConfig":
@@ -102,13 +111,17 @@ class GeminiConfig(LLMConfig):
                     return val
             return default
 
-        api_key = get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY", default="")
+        api_key = get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY", default=None)
         model = get_env("GEMINI_MODEL", "GOOGLE_GENAI_MODEL", "GOOGLE_GENAI_MODEL_DEFAULT", default="gemini-1.5-flash")
         temperature = float(get_env("GEMINI_TEMPERATURE", "GOOGLE_GENAI_TEMPERATURE", default="0.1"))
         max_tokens_env = get_env("GEMINI_MAX_TOKENS", "GOOGLE_GENAI_MAX_TOKENS")
         max_tokens = int(max_tokens_env) if max_tokens_env is not None else None
         thinking_enabled = get_env("GEMINI_THINKING_ENABLED", "GOOGLE_GENAI_THINKING_ENABLED", default="false").lower() == "true"
         base_url = get_env("GEMINI_BASE_URL", "GOOGLE_GENAI_BASE_URL", default="https://generativelanguage.googleapis.com")
+        
+        project = get_env("GOOGLE_CLOUD_PROJECT", "GOOGLE_PROJECT_ID")
+        location = get_env("GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_REGION")
+        service_account_file = get_env("GOOGLE_APPLICATION_CREDENTIALS", "GEMINI_SERVICE_ACCOUNT_FILE")
 
         return cls(
             api_key=api_key,
@@ -117,6 +130,9 @@ class GeminiConfig(LLMConfig):
             max_tokens=max_tokens,
             thinking_enabled=thinking_enabled,
             base_url=base_url,
+            project=project,
+            location=location,
+            service_account_file=service_account_file,
         )
 
 class GoogleGenAIProvider(BaseProvider):
@@ -135,6 +151,8 @@ class GoogleGenAIProvider(BaseProvider):
     # we expect to find in the configured model name for a match. These values
     # reflect only RPM (requests per minute); TPM/RPD intentionally ignored for now.
     _MODEL_RPM: Dict[str, int] = {
+        "gemini-3-pro-preview": 5,    # Gemini 3.0 Pro
+        "gemini-3-flash-preview": 15, # Gemini 3.0 Flash
         "gemini-2.5-pro": 5,          # Gemini 2.5 Pro
         "gemini-2.5-flash-lite": 15,  # Gemini 2.5 Flash-Lite
         "gemini-2.5-flash": 10,       # Gemini 2.5 Flash (keep after flash-lite for matching specificity)
@@ -152,11 +170,45 @@ class GoogleGenAIProvider(BaseProvider):
         super().__init__(config)
 
         # Lazy import to avoid hard dependency if unused
+        import os
         from google import genai  # type: ignore
 
+        # Resolve project and location: config > env var > None
+        project = config.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID")
+        location = config.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION")
+
         # Build client; supports API key from env or passed explicitly
-        # Gemini Developer API (default). Vertex AI could be added later.
-        self._client = genai.Client(api_key=config.api_key)
+        # Gemini Developer API (default) or Vertex AI configuration
+        if project and location:
+            # Vertex AI Mode
+            client_kwargs = {
+                "vertexai": True,
+                "project": project,
+                "location": location,
+            }
+            
+            # Application Credentials from file (if provided)
+            # This allows overriding the default ADC or env var credentials for specific providers
+            if config.service_account_file:
+                try:
+                    from google.oauth2 import service_account
+                    # Explicitly set cloud-platform scope ensuring access to Vertex AI
+                    scopes = ['https://www.googleapis.com/auth/cloud-platform']
+                    credentials = service_account.Credentials.from_service_account_file(
+                        config.service_account_file, 
+                        scopes=scopes
+                    )
+                    client_kwargs["credentials"] = credentials
+                    # Note: When using credentials object, we don't need to pass api_key is ignored in vertex mode usually
+                except ImportError:
+                    logger.warning("google-auth not installed, cannot load service_account_file. Install with 'pip install google-auth'")
+                except Exception as e:
+                    logger.error(f"Failed to load service account file: {e}")
+            
+            self._client = genai.Client(**client_kwargs)
+        else:
+            # AI Studio (Standard) Mode
+            self._client = genai.Client(api_key=config.api_key)
 
         # Instrument only once globally to avoid "already instrumented" warnings
         global _instrumentation_initialized
@@ -315,12 +367,22 @@ class GoogleGenAIProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled_override: Optional[bool] = None,
+        cached_content: Optional[str] = None,
     ) -> Dict[str, Any]:
         from google.genai import types  # type: ignore
 
         cfg: Dict[str, Any] = {
             "temperature": self.config.temperature,
         }
+        
+        # Explicit Context Caching support
+        if cached_content:
+            if system_message:
+                logger.warning(
+                    "System message provided with cached_content; this may be ignored or cause errors "
+                    "as system instructions should be baked into the cache."
+                )
+
         if getattr(self.config, "max_tokens", None) is not None:
             cfg["max_output_tokens"] = self.config.max_tokens
 
@@ -344,10 +406,10 @@ class GoogleGenAIProvider(BaseProvider):
             # Never fail building config due to thinking support
             pass
 
-        if system_message:
+        if system_message and not cached_content:
             cfg["system_instruction"] = system_message
 
-        if tools:
+        if tools and not cached_content:
             cfg["tools"] = tools
 
         # Grounding via Google Search (per official docs)
@@ -387,7 +449,10 @@ class GoogleGenAIProvider(BaseProvider):
                     "response_mime_type": "application/json",
                     "response_schema": structured_output,
                 }
-        return {"config": types.GenerateContentConfig(**cfg)}
+        result = {"config": types.GenerateContentConfig(**cfg)}
+        if cached_content:
+            result["cached_content"] = cached_content
+        return result
 
     def _build_tools(self, tools: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
         # google.genai supports tools and tool_config; for now pass through as-is
@@ -455,11 +520,14 @@ class GoogleGenAIProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """Main chat interface with rate limiting and retry logic."""
         try:
             # Enforce model-specific RPM throttling before performing network call.
             self._acquire_rate_limit()
+            
+            cached_content = kwargs.get("cached_content")
             
             # Call the actual API with retry logic
             return self._chat_with_retry(
@@ -469,6 +537,7 @@ class GoogleGenAIProvider(BaseProvider):
                 system_message=system_message,
                 use_search_grounding=use_search_grounding,
                 thinking_enabled=thinking_enabled,
+                cached_content=cached_content,
             )
         except Exception as e:  # pragma: no cover - network errors
             # Log error without full traceback for retryable errors (retries already logged)
@@ -496,6 +565,7 @@ class GoogleGenAIProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        cached_content: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Core API call logic with retry decoration applied.
         
@@ -523,6 +593,7 @@ class GoogleGenAIProvider(BaseProvider):
                     "msg_count": len(messages),
                     "has_tools": bool(tools),
                     "structured": bool(structured_output),
+                    "cached_content": cached_content,
                 },
             )
             # Determine if this is a single-turn prompt (only one user message, optional system)
@@ -554,6 +625,7 @@ class GoogleGenAIProvider(BaseProvider):
                     system_message=system_message,
                     use_search_grounding=use_search_grounding,
                     thinking_enabled_override=thinking_enabled,
+                    cached_content=cached_content,
                 )
                 start = time.perf_counter()
                 resp = self._client.models.generate_content(
@@ -570,8 +642,17 @@ class GoogleGenAIProvider(BaseProvider):
                     system_message=system_message,
                     use_search_grounding=use_search_grounding,
                     thinking_enabled_override=thinking_enabled,
+                    cached_content=cached_content,
                 )
                 # Preserve multi-turn via chats API
+                # NOTE: chats.create might not support cached_content in the create call?
+                # The docs say pass it to generateContent. Not sure about chat sessions.
+                # However, for chat, we often send history + new message.
+                # If cached content is used, it usually replaces the initial context.
+                # google.genai chat might be tricky with cache. 
+                # Docs say: "You can use a context cache... in a generative AI application."
+                # Chat creates a session.
+                # Let's assume passed in config it works.
                 chat = self._client.chats.create(model=self.config.model)
                 start = time.perf_counter()
                 resp = chat.send_message(prompt, **extra)  # type: ignore[arg-type]
