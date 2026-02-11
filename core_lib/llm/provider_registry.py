@@ -129,7 +129,7 @@ class ProviderConfig:
     provider-specific configs (GeminiConfig, OpenAIConfig, OllamaConfig).
     
     Attributes:
-        provider: Provider name (gemini, openai, azure-openai, ollama)
+        provider: Provider name (gemini, vertex, openai, azure-openai, ollama)
         model: Model name/identifier
         api_key: API key (for cloud providers)
         host: Base URL/host (for Ollama or custom endpoints)
@@ -182,6 +182,7 @@ class ProviderConfig:
         if not self.model:
             defaults = {
                 "gemini": "gemini-2.0-flash",
+                "vertex": "gemini-2.0-flash",
                 "openai": "gpt-4o-mini",
                 "azure-openai": "gpt-4o-mini",
                 "ollama": "llama3.2",
@@ -288,16 +289,31 @@ class ProviderConfig:
         """
         if self.provider == "gemini":
             from .providers.google_genai_provider import GeminiConfig
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
             return GeminiConfig(
-                api_key=self.api_key,
+                api_key=api_key,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
-                project=self.project,
-                location=self.location,
-                service_account_file=self.service_account_file,
+                project=None,
+                location=None,
+                service_account_file=None,
+            )
+
+        elif self.provider == "vertex":
+            from .providers.google_genai_provider import GeminiConfig
+            return GeminiConfig(
+                api_key=None,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                base_url=self.host or "https://generativelanguage.googleapis.com",
+                project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
+                location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
+                service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
             )
         
         elif self.provider in ("openai", "azure-openai"):
@@ -350,17 +366,14 @@ class ProviderConfig:
             return False
         
         if self.provider == "gemini":
-            # AI Studio (API Key) OR Vertex AI (Project + Location)
-            # Check configured values or environment fallback
-            has_api_key = bool(self.api_key)
-            
-            # For Vertex, we need project and location (either in config or env)
+            # AI Studio (API Key) only
+            return bool(self.api_key) or bool(os.getenv("GEMINI_API_KEY")) or bool(os.getenv("GOOGLE_GENAI_API_KEY"))
+
+        if self.provider == "vertex":
             has_project = bool(self.project) or bool(os.getenv("GOOGLE_CLOUD_PROJECT")) or bool(os.getenv("GOOGLE_PROJECT_ID"))
             has_location = bool(self.location) or bool(os.getenv("GOOGLE_CLOUD_LOCATION")) or bool(os.getenv("GOOGLE_CLOUD_REGION"))
-            
-            has_vertex = has_project and has_location
-            
-            return has_api_key or has_vertex
+            has_service_account = bool(self.service_account_file) or bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+            return has_project and has_location and has_service_account
             
         elif self.provider == "openai":
             return bool(self.api_key)

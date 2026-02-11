@@ -177,9 +177,10 @@ class GoogleGenAIProvider(BaseProvider):
         project = config.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID")
         location = config.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION")
 
-        # Build client; supports API key from env or passed explicitly
-        # Gemini Developer API (default) or Vertex AI configuration
-        if project and location:
+        # Determine mode: Vertex AI when service account + project + location are set; otherwise AI Studio.
+        use_vertex = bool(project and location and config.service_account_file)
+
+        if use_vertex:
             # Vertex AI Mode
             client_kwargs = {
                 "vertexai": True,
