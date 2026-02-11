@@ -73,7 +73,7 @@ class DatabaseSettings(BaseSettings):
         if self.sslmode not in ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]:
             raise SettingsError("Invalid SSL mode. Must be one of: disable, allow, prefer, require, verify-ca, verify-full")
     
-    def get_connection_string(self, driver: str = "postgresql") -> str:
+    def get_connection_string(self, driver: str = "postgresql", include_connect_timeout: bool = False) -> str:
         """Generate database connection string.
         
         Args:
@@ -82,9 +82,12 @@ class DatabaseSettings(BaseSettings):
         Returns:
             Database connection string
         """
+        query = f"sslmode={self.sslmode}"
+        if include_connect_timeout and self.connect_timeout is not None:
+            query = f"{query}&connect_timeout={self.connect_timeout}"
         return (
             f"{driver}://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
-            f"?sslmode={self.sslmode}&connect_timeout={self.connect_timeout}"
+            f"?{query}"
         )
     
     def get_async_connection_string(self) -> str:

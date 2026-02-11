@@ -123,20 +123,12 @@ class LLMSettings(BaseSettings):
         # Azure first since it's more specific than generic OpenAI
         if EnvParser.get_env("AZURE_OPENAI_API_KEY") or EnvParser.get_env("AZURE_OPENAI_ENDPOINT"):
             return "azure"
-        elif EnvParser.get_env(
-            "GEMINI_API_KEY",
-            "GOOGLE_GENAI_API_KEY",
-            "GOOGLE_CLOUD_PROJECT",
-            "GOOGLE_PROJECT_ID",
-            "GOOGLE_CLOUD_LOCATION",
-            "GOOGLE_CLOUD_REGION",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-        ):
-            return "gemini"
-        elif EnvParser.get_env("OLLAMA_HOST", "OLLAMA_BASE_URL"):
-            return "ollama"
         elif EnvParser.get_env("OPENAI_API_KEY"):
             return "openai"
+        elif EnvParser.get_env("OLLAMA_HOST", "OLLAMA_BASE_URL"):
+            return "ollama"
+        elif EnvParser.get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY"):
+            return "gemini"
         
         return "openai"  # Default
     
