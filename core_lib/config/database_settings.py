@@ -26,6 +26,7 @@ class DatabaseSettings(BaseSettings):
     pool_size: int = 10
     max_overflow: int = 20
     pool_timeout: int = 30
+    connect_timeout: int = 5
     
     @classmethod
     def from_env(
@@ -47,6 +48,7 @@ class DatabaseSettings(BaseSettings):
             "pool_size": EnvParser.get_env("POSTGRES_POOL_SIZE", "DATABASE_POOL_SIZE", default=10, env_type=int),
             "max_overflow": EnvParser.get_env("POSTGRES_MAX_OVERFLOW", "DATABASE_MAX_OVERFLOW", default=20, env_type=int),
             "pool_timeout": EnvParser.get_env("POSTGRES_POOL_TIMEOUT", "DATABASE_POOL_TIMEOUT", default=30, env_type=int),
+            "connect_timeout": EnvParser.get_env("POSTGRES_CONNECT_TIMEOUT", "DATABASE_CONNECT_TIMEOUT", default=5, env_type=int),
         }
         
         settings_dict.update(overrides)
@@ -66,6 +68,8 @@ class DatabaseSettings(BaseSettings):
             raise SettingsError("Max overflow must be non-negative")
         if self.pool_timeout <= 0:
             raise SettingsError("Pool timeout must be positive")
+        if self.connect_timeout <= 0:
+            raise SettingsError("Connect timeout must be positive")
         if self.sslmode not in ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]:
             raise SettingsError("Invalid SSL mode. Must be one of: disable, allow, prefer, require, verify-ca, verify-full")
     
@@ -78,7 +82,10 @@ class DatabaseSettings(BaseSettings):
         Returns:
             Database connection string
         """
-        return f"{driver}://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode={self.sslmode}"
+        return (
+            f"{driver}://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+            f"?sslmode={self.sslmode}&connect_timeout={self.connect_timeout}"
+        )
     
     def get_async_connection_string(self) -> str:
         """Generate async database connection string for asyncpg."""
@@ -100,4 +107,5 @@ class DatabaseSettings(BaseSettings):
             "pool_size": self.pool_size,
             "max_overflow": self.max_overflow,
             "pool_timeout": self.pool_timeout,
+            "connect_timeout": self.connect_timeout,
         }
