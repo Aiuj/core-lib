@@ -136,6 +136,7 @@ class ProviderConfig:
         temperature: Sampling temperature
         max_tokens: Maximum tokens to generate
         thinking_enabled: Enable step-by-step thinking
+        thinking_config: Optional provider-specific thinking configuration
         priority: Lower number = higher priority (for fallback ordering)
         enabled: Whether this provider is enabled
         min_intelligence_level: Minimum intelligence level to use this provider (0-10)
@@ -150,6 +151,7 @@ class ProviderConfig:
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     thinking_enabled: bool = False
+    thinking_config: Optional[Dict[str, Any]] = None
     priority: int = 100
     enabled: bool = True
     
@@ -225,9 +227,43 @@ class ProviderConfig:
             normalized["max_tokens"] = int(max_tokens)
         
         # Thinking mode
-        thinking = data.get("thinking_enabled") or data.get("thinkingEnabled") or data.get("thinking")
-        if thinking is not None:
-            normalized["thinking_enabled"] = bool(thinking) if not isinstance(thinking, str) else thinking.lower() == "true"
+        thinking = data.get("thinking")
+        if thinking is None and ("thinking_enabled" in data or "thinkingEnabled" in data):
+            thinking = data.get("thinking_enabled", data.get("thinkingEnabled"))
+
+        thinking_level = data.get("thinking_level") if "thinking_level" in data else data.get("thinkingLevel")
+        thinking_budget = data.get("thinking_budget") if "thinking_budget" in data else data.get("thinkingBudget")
+        include_thoughts = data.get("include_thoughts") if "include_thoughts" in data else data.get("includeThoughts")
+
+        thinking_cfg: Dict[str, Any] = {}
+
+        if isinstance(thinking, dict):
+            thinking_cfg.update(thinking)
+            if "enabled" in thinking:
+                normalized["thinking_enabled"] = bool(thinking.get("enabled"))
+        elif isinstance(thinking, (int, float)):
+            budget = int(thinking)
+            thinking_cfg["budget"] = budget
+            normalized["thinking_enabled"] = budget > 0
+        elif isinstance(thinking, str):
+            thinking_lc = thinking.lower().strip()
+            if thinking_lc in {"true", "false"}:
+                normalized["thinking_enabled"] = thinking_lc == "true"
+            else:
+                thinking_cfg["level"] = thinking_lc
+                normalized["thinking_enabled"] = thinking_lc not in {"off", "none", "disabled", "disable", "0"}
+        elif thinking is not None:
+            normalized["thinking_enabled"] = bool(thinking)
+
+        if thinking_level is not None:
+            thinking_cfg["level"] = str(thinking_level).lower()
+        if thinking_budget is not None:
+            thinking_cfg["budget"] = int(thinking_budget)
+        if include_thoughts is not None:
+            thinking_cfg["include_thoughts"] = bool(include_thoughts)
+
+        if thinking_cfg:
+            normalized["thinking_config"] = thinking_cfg
         
         # Priority
         if "priority" in data:
@@ -271,7 +307,9 @@ class ProviderConfig:
         known_keys = {
             "provider", "type", "model", "model_name", "api_key", "apiKey", "key",
             "host", "base_url", "baseUrl", "endpoint", "temperature", "max_tokens",
-            "maxTokens", "thinking_enabled", "thinkingEnabled", "thinking", "priority",
+            "maxTokens", "thinking_enabled", "thinkingEnabled", "thinking", "thinking_config",
+            "thinkingConfig", "thinking_level", "thinkingLevel", "thinking_budget", "thinkingBudget",
+            "include_thoughts", "includeThoughts", "priority",
             "enabled", "azure_endpoint", "azureEndpoint", "azure_api_version",
             "azureApiVersion", "organization", "org", "project", "location", "region",
             "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials"
@@ -296,6 +334,7 @@ class ProviderConfig:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
                 project=None,
                 location=None,
@@ -310,6 +349,7 @@ class ProviderConfig:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
@@ -338,6 +378,7 @@ class ProviderConfig:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "http://localhost:11434",
                 **{k: v for k, v in self.extra.items() if k in (
                     "timeout", "num_ctx", "num_predict", "repeat_penalty", "top_k", "top_p"

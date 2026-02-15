@@ -29,6 +29,7 @@ class OllamaConfig(LLMConfig):
     repeat_penalty: Optional[float] = None
     top_k: Optional[int] = None
     top_p: Optional[float] = None
+    thinking_config: Optional[Dict[str, Any]] = None
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class OllamaConfig(LLMConfig):
         repeat_penalty: Optional[float] = None,
         top_k: Optional[int] = None,
         top_p: Optional[float] = None,
+        thinking_config: Optional[Dict[str, Any]] = None,
     ):
         super().__init__("ollama", model, temperature, max_tokens, thinking_enabled)
         self.base_url = base_url
@@ -52,6 +54,7 @@ class OllamaConfig(LLMConfig):
         self.repeat_penalty = repeat_penalty
         self.top_k = top_k
         self.top_p = top_p
+        self.thinking_config = dict(thinking_config) if thinking_config else None
 
     @classmethod
     def from_env(cls) -> "OllamaConfig":
@@ -63,12 +66,23 @@ class OllamaConfig(LLMConfig):
         repeat_penalty_env = os.getenv("OLLAMA_REPEAT_PENALTY")
         top_k_env = os.getenv("OLLAMA_TOP_K")
         top_p_env = os.getenv("OLLAMA_TOP_P")
+        thinking_level = os.getenv("OLLAMA_THINKING_LEVEL")
+        thinking_budget_env = os.getenv("OLLAMA_THINKING_BUDGET")
+
+        thinking_config: Optional[Dict[str, Any]] = None
+        if thinking_level is not None or thinking_budget_env is not None:
+            thinking_config = {}
+            if thinking_level is not None:
+                thinking_config["level"] = str(thinking_level).lower()
+            if thinking_budget_env is not None:
+                thinking_config["budget"] = int(thinking_budget_env)
 
         return cls(
             model=os.getenv("OLLAMA_MODEL", "qwen3:1.7b"),
             temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.1")),
             max_tokens=int(max_tokens_env) if max_tokens_env is not None else None,
             thinking_enabled=os.getenv("OLLAMA_THINKING_ENABLED", "false").lower() == "true",
+            thinking_config=thinking_config,
             base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             timeout=int(os.getenv("OLLAMA_TIMEOUT", "60")),
             num_ctx=int(num_ctx_env) if num_ctx_env is not None else None,
@@ -80,6 +94,11 @@ class OllamaConfig(LLMConfig):
 
 class OllamaProvider(BaseProvider):
     """Provider implementation for Ollama (local models)."""
+
+    _THINKING_MODEL_HINTS = (
+        "deepseek-r1",
+        "qwen3",
+    )
 
     def __init__(self, config: OllamaConfig) -> None:  # type: ignore[override]
         super().__init__(config)
@@ -107,6 +126,39 @@ class OllamaProvider(BaseProvider):
         if self.config.top_p is not None:
             options["top_p"] = self.config.top_p
         return options
+
+    def _supports_thinking(self) -> bool:
+        model_lc = (self.config.model or "").lower()
+        return any(hint in model_lc for hint in self._THINKING_MODEL_HINTS)
+
+    def _resolve_think_flag(self, thinking_enabled_override: Optional[bool]) -> Optional[bool]:
+        cfg_thinking = getattr(self.config, "thinking_config", None) or {}
+        if not isinstance(cfg_thinking, dict):
+            cfg_thinking = {}
+
+        disable_levels = {"off", "none", "disabled", "disable", "0"}
+        level_raw = cfg_thinking.get("level")
+        level = str(level_raw).lower().strip() if level_raw is not None else None
+
+        budget_raw = cfg_thinking.get("budget")
+        budget: Optional[int] = None
+        if budget_raw is not None:
+            try:
+                budget = int(budget_raw)
+            except Exception:
+                budget = None
+
+        if thinking_enabled_override is not None:
+            return bool(thinking_enabled_override)
+        if "enabled" in cfg_thinking:
+            return bool(cfg_thinking.get("enabled"))
+        if level in disable_levels:
+            return False
+        if budget is not None:
+            return budget > 0
+        if level is not None:
+            return True
+        return bool(getattr(self.config, "thinking_enabled", False))
 
     def chat(
         self,
@@ -148,12 +200,11 @@ class OllamaProvider(BaseProvider):
                     payload["format"] = "json"
 
             # Thinking support per https://ollama.com/blog/thinking
-            if thinking_enabled is True:
+            # Ollama Python/HTTP uses top-level `think: bool`.
+            think_flag = self._resolve_think_flag(thinking_enabled)
+            if think_flag is not None and self._supports_thinking():
                 try:
-                    opts = payload.get("options", {}) or {}
-                    if isinstance(opts, dict):
-                        opts["thinking"] = opts.get("thinking", {"type": "enabled"})
-                        payload["options"] = opts
+                    payload["think"] = bool(think_flag)
                 except Exception:
                     pass
 
@@ -170,6 +221,7 @@ class OllamaProvider(BaseProvider):
 
             message = resp.get("message", {})
             content_text = message.get("content", "")
+            thinking_text = message.get("thinking")
             tool_calls = message.get("tool_calls", []) or []
 
             usage = resp.get("usage", {}) or {}
@@ -237,6 +289,7 @@ class OllamaProvider(BaseProvider):
                 "structured": False,
                 "tool_calls": tool_calls,
                 "usage": usage,
+                "thinking": thinking_text,
             }
         except Exception as e:  # pragma: no cover - runtime connectivity
             logger.exception("ollama.chat failed")

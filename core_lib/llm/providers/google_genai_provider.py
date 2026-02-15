@@ -73,6 +73,7 @@ class GeminiConfig(LLMConfig):
     project: Optional[str] = None
     location: Optional[str] = None
     service_account_file: Optional[str] = None
+    thinking_config: Optional[Dict[str, Any]] = None
 
     def __init__(
         self,
@@ -81,6 +82,7 @@ class GeminiConfig(LLMConfig):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
+        thinking_config: Optional[Dict[str, Any]] = None,
         base_url: str = "https://generativelanguage.googleapis.com",
         safety_settings: Optional[Dict[str, Any]] = None,
         project: Optional[str] = None,
@@ -99,6 +101,7 @@ class GeminiConfig(LLMConfig):
         self.project = project
         self.location = location
         self.service_account_file = service_account_file
+        self.thinking_config = dict(thinking_config) if thinking_config else None
 
     @classmethod
     def from_env(cls) -> "GeminiConfig":
@@ -117,11 +120,24 @@ class GeminiConfig(LLMConfig):
         max_tokens_env = get_env("GEMINI_MAX_TOKENS", "GOOGLE_GENAI_MAX_TOKENS")
         max_tokens = int(max_tokens_env) if max_tokens_env is not None else None
         thinking_enabled = get_env("GEMINI_THINKING_ENABLED", "GOOGLE_GENAI_THINKING_ENABLED", default="false").lower() == "true"
+        thinking_level = get_env("GEMINI_THINKING_LEVEL", "GOOGLE_GENAI_THINKING_LEVEL", default=None)
+        thinking_budget_env = get_env("GEMINI_THINKING_BUDGET", "GOOGLE_GENAI_THINKING_BUDGET", default=None)
+        include_thoughts_env = get_env("GEMINI_INCLUDE_THOUGHTS", "GOOGLE_GENAI_INCLUDE_THOUGHTS", default=None)
         base_url = get_env("GEMINI_BASE_URL", "GOOGLE_GENAI_BASE_URL", default="https://generativelanguage.googleapis.com")
         
         project = get_env("GOOGLE_CLOUD_PROJECT", "GOOGLE_PROJECT_ID")
         location = get_env("GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_REGION")
         service_account_file = get_env("GOOGLE_APPLICATION_CREDENTIALS", "GEMINI_SERVICE_ACCOUNT_FILE")
+
+        thinking_config: Optional[Dict[str, Any]] = None
+        if thinking_level is not None or thinking_budget_env is not None or include_thoughts_env is not None:
+            thinking_config = {}
+            if thinking_level is not None:
+                thinking_config["level"] = str(thinking_level).lower()
+            if thinking_budget_env is not None:
+                thinking_config["budget"] = int(thinking_budget_env)
+            if include_thoughts_env is not None:
+                thinking_config["include_thoughts"] = str(include_thoughts_env).lower() == "true"
 
         return cls(
             api_key=api_key,
@@ -129,6 +145,7 @@ class GeminiConfig(LLMConfig):
             temperature=temperature,
             max_tokens=max_tokens,
             thinking_enabled=thinking_enabled,
+            thinking_config=thinking_config,
             base_url=base_url,
             project=project,
             location=location,
@@ -387,22 +404,78 @@ class GoogleGenAIProvider(BaseProvider):
         if getattr(self.config, "max_tokens", None) is not None:
             cfg["max_output_tokens"] = self.config.max_tokens
 
-        # Thinking configuration (Gemini 2.5 series)
+        # Thinking configuration (Gemini 2.5/3.x)
         try:
             model_lc = (self.config.model or "").lower()
-            supports_thinking = "2.5" in model_lc
+            supports_thinking = ("gemini-2.5" in model_lc) or ("gemini-3" in model_lc)
+
+            level_budget_map = {
+                "low": 1024,
+                "medium": 4096,
+                "high": 8192,
+                "max": 16384,
+                "intense": 16384,
+            }
+            disable_levels = {"off", "none", "disabled", "disable", "0"}
+
             # precedence: chat override > config
             enabled = thinking_enabled_override
             if enabled is None:
                 enabled = getattr(self.config, "thinking_enabled", False)
+
+            cfg_thinking = getattr(self.config, "thinking_config", None) or {}
+            if not isinstance(cfg_thinking, dict):
+                cfg_thinking = {}
+
+            if "enabled" in cfg_thinking and thinking_enabled_override is None:
+                enabled = bool(cfg_thinking.get("enabled"))
+
+            raw_level = cfg_thinking.get("level")
+            level = str(raw_level).lower().strip() if raw_level is not None else None
+
+            raw_budget = cfg_thinking.get("budget")
+            budget: Optional[int] = None
+            if raw_budget is not None:
+                try:
+                    budget = max(0, int(raw_budget))
+                except Exception:
+                    budget = None
+
+            include_thoughts_raw = cfg_thinking.get("include_thoughts")
+            include_thoughts = bool(include_thoughts_raw) if include_thoughts_raw is not None else None
+
             if supports_thinking:
-                if enabled:
-                    # Include thoughts in output
-                    cfg["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
+                disable_requested = False
+                if enabled is False:
+                    disable_requested = True
+                if level in disable_levels:
+                    disable_requested = True
+                if budget == 0:
+                    disable_requested = True
+
+                if disable_requested:
+                    cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
                 else:
-                    # Disable thinking to reduce latency when allowed (not on pro)
-                    if "pro" not in model_lc:
-                        cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                    has_explicit_thinking_cfg = (
+                        (enabled is True) or
+                        (level is not None) or
+                        (budget is not None) or
+                        (include_thoughts is not None)
+                    )
+                    if has_explicit_thinking_cfg:
+                        thinking_kwargs: Dict[str, Any] = {}
+
+                        if budget is not None and budget > 0:
+                            thinking_kwargs["thinking_budget"] = budget
+                        elif level in level_budget_map:
+                            thinking_kwargs["thinking_budget"] = level_budget_map[level]
+
+                        if include_thoughts is not None:
+                            thinking_kwargs["include_thoughts"] = include_thoughts
+                        elif enabled is True:
+                            thinking_kwargs["include_thoughts"] = True
+
+                        cfg["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
         except Exception:
             # Never fail building config due to thinking support
             pass
