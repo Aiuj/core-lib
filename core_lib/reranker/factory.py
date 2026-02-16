@@ -3,6 +3,14 @@ from typing import Optional, List, Dict, Any
 
 from .reranker_config import reranker_settings
 from .base import BaseRerankerClient
+from .reranker_config import RerankerSettings
+from ..config.provider_chain_utils import (
+    build_kwargs_from_config,
+    build_provider_chain,
+    create_client_from_runtime_chain,
+    get_multi_url_value,
+    load_runtime_settings_if_needed,
+)
 from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
@@ -167,25 +175,19 @@ class RerankerFactory:
         if config is None:
             config = reranker_settings
 
-        provider_kwargs = {}
-
-        # Add provider-specific kwargs based on config
-        if hasattr(config, 'api_key') and config.api_key:
-            provider_kwargs['api_key'] = config.api_key
-        if hasattr(config, 'infinity_url') and config.infinity_url:
-            provider_kwargs['base_url'] = config.infinity_url
-        if hasattr(config, 'infinity_timeout') and config.infinity_timeout:
-            provider_kwargs['timeout'] = config.infinity_timeout
-        if hasattr(config, 'infinity_token') and config.infinity_token:
-            provider_kwargs['token'] = config.infinity_token
-        if hasattr(config, 'device') and config.device:
-            provider_kwargs['device'] = config.device
-        if hasattr(config, 'cache_dir') and config.cache_dir:
-            provider_kwargs['cache_dir'] = config.cache_dir
-        if hasattr(config, 'trust_remote_code'):
-            provider_kwargs['trust_remote_code'] = config.trust_remote_code
-        if hasattr(config, 'cache_duration_seconds'):
-            provider_kwargs['cache_duration_seconds'] = config.cache_duration_seconds
+        provider_kwargs = build_kwargs_from_config(
+            config,
+            field_specs=[
+                ("api_key", "api_key", "truthy"),
+                ("infinity_url", "base_url", "truthy"),
+                ("infinity_timeout", "timeout", "truthy"),
+                ("infinity_token", "token", "truthy"),
+                ("device", "device", "truthy"),
+                ("cache_dir", "cache_dir", "truthy"),
+                ("trust_remote_code", "trust_remote_code", "exists"),
+                ("cache_duration_seconds", "cache_duration_seconds", "exists"),
+            ],
+        )
 
         return cls.create(
             provider=config.provider,
@@ -198,6 +200,8 @@ class RerankerFactory:
 def create_reranker_client(
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    intelligence_level: Optional[int] = None,
+    usage: Optional[str] = None,
     **kwargs
 ) -> BaseRerankerClient:
     """Create a reranker client with auto-detection or specified provider.
@@ -210,6 +214,30 @@ def create_reranker_client(
     Returns:
         Configured reranker client instance
     """
+    runtime_settings = load_runtime_settings_if_needed(
+        provider,
+        loader=lambda: RerankerSettings.from_env(
+            load_dotenv=False,
+            intelligence_level=intelligence_level,
+            usage=usage,
+        ),
+    )
+
+    client_from_chain = create_client_from_runtime_chain(
+        provider=provider,
+        runtime_settings=runtime_settings,
+        model=model,
+        create_fallback=create_fallback_reranker,
+        create_single=lambda provider_name, model_name, single_cfg: RerankerFactory.create(
+            provider=provider_name,
+            model=model_name,
+            **single_cfg,
+            **kwargs,
+        ),
+    )
+    if client_from_chain is not None:
+        return client_from_chain
+
     return RerankerFactory.create(
         provider=provider,
         model=model,
@@ -223,7 +251,11 @@ def create_client_from_env() -> BaseRerankerClient:
     Returns:
         Configured reranker client instance based on environment variables
     """
-    return RerankerFactory.from_config()
+    runtime_settings = RerankerSettings.from_env(load_dotenv=False)
+    if runtime_settings.provider_configs and len(runtime_settings.provider_configs) > 1:
+        provider_configs = build_provider_chain(runtime_settings.provider_configs)
+        return create_fallback_reranker(provider_configs)
+    return RerankerFactory.from_config(config=runtime_settings)
 
 
 def create_infinity_reranker(
@@ -338,12 +370,14 @@ def create_reranker_from_env_with_fallback() -> BaseRerankerClient:
         ```
     """
     from .fallback_client import FallbackRerankerClient
-    import os
-    
-    # Check if we have comma-separated URLs for Infinity
-    infinity_url = os.getenv('INFINITY_BASE_URL') or reranker_settings.infinity_url
-    
-    if infinity_url and ',' in infinity_url:
+
+    infinity_url = get_multi_url_value(
+        provider_name="infinity",
+        provider_env_map={"infinity": ["INFINITY_BASE_URL"]},
+        extra_candidates=[reranker_settings.infinity_url],
+    )
+
+    if infinity_url:
         # Multiple URLs detected - create fallback client
         logger.info(f"Creating fallback reranker with multi-URL support: {infinity_url}")
         

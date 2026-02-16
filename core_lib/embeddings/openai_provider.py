@@ -24,6 +24,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
         model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
         use_l2_norm: bool = True,
+        norm_method: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         organization: Optional[str] = None,
@@ -46,7 +47,12 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
                 "Install with: pip install openai"
             )
 
-        super().__init__(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm)
+        super().__init__(
+            model=model,
+            embedding_dim=embedding_dim,
+            use_l2_norm=use_l2_norm,
+            norm_method=norm_method,
+        )
         
         # Use provided API key or fall back to config
         self.api_key = api_key or embeddings_settings.api_key

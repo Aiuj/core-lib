@@ -61,7 +61,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 from core_lib import get_module_logger
 
@@ -169,6 +169,7 @@ class ProviderConfig:
     project: Optional[str] = None
     location: Optional[str] = None
     service_account_file: Optional[str] = None
+    _missing_service_account_logged: ClassVar[Set[str]] = set()
     
     def __post_init__(self):
         """Normalize provider name and set defaults."""
@@ -413,7 +414,24 @@ class ProviderConfig:
         if self.provider == "vertex":
             has_project = bool(self.project) or bool(os.getenv("GOOGLE_CLOUD_PROJECT")) or bool(os.getenv("GOOGLE_PROJECT_ID"))
             has_location = bool(self.location) or bool(os.getenv("GOOGLE_CLOUD_LOCATION")) or bool(os.getenv("GOOGLE_CLOUD_REGION"))
-            has_service_account = bool(self.service_account_file) or bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+            service_account = self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+            if not service_account:
+                return has_project and has_location and False
+
+            normalized_path = str(service_account).strip().strip('"').strip("'")
+            expanded_path = os.path.expanduser(normalized_path)
+            has_service_account = os.path.isfile(expanded_path)
+
+            if not has_service_account:
+                cache_key = f"vertex:{expanded_path}"
+                if cache_key not in self._missing_service_account_logged:
+                    logger.error(
+                        "Vertex provider disabled: GOOGLE_APPLICATION_CREDENTIALS file not found: %s",
+                        expanded_path,
+                    )
+                    self._missing_service_account_logged.add(cache_key)
+
             return has_project and has_location and has_service_account
             
         elif self.provider == "openai":

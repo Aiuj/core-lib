@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .base_settings import BaseSettings, EnvParser
+from .provider_config_loader import get_service_provider_configs
 
 
 @dataclass(frozen=True) 
@@ -59,6 +60,104 @@ class EmbeddingsSettings(BaseSettings):
     query_prefix: Optional[str] = None
     passage_prefix: Optional[str] = None
     auto_detect_prefixes: bool = True  # Auto-detect prefixes from model database
+
+    # YAML-driven provider chain (priority-ordered) for failover/routing
+    provider_configs: Tuple[Dict[str, Any], ...] = ()
+    config_file: Optional[str] = None
+    intelligence_level: Optional[int] = None
+    usage: Optional[str] = None
+
+    @staticmethod
+    def _normalize_provider_name(provider: Optional[str]) -> str:
+        if not provider:
+            return "openai"
+        normalized = str(provider).strip().lower()
+        if normalized in {"google", "google_genai", "gemini"}:
+            return "google_genai"
+        if normalized == "huggingface":
+            return "local"
+        return normalized
+
+    @classmethod
+    def _build_embedding_provider_configs(
+        cls,
+        config_file: Optional[str],
+        intelligence_level: Optional[int],
+        usage: Optional[str],
+        defaults: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        configs = get_service_provider_configs(
+            service="embedding",
+            config_file_path=config_file,
+            intelligence_level=intelligence_level,
+            usage=usage,
+        )
+        normalized: List[Dict[str, Any]] = []
+
+        for config in configs:
+            provider = cls._normalize_provider_name(config.get("provider") or config.get("type"))
+            if not provider:
+                continue
+
+            entry: Dict[str, Any] = {
+                "provider": provider,
+                "model": config.get("model") or defaults.get("model"),
+                "priority": int(config.get("priority", 100)),
+            }
+
+            base_url = (
+                config.get("base_url")
+                or config.get("host")
+                or config.get("endpoint")
+                or config.get("url")
+            )
+            if base_url:
+                entry["base_url"] = base_url
+
+            timeout = config.get("timeout")
+            if timeout is not None:
+                entry["timeout"] = int(timeout)
+
+            dim = config.get("embedding_dimension") or config.get("dimension")
+            if dim is not None:
+                entry["embedding_dim"] = int(dim)
+
+            if provider == "openai":
+                api_key = config.get("api_key") or config.get("key") or defaults.get("api_key")
+                if api_key:
+                    entry["api_key"] = api_key
+                if config.get("organization"):
+                    entry["organization"] = config.get("organization")
+                if config.get("project"):
+                    entry["project"] = config.get("project")
+            elif provider == "google_genai":
+                api_key = config.get("api_key") or config.get("google_api_key") or defaults.get("google_api_key")
+                if api_key:
+                    entry["api_key"] = api_key
+                if config.get("task_type"):
+                    entry["task_type"] = config.get("task_type")
+                if config.get("title"):
+                    entry["title"] = config.get("title")
+            elif provider == "infinity":
+                token = (
+                    config.get("token")
+                    or config.get("infinity_token")
+                    or config.get("embedding_token")
+                    or defaults.get("infinity_token")
+                )
+                if token:
+                    entry["token"] = token
+            elif provider == "local":
+                if config.get("device"):
+                    entry["device"] = config.get("device")
+                if config.get("cache_dir"):
+                    entry["cache_dir"] = config.get("cache_dir")
+                if "trust_remote_code" in config:
+                    entry["trust_remote_code"] = bool(config.get("trust_remote_code"))
+
+            normalized.append(entry)
+
+        return normalized
     
     @classmethod
     def from_env(
@@ -91,8 +190,15 @@ class EmbeddingsSettings(BaseSettings):
             embedding_base_url
         )
         
+        config_file = (
+            EnvParser.get_env("EMBEDDING_PROVIDERS_FILE")
+            or EnvParser.get_env("LLM_PROVIDERS_FILE")
+        )
+        intelligence_level = EnvParser.get_env("EMBEDDING_INTELLIGENCE_LEVEL", env_type=int)
+        usage = EnvParser.get_env("EMBEDDING_USAGE")
+
         settings_dict = {
-            "provider": provider,
+            "provider": str(provider).strip().lower(),
             "model": model,
             "embedding_dimension": EnvParser.get_env("EMBEDDING_DIMENSION", env_type=int),
             "task_type": EnvParser.get_env("EMBEDDING_TASK_TYPE"),
@@ -119,7 +225,64 @@ class EmbeddingsSettings(BaseSettings):
             "query_prefix": EnvParser.get_env("EMBEDDING_QUERY_PREFIX"),
             "passage_prefix": EnvParser.get_env("EMBEDDING_PASSAGE_PREFIX"),
             "auto_detect_prefixes": EnvParser.get_env("EMBEDDING_AUTO_DETECT_PREFIXES", default=True, env_type=bool),
+            "config_file": config_file,
+            "intelligence_level": intelligence_level,
+            "usage": usage,
         }
+
+        yaml_provider_configs = cls._build_embedding_provider_configs(
+            config_file=config_file,
+            intelligence_level=intelligence_level,
+            usage=usage,
+            defaults=settings_dict,
+        )
+        if yaml_provider_configs:
+            selected = yaml_provider_configs[0]
+            settings_dict["provider"] = str(selected.get("provider", settings_dict["provider"])).strip().lower()
+            settings_dict["model"] = selected.get("model") or settings_dict["model"]
+
+            # Apply selected provider overrides while preserving env defaults
+            if selected.get("embedding_dim") is not None:
+                settings_dict["embedding_dimension"] = selected.get("embedding_dim")
+            if selected.get("base_url"):
+                if settings_dict["provider"] == "infinity":
+                    settings_dict["infinity_url"] = selected.get("base_url")
+                elif settings_dict["provider"] == "openai":
+                    settings_dict["base_url"] = selected.get("base_url")
+                elif settings_dict["provider"] == "ollama":
+                    settings_dict["ollama_url"] = selected.get("base_url")
+
+            if selected.get("timeout") is not None:
+                timeout_val = int(selected.get("timeout"))
+                settings_dict["timeout"] = timeout_val
+                if settings_dict["provider"] == "infinity":
+                    settings_dict["infinity_timeout"] = timeout_val
+                if settings_dict["provider"] == "ollama":
+                    settings_dict["ollama_timeout"] = timeout_val
+
+            if selected.get("api_key"):
+                if settings_dict["provider"] in {"google", "google_genai", "gemini"}:
+                    settings_dict["google_api_key"] = selected.get("api_key")
+                else:
+                    settings_dict["api_key"] = selected.get("api_key")
+            if selected.get("token"):
+                settings_dict["infinity_token"] = selected.get("token")
+            if selected.get("organization"):
+                settings_dict["organization"] = selected.get("organization")
+            if selected.get("project"):
+                settings_dict["project"] = selected.get("project")
+            if selected.get("task_type"):
+                settings_dict["task_type"] = selected.get("task_type")
+            if selected.get("title"):
+                settings_dict["title"] = selected.get("title")
+            if selected.get("device"):
+                settings_dict["device"] = selected.get("device")
+            if selected.get("cache_dir"):
+                settings_dict["cache_dir"] = selected.get("cache_dir")
+            if "trust_remote_code" in selected:
+                settings_dict["trust_remote_code"] = bool(selected.get("trust_remote_code"))
+
+        settings_dict["provider_configs"] = tuple(yaml_provider_configs)
         
         settings_dict.update(overrides)
         return cls(**settings_dict)
@@ -153,4 +316,8 @@ class EmbeddingsSettings(BaseSettings):
             "query_prefix": self.query_prefix,
             "passage_prefix": self.passage_prefix,
             "auto_detect_prefixes": self.auto_detect_prefixes,
+            "provider_configs": list(self.provider_configs),
+            "config_file": self.config_file,
+            "intelligence_level": self.intelligence_level,
+            "usage": self.usage,
         }
