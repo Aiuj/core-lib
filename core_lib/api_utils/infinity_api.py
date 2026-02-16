@@ -16,6 +16,7 @@ except ImportError:
     requests = None
 
 from core_lib.tracing.logger import get_module_logger
+from .wake_on_lan import WakeOnLanStrategy
 
 logger = get_module_logger()
 
@@ -48,6 +49,7 @@ class InfinityAPIClient:
         timeout: int = 30,
         token: Optional[str] = None,
         max_retries_per_url: int = 1,
+        wake_on_lan: Optional[Dict[str, Any]] = None,
     ):
         """Initialize Infinity API client with failover support.
         
@@ -56,12 +58,8 @@ class InfinityAPIClient:
             timeout: Request timeout in seconds
             token: Optional authentication token
             max_retries_per_url: How many times to retry each URL before moving to next
+            wake_on_lan: Optional Wake-on-LAN config for sleeping hosts
         """
-        if requests is None:
-            raise ImportError(
-                "requests is required for InfinityAPIClient. "
-                "Install with: pip install requests"
-            )
         
         # Parse URLs
         if isinstance(base_urls, str):
@@ -84,6 +82,7 @@ class InfinityAPIClient:
         self.timeout = timeout
         self.token = token
         self.max_retries_per_url = max_retries_per_url
+        self.wake_on_lan = WakeOnLanStrategy(wake_on_lan)
         
         # Track current working URL to prefer it on next request
         self.current_url_index = 0
@@ -93,6 +92,12 @@ class InfinityAPIClient:
             f"Initialized InfinityAPIClient with {len(self.base_urls)} URLs: "
             f"{', '.join(self.base_urls)}"
         )
+
+    def _is_connection_or_timeout_error(self, error: Exception) -> bool:
+        """Return True when error indicates host may be sleeping/unreachable."""
+        if requests is None:
+            return False
+        return isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
     
     def _build_headers(self, additional_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Build request headers with authentication."""
@@ -144,11 +149,15 @@ class InfinityAPIClient:
             for retry in range(self.max_retries_per_url):
                 try:
                     start_time = time.time()
+                    effective_timeout = self.wake_on_lan.maybe_get_initial_timeout(
+                        base_url,
+                        timeout,
+                    )
                     response = requests.post(
                         full_url,
                         json=json,
                         headers=headers,
-                        timeout=timeout
+                        timeout=effective_timeout
                     )
                     
                     # Raise for HTTP errors
@@ -167,7 +176,31 @@ class InfinityAPIClient:
                     return response.json(), base_url
                 
                 except requests.exceptions.Timeout as e:
-                    error_msg = f"Timeout after {timeout}s: {full_url}"
+                    wake_result = self.wake_on_lan.maybe_wake(base_url, e)
+                    if wake_result.succeeded:
+                        retry_timeout = wake_result.retry_timeout_seconds or timeout
+                        logger.info(
+                            f"Retrying Infinity request after WoL wake: {full_url} "
+                            f"with timeout={retry_timeout}s"
+                        )
+                        try:
+                            response = requests.post(
+                                full_url,
+                                json=json,
+                                headers=headers,
+                                timeout=retry_timeout,
+                            )
+                            response.raise_for_status()
+                            self.current_url_index = url_index
+                            self.url_failures[url_index] = 0
+                            return response.json(), base_url
+                        except Exception as retry_error:
+                            error_msg = f"Post-wake retry failed: {full_url} - {retry_error}"
+                            errors.append(error_msg)
+                            self.url_failures[url_index] += 1
+                            logger.warning(error_msg)
+
+                    error_msg = f"Timeout after {effective_timeout}s: {full_url}"
                     errors.append(error_msg)
                     self.url_failures[url_index] += 1
                     logger.warning(
@@ -175,6 +208,30 @@ class InfinityAPIClient:
                     )
                     
                 except requests.exceptions.ConnectionError as e:
+                    wake_result = self.wake_on_lan.maybe_wake(base_url, e)
+                    if wake_result.succeeded:
+                        retry_timeout = wake_result.retry_timeout_seconds or timeout
+                        logger.info(
+                            f"Retrying Infinity request after WoL wake: {full_url} "
+                            f"with timeout={retry_timeout}s"
+                        )
+                        try:
+                            response = requests.post(
+                                full_url,
+                                json=json,
+                                headers=headers,
+                                timeout=retry_timeout,
+                            )
+                            response.raise_for_status()
+                            self.current_url_index = url_index
+                            self.url_failures[url_index] = 0
+                            return response.json(), base_url
+                        except Exception as retry_error:
+                            error_msg = f"Post-wake retry failed: {full_url} - {retry_error}"
+                            errors.append(error_msg)
+                            self.url_failures[url_index] += 1
+                            logger.warning(error_msg)
+
                     error_msg = f"Connection failed: {full_url} - {str(e)}"
                     errors.append(error_msg)
                     self.url_failures[url_index] += 1

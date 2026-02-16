@@ -33,7 +33,7 @@ class EmbeddingsSettings(BaseSettings):
     huggingface_api_key: Optional[str] = None
     
     # Timeout settings (EMBEDDING_TIMEOUT is common default, provider-specific overrides)
-    timeout: int = 10  # Default 10 seconds; from EMBEDDING_TIMEOUT
+    timeout: int = 30  # Default 30 seconds; from EMBEDDING_TIMEOUT
     
     # Ollama settings
     ollama_host: Optional[str] = None
@@ -44,6 +44,7 @@ class EmbeddingsSettings(BaseSettings):
     infinity_url: Optional[str] = None
     infinity_timeout: Optional[int] = None
     infinity_token: Optional[str] = None  # Authentication token(s), comma-separated
+    infinity_wake_on_lan: Optional[Dict[str, Any]] = None
     
     # Local model settings
     device: str = "auto"
@@ -147,6 +148,9 @@ class EmbeddingsSettings(BaseSettings):
                 )
                 if token:
                     entry["token"] = token
+                wake_on_lan = config.get("wake_on_lan")
+                if isinstance(wake_on_lan, dict):
+                    entry["wake_on_lan"] = wake_on_lan
             elif provider == "local":
                 if config.get("device"):
                     entry["device"] = config.get("device")
@@ -174,8 +178,8 @@ class EmbeddingsSettings(BaseSettings):
         
         # Unified base URL and timeout (common defaults for all providers)
         embedding_base_url = EnvParser.get_env("EMBEDDING_BASE_URL")
-        # Common timeout with 10-second default
-        embedding_timeout = EnvParser.get_env("EMBEDDING_TIMEOUT", env_type=int, default=10)
+        # Common timeout with 30-second default
+        embedding_timeout = EnvParser.get_env("EMBEDDING_TIMEOUT", env_type=int, default=30)
         
         # Provider-specific URLs with fallback to common EMBEDDING_BASE_URL
         ollama_url = EnvParser.get_env("OLLAMA_URL") or embedding_base_url
@@ -216,6 +220,7 @@ class EmbeddingsSettings(BaseSettings):
             "infinity_url": infinity_url,
             "infinity_timeout": EnvParser.get_env("INFINITY_TIMEOUT", env_type=int) if EnvParser.get_env("INFINITY_TIMEOUT") else embedding_timeout,
             "infinity_token": infinity_token,
+            "infinity_wake_on_lan": None,
             "device": EnvParser.get_env("EMBEDDING_DEVICE", default="auto"),
             "cache_dir": EnvParser.get_env("EMBEDDING_CACHE_DIR"),
             "trust_remote_code": EnvParser.get_env("EMBEDDING_TRUST_REMOTE_CODE", default=False, env_type=bool),
@@ -267,6 +272,8 @@ class EmbeddingsSettings(BaseSettings):
                     settings_dict["api_key"] = selected.get("api_key")
             if selected.get("token"):
                 settings_dict["infinity_token"] = selected.get("token")
+            if isinstance(selected.get("wake_on_lan"), dict):
+                settings_dict["infinity_wake_on_lan"] = selected.get("wake_on_lan")
             if selected.get("organization"):
                 settings_dict["organization"] = selected.get("organization")
             if selected.get("project"):
@@ -308,6 +315,7 @@ class EmbeddingsSettings(BaseSettings):
             "infinity_url": self.infinity_url,
             "infinity_timeout": self.infinity_timeout,
             "infinity_token": self.infinity_token,
+            "infinity_wake_on_lan": self.infinity_wake_on_lan,
             "device": self.device,
             "cache_dir": self.cache_dir,
             "trust_remote_code": self.trust_remote_code,

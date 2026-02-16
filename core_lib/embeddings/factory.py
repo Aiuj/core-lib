@@ -350,6 +350,7 @@ class EmbeddingFactory:
                 ("cache_dir", "cache_dir", "truthy"),
                 ("trust_remote_code", "trust_remote_code", "exists"),
                 ("use_sentence_transformers", "use_sentence_transformers", "exists"),
+                ("infinity_wake_on_lan", "wake_on_lan", "truthy"),
             ],
         )
 

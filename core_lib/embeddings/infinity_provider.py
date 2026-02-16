@@ -38,6 +38,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
         base_url: Optional[str] = None,
         timeout: Optional[int] = None,
         token: Optional[str] = None,
+        wake_on_lan: Optional[dict] = None,
         **kwargs
     ):
         """Initialize Infinity embedding client.
@@ -49,6 +50,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             base_url: Base URL(s) - single or comma-separated (default: http://localhost:7997)
             timeout: Request timeout in seconds (default: 30)
             token: Authentication token for secured Infinity servers
+            wake_on_lan: Optional Wake-on-LAN config for sleeping hosts
             **kwargs: Additional parameters
         """
         super().__init__(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm)
@@ -78,6 +80,7 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             base_urls=base_url,
             timeout=timeout,
             token=token,
+            wake_on_lan=wake_on_lan,
         )
         
         # Set default model if not provided

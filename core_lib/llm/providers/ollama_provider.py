@@ -16,6 +16,7 @@ from ..llm_config import LLMConfig
 from dataclasses import dataclass
 
 from core_lib import get_module_logger
+from core_lib.api_utils.wake_on_lan import WakeOnLanStrategy
 from core_lib.tracing.service_usage import log_llm_usage
 
 logger = get_module_logger()
@@ -30,6 +31,7 @@ class OllamaConfig(LLMConfig):
     top_k: Optional[int] = None
     top_p: Optional[float] = None
     thinking_config: Optional[Dict[str, Any]] = None
+    wake_on_lan: Optional[Dict[str, Any]] = None
 
     def __init__(
         self,
@@ -45,6 +47,7 @@ class OllamaConfig(LLMConfig):
         top_k: Optional[int] = None,
         top_p: Optional[float] = None,
         thinking_config: Optional[Dict[str, Any]] = None,
+        wake_on_lan: Optional[Dict[str, Any]] = None,
     ):
         super().__init__("ollama", model, temperature, max_tokens, thinking_enabled)
         self.base_url = base_url
@@ -55,6 +58,7 @@ class OllamaConfig(LLMConfig):
         self.top_k = top_k
         self.top_p = top_p
         self.thinking_config = dict(thinking_config) if thinking_config else None
+        self.wake_on_lan = dict(wake_on_lan) if wake_on_lan else None
 
     @classmethod
     def from_env(cls) -> "OllamaConfig":
@@ -107,6 +111,46 @@ class OllamaProvider(BaseProvider):
         import ollama  # type: ignore
 
         self._ollama = ollama
+        self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
+
+    def _is_connection_or_timeout_error(self, error: Exception) -> bool:
+        """Return True when error indicates host may be sleeping/unreachable."""
+        error_type = type(error).__name__.lower()
+        if any(name in error_type for name in ("timeout", "connecterror", "connectionerror")):
+            return True
+
+        error_str = str(error).lower()
+        indicators = (
+            "connection refused",
+            "failed to connect",
+            "could not connect",
+            "network is unreachable",
+            "timed out",
+            "timeout",
+            "name or service not known",
+            "nodename nor servname",
+        )
+        return any(token in error_str for token in indicators)
+
+    def _chat_once(self, payload: Dict[str, Any], timeout: Optional[float]) -> Dict[str, Any]:
+        """Execute one Ollama chat call with optional timeout override."""
+        if getattr(self.config, "base_url", None):
+            from ollama import Client  # type: ignore
+
+            client_kwargs: Dict[str, Any] = {"host": self.config.base_url}
+            if timeout is not None:
+                client_kwargs["timeout"] = timeout
+
+            client = Client(**client_kwargs)
+            return client.chat(**payload)
+
+        # Fallback path when no host is configured
+        if timeout is not None:
+            from ollama import Client  # type: ignore
+            client = Client(timeout=timeout)
+            return client.chat(**payload)
+
+        return self._ollama.chat(**payload)
 
     def _build_options(self) -> Dict[str, Any]:
         # Map config to ollama options when available
@@ -210,13 +254,28 @@ class OllamaProvider(BaseProvider):
 
             # Execute API call with latency measurement
             start = time.perf_counter()
-            if getattr(self.config, "base_url", None):
-                from ollama import Client  # type: ignore
+            base_url_for_wol = self.config.base_url or ""
+            default_timeout = float(self.config.timeout)
+            effective_timeout = self._wake_on_lan.maybe_get_initial_timeout(
+                base_url_for_wol,
+                default_timeout,
+            )
 
-                client = Client(host=self.config.base_url)
-                resp = client.chat(**payload)
-            else:
-                resp = self._ollama.chat(**payload)
+            try:
+                resp = self._chat_once(payload, effective_timeout)
+            except Exception as first_error:
+                if self._is_connection_or_timeout_error(first_error):
+                    wake_result = self._wake_on_lan.maybe_wake(base_url_for_wol, first_error)
+                    if wake_result.succeeded:
+                        retry_timeout = wake_result.retry_timeout_seconds or default_timeout
+                        logger.info(
+                            f"Retrying Ollama request after WoL wake with timeout={retry_timeout}s"
+                        )
+                        resp = self._chat_once(payload, retry_timeout)
+                    else:
+                        raise
+                else:
+                    raise
             latency_ms = (time.perf_counter() - start) * 1000
 
             message = resp.get("message", {})
@@ -292,7 +351,13 @@ class OllamaProvider(BaseProvider):
                 "thinking": thinking_text,
             }
         except Exception as e:  # pragma: no cover - runtime connectivity
-            logger.exception("ollama.chat failed")
+            if self._is_connection_or_timeout_error(e):
+                logger.warning(
+                    "ollama.chat connectivity failure (handled): %s",
+                    e,
+                )
+            else:
+                logger.exception("ollama.chat failed")
 
             try:
                 log_llm_usage(

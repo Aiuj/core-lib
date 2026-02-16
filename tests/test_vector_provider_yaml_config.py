@@ -28,6 +28,15 @@ embedding_providers:
     base_url: http://emb-low:7997
     model: low-model
     embedding_dimension: 256
+    wake_on_lan:
+      enabled: true
+      initial_timeout_seconds: 2
+      targets:
+        - host: emb-low
+          mac_address: FC:34:97:9E:C8:AF
+          port: 7777
+          wait_seconds: 0
+          retry_timeout_seconds: 8
     priority: 2
     min_level: 0
     max_level: 10
@@ -58,6 +67,7 @@ embedding_providers:
     assert settings.infinity_url == "http://emb-high:7997"
     assert len(settings.provider_configs) == 2
     assert settings.provider_configs[0]["model"] == "high-model"
+    assert settings.provider_configs[1]["wake_on_lan"]["targets"][0]["host"] == "emb-low"
 
 
 def test_create_embedding_client_uses_yaml_fallback_chain(tmp_path, monkeypatch):
@@ -99,6 +109,13 @@ reranker_providers:
   - provider: infinity
     base_url: http://rerank-low:7997
     model: rerank-low
+    wake_on_lan:
+      enabled: true
+      targets:
+        - host: rerank-low
+          mac_address: FC:34:97:9E:C8:AF
+          port: 7777
+          wait_seconds: 0
     priority: 2
     min_level: 0
     max_level: 10
@@ -121,6 +138,7 @@ reranker_providers:
     assert settings.infinity_url == "http://rerank-high:7997"
     assert len(settings.provider_configs) == 2
     assert settings.provider_configs[0]["model"] == "rerank-high"
+    assert settings.provider_configs[1]["wake_on_lan"]["targets"][0]["host"] == "rerank-low"
 
 
 def test_create_reranker_client_uses_yaml_fallback_chain(tmp_path, monkeypatch):

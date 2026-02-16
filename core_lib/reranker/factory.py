@@ -182,6 +182,7 @@ class RerankerFactory:
                 ("infinity_url", "base_url", "truthy"),
                 ("infinity_timeout", "timeout", "truthy"),
                 ("infinity_token", "token", "truthy"),
+                ("infinity_wake_on_lan", "wake_on_lan", "truthy"),
                 ("device", "device", "truthy"),
                 ("cache_dir", "cache_dir", "truthy"),
                 ("trust_remote_code", "trust_remote_code", "exists"),

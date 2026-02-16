@@ -169,6 +169,7 @@ class ProviderConfig:
     project: Optional[str] = None
     location: Optional[str] = None
     service_account_file: Optional[str] = None
+    wake_on_lan: Optional[Dict[str, Any]] = None
     _missing_service_account_logged: ClassVar[Set[str]] = set()
     
     def __post_init__(self):
@@ -313,10 +314,15 @@ class ProviderConfig:
             "include_thoughts", "includeThoughts", "priority",
             "enabled", "azure_endpoint", "azureEndpoint", "azure_api_version",
             "azureApiVersion", "organization", "org", "project", "location", "region",
-            "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials"
+            "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials",
+            "wake_on_lan", "wakeOnLan", "wol"
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
+
+        wake_on_lan = data.get("wake_on_lan") or data.get("wakeOnLan") or data.get("wol")
+        if isinstance(wake_on_lan, dict):
+            normalized["wake_on_lan"] = wake_on_lan
         
         return cls(**{k: v for k, v in normalized.items() if v is not None or k in ("api_key", "host")})
     
@@ -384,6 +390,8 @@ class ProviderConfig:
                 **{k: v for k, v in self.extra.items() if k in (
                     "timeout", "num_ctx", "num_predict", "repeat_penalty", "top_k", "top_p"
                 )}
+                ,
+                wake_on_lan=self.wake_on_lan,
             )
         
         else:
