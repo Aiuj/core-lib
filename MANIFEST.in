@@ -3,6 +3,7 @@ include LICENSE
 include pyproject.toml
 include requirements.txt
 recursive-include core_lib *.py
+recursive-include core_lib/locale *.po *.mo
 recursive-include tests *.py
 exclude build/*
 exclude dist/*
