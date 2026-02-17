@@ -22,6 +22,7 @@ from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.llm.rate_limiter import RateLimitConfig, RateLimiter
 from core_lib.llm.retry import RetryConfig, retry_handler
 from core_lib.llm.json_parser import parse_structured_output, augment_prompt_for_json
+from core_lib.llm.provider_health import classify_error
 
 logger = get_module_logger()
 
@@ -275,7 +276,6 @@ class GoogleGenAIProvider(BaseProvider):
             from google.genai import errors as genai_errors
             retryable_exceptions.extend([
                 genai_errors.ServerError,             # 503 server overloaded, 500 internal errors
-                genai_errors.ClientError,             # 429 rate limits and other 4xx retryable errors
             ])
         except ImportError:
             # google.genai might not be available
@@ -614,12 +614,23 @@ class GoogleGenAIProvider(BaseProvider):
                 cached_content=cached_content,
             )
         except Exception as e:  # pragma: no cover - network errors
+            error_reason = classify_error(e)
+
+            # Log without traceback for expected quota/rate conditions so fallback can proceed cleanly.
+            if error_reason in ("rate_limit", "quota_exceeded"):
+                logger.warning(
+                    "genai.chat throttled by provider; delegating to fallback provider",
+                    extra={
+                        "model": self.config.model,
+                        "error_reason": error_reason,
+                        "error_type": type(e).__name__,
+                    },
+                )
             # Log error without full traceback for retryable errors (retries already logged)
-            # For non-retryable errors, include traceback for debugging
             is_retryable = isinstance(e, self._retry_config.retry_on_exceptions)
-            if is_retryable:
+            if is_retryable and error_reason not in ("rate_limit", "quota_exceeded"):
                 logger.error(f"genai.chat failed after all retries: {type(e).__name__}: {e}")
-            else:
+            elif error_reason not in ("rate_limit", "quota_exceeded"):
                 logger.exception("genai.chat failed with non-retryable error")
             
             return {

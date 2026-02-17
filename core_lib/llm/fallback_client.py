@@ -37,6 +37,7 @@ Example:
 from __future__ import annotations
 
 import time
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
@@ -166,10 +167,30 @@ class FallbackLLMClient:
     
     def _get_client(self, config: ProviderConfig) -> LLMClient:
         """Get or create a cached LLMClient for a provider config."""
-        cache_key = f"{config.provider}:{config.model}"
+        cache_key = self._build_cache_key(config)
         if cache_key not in self._client_cache:
             self._client_cache[cache_key] = config.to_client()
         return self._client_cache[cache_key]
+
+    def _build_cache_key(self, config: ProviderConfig) -> str:
+        """Build a stable cache key for a specific provider configuration.
+
+        Includes enough config identity to avoid collisions when multiple entries
+        share the same provider/model but use different credentials or routing.
+        """
+        api_key_fingerprint = ""
+        if config.api_key:
+            api_key_fingerprint = hashlib.sha256(config.api_key.encode("utf-8")).hexdigest()[:10]
+
+        return "|".join([
+            f"provider={config.provider}",
+            f"model={config.model}",
+            f"priority={config.priority}",
+            f"host={config.host or ''}",
+            f"tier={config.tier or ''}",
+            f"level={config.min_intelligence_level}-{config.max_intelligence_level}",
+            f"keyfp={api_key_fingerprint}",
+        ])
     
     def _iter_providers(
         self,

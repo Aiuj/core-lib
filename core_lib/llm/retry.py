@@ -94,17 +94,17 @@ def retry_handler(config: RetryConfig) -> Callable:
                     last_exception = e
                     if attempt >= config.max_retries:
                         logger.error(
-                            f"Final attempt failed for {func.__name__}. No more retries.",
-                            extra={"attempt": attempt, "max_retries": config.max_retries},
-                            exc_info=e
+                            f"Final attempt failed for {func.__name__}. No more retries. "
+                            f"{type(e).__name__}: {e}",
+                            extra={"attempt": attempt, "max_retries": config.max_retries}
                         )
                         break  # Exit loop to re-raise
 
                     delay = _calculate_delay(attempt, config)
                     logger.warning(
-                        f"Attempt {attempt + 1} failed for {func.__name__}. Retrying in {delay:.2f}s.",
-                        extra={"attempt": attempt, "delay": delay},
-                        exc_info=e
+                        f"Attempt {attempt + 1} failed for {func.__name__}. Retrying in {delay:.2f}s. "
+                        f"{type(e).__name__}: {e}",
+                        extra={"attempt": attempt, "delay": delay}
                     )
                     time.sleep(delay)
             raise last_exception  # type: ignore
@@ -119,17 +119,17 @@ def retry_handler(config: RetryConfig) -> Callable:
                     last_exception = e
                     if attempt >= config.max_retries:
                         logger.error(
-                            f"Final attempt failed for {func.__name__}. No more retries.",
-                            extra={"attempt": attempt, "max_retries": config.max_retries},
-                            exc_info=e
+                            f"Final attempt failed for {func.__name__}. No more retries. "
+                            f"{type(e).__name__}: {e}",
+                            extra={"attempt": attempt, "max_retries": config.max_retries}
                         )
                         break
 
                     delay = _calculate_delay(attempt, config)
                     logger.warning(
-                        f"Attempt {attempt + 1} failed for {func.__name__}. Retrying in {delay:.2f}s.",
-                        extra={"attempt": attempt, "delay": delay},
-                        exc_info=e
+                        f"Attempt {attempt + 1} failed for {func.__name__}. Retrying in {delay:.2f}s. "
+                        f"{type(e).__name__}: {e}",
+                        extra={"attempt": attempt, "delay": delay}
                     )
                     await asyncio.sleep(delay)
             raise last_exception  # type: ignore
