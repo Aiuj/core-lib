@@ -3,7 +3,7 @@
 import json
 import redis
 from typing import Any, Optional, Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .base_job_queue import BaseJobQueue, JobConfig, JobStatus, Job
 from core_lib.tracing.logger import get_module_logger
@@ -416,7 +416,7 @@ class RedisJobQueue(BaseJobQueue):
         if not self.client:
             return 0
         
-        cutoff_time = datetime.utcnow() - timedelta(seconds=older_than_seconds)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
         deleted_count = 0
         
         # Get completed and failed jobs
