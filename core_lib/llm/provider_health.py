@@ -53,8 +53,8 @@ DEFAULT_UNHEALTHY_TTL = 300  # 5 minutes
 FAILURE_TTL_MAP = {
     "rate_limit": 300,      # 5 minutes for rate limits
     "quota_exceeded": 3600, # 1 hour for quota exceeded
-    "timeout": 60,          # 1 minute for timeouts
-    "server_error": 120,    # 2 minutes for server errors
+    "timeout": 300,         # 5 minutes for timeouts (model likely overloaded)
+    "server_error": 300,    # 5 minutes for server errors (503/504 overload)
     "connection_error": 60, # 1 minute for connection errors
     "auth_error": 3600,     # 1 hour for auth errors (unlikely to self-resolve)
     "unknown": 180,         # 3 minutes for unknown errors
@@ -154,7 +154,6 @@ class ProviderHealthTracker:
                 status = cache.get(key)
                 if status:
                     # If key exists, provider is unhealthy
-                    logger.debug(f"Provider {provider}:{model} is unhealthy: {status}")
                     return False
                 return True
             except Exception as e:
@@ -267,7 +266,7 @@ class ProviderHealthTracker:
                     
                     return HealthStatus(
                         is_healthy=False,
-                        last_check=datetime.utcnow(),
+                        last_check=_utcnow(),
                         failure_reason=status.get("reason"),
                         failure_count=status.get("failure_count", 1),
                         last_failure=datetime.fromisoformat(status["marked_at"]) if "marked_at" in status else None,
@@ -283,7 +282,7 @@ class ProviderHealthTracker:
         # Default: healthy
         return HealthStatus(
             is_healthy=True,
-            last_check=datetime.utcnow(),
+            last_check=_utcnow(),
         )
     
     def filter_healthy(
@@ -303,8 +302,28 @@ class ProviderHealthTracker:
             if self.is_healthy(p.provider, p.model):
                 healthy.append(p)
             else:
-                logger.debug(f"Filtering out unhealthy provider: {p.provider}:{p.model}")
-        
+                # Include reason and recovery time in the single log line
+                reason = "unknown"
+                recovery_in = ""
+                try:
+                    cache = self._get_cache()
+                    key = self._get_key(p.provider, p.model)
+                    status = cache.get(key) if cache else None
+                    if status and isinstance(status, dict):
+                        reason = status.get("reason", reason)
+                        recovery_at = status.get("recovery_at")
+                        if recovery_at:
+                            import time as _time
+                            secs_left = int(recovery_at - _time.monotonic())
+                            if secs_left > 0:
+                                recovery_in = f", recovers in {secs_left}s"
+                    elif key in self._local_health:
+                        s = self._local_health[key]
+                        reason = s.reason or reason
+                except Exception:
+                    pass
+                logger.debug(f"Skipping unhealthy provider {p.provider}:{p.model} (reason={reason}{recovery_in})")
+
         return healthy
     
     def get_first_healthy(
@@ -413,5 +432,9 @@ def classify_error(error: Exception) -> str:
     # Server errors
     if any(x in error_str for x in ["500", "502", "503", "504", "server error", "internal"]):
         return "server_error"
-    
+
+    # Truncated / incomplete response (hit output token limit)
+    if any(x in error_str for x in ["truncated json", "truncated response", "eof while parsing", "unterminated string"]):
+        return "truncated_response"
+
     return "unknown"

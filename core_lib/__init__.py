@@ -22,7 +22,7 @@ from .llm import (
     create_llm_client, create_gemini_client, create_ollama_client, 
     create_openai_client, create_client_from_env, clean_and_parse_json_response
 )
-from .utils import LanguageUtils, HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check
+from .utils import LanguageUtils, HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check, utc_now, parse_iso_datetime, to_iso_string
 from .tools import ExcelManager
 
 # New settings management system
@@ -119,6 +119,9 @@ __all__ = [
     "HealthCheckResult",
     "HealthStatus",
     "create_lazy_check",
+    "utc_now",
+    "parse_iso_datetime",
+    "to_iso_string",
     
     # Tools
     "ExcelManager",

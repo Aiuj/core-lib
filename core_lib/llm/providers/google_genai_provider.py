@@ -224,10 +224,16 @@ class GoogleGenAIProvider(BaseProvider):
                 except Exception as e:
                     logger.error(f"Failed to load service account file: {e}")
             
-            self._client = genai.Client(**client_kwargs)
+            self._client = genai.Client(
+                **client_kwargs,
+                http_options={"timeout": 15_000, "retry_options": None},  # ms; no SDK-internal retries
+            )
         else:
             # AI Studio (Standard) Mode
-            self._client = genai.Client(api_key=config.api_key)
+            self._client = genai.Client(
+                api_key=config.api_key,
+                http_options={"timeout": 15_000, "retry_options": None},  # ms; no SDK-internal retries
+            )
 
         # Instrument only once globally to avoid "already instrumented" warnings
         global _instrumentation_initialized
@@ -239,6 +245,9 @@ class GoogleGenAIProvider(BaseProvider):
 
         # Initialize a rate limiter based on model RPM. We derive a conservative
         # per-second rate as max(1, RPM/60). If model not found, default to 60 RPM.
+        # Vertex AI has much higher rate limits than AI Studio, so we apply a
+        # multiplier when running in Vertex mode.
+        self._is_vertex = use_vertex
         model_lc = (config.model or "").lower()
         rpm = 60  # default fallback
         # Choose the most specific matching key (longest substring match)
@@ -246,13 +255,16 @@ class GoogleGenAIProvider(BaseProvider):
         if matches:
             matches.sort(key=len, reverse=True)
             rpm = self._MODEL_RPM[matches[0]]
+        # Vertex AI typically allows 10-200x higher RPM than AI Studio free tier
+        if use_vertex:
+            rpm = max(rpm * 30, 300)
         rps = max(1.0 / 60.0, rpm / 60.0)  # ensure non-zero; may be fractional
         self._rate_limiter = RateLimiter(
             RateLimitConfig(requests_per_minute=rpm, requests_per_second=rps)
         )
         logger.debug(
             "Initialized Gemini rate limiter",
-            extra={"model": config.model, "rpm": rpm, "rps": rps},
+            extra={"model": config.model, "rpm": rpm, "rps": rps, "vertex": use_vertex},
         )
 
         # Configure retry logic for common transient failures
@@ -271,26 +283,29 @@ class GoogleGenAIProvider(BaseProvider):
             # google.api_core might not be available in all setups
             pass
 
-        # Add google.genai specific errors (503 ServerError, etc.)
+        # Add google.genai specific errors — but NOT ServerError (503/504 overload).
+        # 503 UNAVAILABLE and 504 DEADLINE_EXCEEDED mean the provider is overwhelmed;
+        # retrying within the same provider wastes time — let the fallback client move on.
+        # Only ClientError variants that are genuinely transient (e.g. brief 500 internal)
+        # are excluded here so they fall through immediately to the fallback chain.
         try:
             from google.genai import errors as genai_errors
-            retryable_exceptions.extend([
-                genai_errors.ServerError,             # 503 server overloaded, 500 internal errors
-            ])
+            # Intentionally NOT including genai_errors.ServerError here.
+            # 503/504 from Gemini mean the model is overloaded — no point retrying.
+            _ = genai_errors  # imported for reference; no exceptions added
         except ImportError:
-            # google.genai might not be available
             pass
 
-        # Add common network-level exceptions
+        # Add common network-level exceptions (brief transient glitches worth one retry)
         retryable_exceptions.extend([
             ConnectionError,
             TimeoutError,
         ])
 
         self._retry_config = RetryConfig(
-            max_retries=3,
+            max_retries=1,   # One retry for genuine transient glitches; overloaded models go to fallback
             base_delay=1.0,
-            max_delay=30.0,
+            max_delay=5.0,
             retry_on_exceptions=tuple(retryable_exceptions) if retryable_exceptions else (Exception,),
         )
         logger.debug(
@@ -616,22 +631,31 @@ class GoogleGenAIProvider(BaseProvider):
         except Exception as e:  # pragma: no cover - network errors
             error_reason = classify_error(e)
 
-            # Log without traceback for expected quota/rate conditions so fallback can proceed cleanly.
-            if error_reason in ("rate_limit", "quota_exceeded"):
+            # Classify ServerError (503/504 overload) as a server_error for clean logging
+            is_server_overload = False
+            try:
+                from google.genai import errors as genai_errors
+                if isinstance(e, genai_errors.ServerError):
+                    is_server_overload = True
+                    if not error_reason or error_reason == "unknown":
+                        error_reason = "server_error"
+            except ImportError:
+                pass
+
+            # Expected transient failures: log as warning without traceback
+            silent_reasons = ("rate_limit", "quota_exceeded", "server_error", "timeout")
+            if error_reason in silent_reasons or is_server_overload:
                 logger.warning(
-                    "genai.chat throttled by provider; delegating to fallback provider",
-                    extra={
-                        "model": self.config.model,
-                        "error_reason": error_reason,
-                        "error_type": type(e).__name__,
-                    },
+                    f"genai.chat unavailable ({error_reason}): {type(e).__name__}: {e}",
+                    extra={"model": self.config.model, "error_reason": error_reason},
                 )
-            # Log error without full traceback for retryable errors (retries already logged)
-            is_retryable = isinstance(e, self._retry_config.retry_on_exceptions)
-            if is_retryable and error_reason not in ("rate_limit", "quota_exceeded"):
-                logger.error(f"genai.chat failed after all retries: {type(e).__name__}: {e}")
-            elif error_reason not in ("rate_limit", "quota_exceeded"):
-                logger.exception("genai.chat failed with non-retryable error")
+            else:
+                # Unexpected errors: log with full traceback for debugging
+                is_retryable = isinstance(e, self._retry_config.retry_on_exceptions)
+                if is_retryable:
+                    logger.error(f"genai.chat failed after all retries: {type(e).__name__}: {e}")
+                else:
+                    logger.exception("genai.chat failed with non-retryable error")
             
             return {
                 "error": str(e),
@@ -838,6 +862,20 @@ class GoogleGenAIProvider(BaseProvider):
                         logger.warning(f"Fallback JSON parsing failed for model {self.config.model}")
                         content = {}
                 else:
+                    # Check if the response was truncated (finish_reason=MAX_TOKENS)
+                    finish_reason = None
+                    try:
+                        candidates = getattr(resp, "candidates", None)
+                        if candidates:
+                            finish_reason = str(getattr(candidates[0], "finish_reason", "")).upper()
+                    except Exception:
+                        pass
+                    if finish_reason and "MAX_TOKENS" in finish_reason:
+                        raise ValueError(
+                            f"Response truncated (finish_reason={finish_reason}): structured output JSON is incomplete. "
+                            "Consider reducing the prompt size or increasing max_output_tokens."
+                        )
+
                     # Try native structured output
                     parsed = getattr(resp, "parsed", None)
                     if parsed is not None:
@@ -851,10 +889,22 @@ class GoogleGenAIProvider(BaseProvider):
                         try:
                             data = structured_output.model_validate_json(text)  # type: ignore[attr-defined]
                             content = data.model_dump()
-                        except Exception:
+                        except Exception as parse_exc:
                             import json as _json
-
-                            content = _json.loads(text) if text else {}
+                            try:
+                                content = _json.loads(text) if text else {}
+                            except _json.JSONDecodeError as json_exc:
+                                # Truncated JSON — the response was cut off mid-output.
+                                # Raise so the fallback client can try the next provider.
+                                text_preview = (text or "")[:200]
+                                logger.warning(
+                                    f"Truncated structured output from {self.config.model} "
+                                    f"({len(text or '')} chars, finish_reason={finish_reason}): {json_exc}. "
+                                    "Delegating to next provider."
+                                )
+                                raise ValueError(
+                                    f"Truncated JSON response from {self.config.model}: {json_exc}"
+                                ) from json_exc
                 # Also return text and content_json for convenience
                 import json as _json
                 return {
