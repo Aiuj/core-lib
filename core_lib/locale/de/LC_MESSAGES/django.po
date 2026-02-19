@@ -1,0 +1,194 @@
+# German translations for core-lib
+# Copyright (C) 2026 Faciliter AI
+# This file is distributed under the same license as the core-lib package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: core-lib 0.3.4\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-17 12:00+0000\n"
+"PO-Revision-Date: 2026-02-17 12:00+0000\n"
+"Last-Translator: Faciliter AI <admin@myfaq.ai>\n"
+"Language-Team: German\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# Industry Categories - Technology
+msgid "Software & IT Services"
+msgstr "Software und IT-Dienstleistungen"
+
+msgid "Software development, SaaS, cloud computing, and IT consulting services."
+msgstr "Softwareentwicklung, SaaS, Cloud-Computing und IT-Beratungsdienste."
+
+msgid "Hardware & Electronics"
+msgstr "Hardware und Elektronik"
+
+msgid "Computer hardware, semiconductors, consumer electronics, and components."
+msgstr "Computerhardware, Halbleiter, Unterhaltungselektronik und Komponenten."
+
+msgid "Telecommunications"
+msgstr "Telekommunikation"
+
+msgid "Wireless, wireline, ISP, and network infrastructure services."
+msgstr "Drahtlos-, Festnetz-, ISP- und Netzwerkinfrastrukturdienste."
+
+# Industry Categories - Manufacturing
+msgid "Automotive"
+msgstr "Automobil"
+
+msgid "Vehicle manufacturing, parts, and automotive technology."
+msgstr "Fahrzeugherstellung, Teile und Automobiltechnologie."
+
+msgid "Industrial Machinery"
+msgstr "Industriemaschinen"
+
+msgid "Heavy equipment, industrial tools, and automation systems."
+msgstr "Schwere Ausrüstung, Industriewerkzeuge und Automatisierungssysteme."
+
+msgid "Chemicals & Materials"
+msgstr "Chemie und Werkstoffe"
+
+msgid "Basic chemicals, specialty materials, plastics, and raw materials."
+msgstr "Basischemikalien, Spezialmaterialien, Kunststoffe und Rohstoffe."
+
+msgid "Food & Beverage"
+msgstr "Lebensmittel und Getränke"
+
+msgid "Food processing, beverage production, and packaging."
+msgstr "Lebensmittelverarbeitung, Getränkeproduktion und Verpackung."
+
+msgid "Textiles & Apparel"
+msgstr "Textilien und Bekleidung"
+
+msgid "Clothing, fabrics, footwear, and fashion accessories."
+msgstr "Kleidung, Stoffe, Schuhe und Modeaccessoires."
+
+# Industry Categories - Healthcare
+msgid "Pharmaceuticals"
+msgstr "Pharmazeutika"
+
+msgid "Drug development, biotechnology, and pharmaceutical manufacturing."
+msgstr "Arzneimittelentwicklung, Biotechnologie und pharmazeutische Herstellung."
+
+msgid "Medical Devices"
+msgstr "Medizingeräte"
+
+msgid "Medical equipment, diagnostic tools, and health technology."
+msgstr "Medizinische Ausrüstung, Diagnosewerkzeuge und Gesundheitstechnologie."
+
+msgid "Healthcare Services"
+msgstr "Gesundheitsdienstleistungen"
+
+msgid "Hospitals, clinics, care facilities, and health management."
+msgstr "Krankenhäuser, Kliniken, Pflegeeinrichtungen und Gesundheitsmanagement."
+
+# Industry Categories - Finance
+msgid "Banking & Lending"
+msgstr "Bankwesen und Kreditvergabe"
+
+msgid "Commercial banking, loans, credit services, and fintech."
+msgstr "Geschäftsbanken, Kredite, Kreditdienste und Fintech."
+
+msgid "Insurance"
+msgstr "Versicherung"
+
+msgid "Life, property, casualty, and health insurance services."
+msgstr "Lebens-, Sach-, Unfall- und Krankenversicherungen."
+
+msgid "Investment & Asset Mgmt"
+msgstr "Anlagen und Vermögensverwaltung"
+
+msgid "Wealth management, venture capital, and private equity."
+msgstr "Vermögensverwaltung, Risikokapital und Private Equity."
+
+# Industry Categories - Retail
+msgid "E-commerce"
+msgstr "E-Commerce"
+
+msgid "Online retail, marketplaces, and digital commerce platforms."
+msgstr "Online-Einzelhandel, Marktplätze und digitale Handelsplattformen."
+
+msgid "Brick & Mortar Retail"
+msgstr "Stationärer Einzelhandel"
+
+msgid "Physical stores, supermarkets, and department stores."
+msgstr "Physische Geschäfte, Supermärkte und Kaufhäuser."
+
+msgid "Wholesale Distribution"
+msgstr "Großhandelsvertrieb"
+
+msgid "B2B distribution, supply chain intermediaries, and bulk trading."
+msgstr "B2B-Vertrieb, Lieferkettenintermediäre und Großhandel."
+
+# Industry Categories - Construction & Real Estate
+msgid "Residential Construction"
+msgstr "Wohnbau"
+
+msgid "Home building, renovation, and residential development."
+msgstr "Hausbau, Renovierung und Wohnungsbau."
+
+msgid "Commercial Construction"
+msgstr "Gewerbebau"
+
+msgid "Office buildings, industrial facilities, and public infrastructure."
+msgstr "Bürogebäude, Industrieanlagen und öffentliche Infrastruktur."
+
+msgid "Real Estate Services"
+msgstr "Immobiliendienstleistungen"
+
+msgid "Property management, brokerage, and real estate investment."
+msgstr "Immobilienverwaltung, Maklerdienste und Immobilieninvestitionen."
+
+# Industry Categories - Logistics & Transport
+msgid "Freight & Shipping"
+msgstr "Fracht und Versand"
+
+msgid "Air, sea, rail, and road freight transportation."
+msgstr "Luft-, See-, Schienen- und Straßengüterverkehr."
+
+msgid "Warehousing & Storage"
+msgstr "Lagerung und Lagerhaltung"
+
+msgid "Inventory storage, fulfillment centers, and logistics hubs."
+msgstr "Lagerhaltung, Fulfillment-Zentren und Logistikzentren."
+
+# Industry Categories - Energy & Utilities
+msgid "Oil & Gas"
+msgstr "Öl und Gas"
+
+msgid "Exploration, extraction, refining, and distribution."
+msgstr "Exploration, Förderung, Raffination und Vertrieb."
+
+msgid "Renewable Energy"
+msgstr "Erneuerbare Energien"
+
+msgid "Solar, wind, hydro, and sustainable energy solutions."
+msgstr "Solar-, Wind-, Wasserkraft- und nachhaltige Energielösungen."
+
+msgid "Utilities"
+msgstr "Versorgungsunternehmen"
+
+msgid "Water, electricity, waste management, and public services."
+msgstr "Wasser, Strom, Abfallwirtschaft und öffentliche Dienstleistungen."
+
+# Industry Categories - Professional Services
+msgid "Legal Services"
+msgstr "Rechtsdienstleistungen"
+
+msgid "Law firms, legal consulting, and compliance services."
+msgstr "Anwaltskanzleien, Rechtsberatung und Compliance-Dienste."
+
+msgid "Management Consulting"
+msgstr "Unternehmensberatung"
+
+msgid "Business strategy, operations, and HR consulting."
+msgstr "Unternehmensstrategie, Betrieb und HR-Beratung."
+
+msgid "Marketing & Advertising"
+msgstr "Marketing und Werbung"
+
+msgid "Digital marketing, branding, PR, and media services."
+msgstr "Digitales Marketing, Branding, PR und Mediendienste."

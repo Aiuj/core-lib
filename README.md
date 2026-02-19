@@ -791,6 +791,87 @@ See **[APIClient Documentation](docs/API_CLIENT_BASE_CLASS.md)** for complete gu
 
 ---
 
+## 🏭 Industry Categories (New!)
+
+Comprehensive, multilingual taxonomy of 28 industry categories for consistent company classification:
+
+```python
+from core_lib.config.industry_categories import (
+    INDUSTRY_CATEGORIES,
+- **[Industry Categories](docs/INDUSTRY_CATEGORIES.md)** - 🆕 Multilingual industry taxonomy (28 categories)
+    INDUSTRY_CATEGORIES_BY_KEY,
+    INDUSTRY_CATEGORY_CHOICES
+)
+
+# Fast lookup
+category = INDUSTRY_CATEGORIES_BY_KEY['tech_software']
+print(category['label'])  # "Software & IT Services"
+print(category['area'])   # "TECHNOLOGY"
+
+# Multilingual support (automatic translation)
+from django.utils.translation import activate
+
+activate('fr')
+print(category['label'])  # "Logiciels et services informatiques"
+
+activate('de')
+print(category['label'])  # "Software und IT-Dienstleistungen"
+
+# Django form choices
+form_field = forms.ChoiceField(choices=INDUSTRY_CATEGORY_CHOICES)
+```
+
+### Available Categories
+
+- **TECHNOLOGY** (3) - Software, Hardware, Telecom
+- **MANUFACTURING** (5) - Automotive, Machinery, Chemicals, Food, Textiles
+- **HEALTHCARE** (3) - Pharma, Devices, Services
+- **FINANCE** (3) - Banking, Insurance, Investment
+- **RETAIL** (3) - E-commerce, Stores, Wholesale
+- **CONSTRUCTION** (3) - Residential, Commercial, Real Estate
+- **LOGISTICS** (2) - Freight, Warehousing
+- **ENERGY** (3) - Oil & Gas, Renewables, Utilities
+- **SERVICES** (3) - Legal, Consulting, Marketing
+
+### Best Practices
+
+✅ **DO:** Store only the key (e.g., `tech_software`) in database
+✅ **DO:** Compute label/area dynamically via properties
+❌ **DON'T:** Store translated labels in database (breaks multilingual)
+❌ **DON'T:** Hardcode industry names
+
+See **[Industry Categories Documentation](docs/INDUSTRY_CATEGORIES.md)** for complete guide.
+
+### Managing Translations
+
+#### Extract translatable strings:
+```bash
+cd core-lib
+xgettext --language=Python --keyword=_ --output=core_lib/locale/messages.pot core_lib/config/industry_categories.py
+```
+
+#### Update translations:
+```bash
+# Using msgmerge (gettext tools)
+msgmerge --update core_lib/locale/fr/LC_MESSAGES/django.po core_lib/locale/messages.pot
+msgmerge --update core_lib/locale/de/LC_MESSAGES/django.po core_lib/locale/messages.pot
+```
+
+#### Compile translations:
+```bash
+# Compile to binary .mo files for runtime use
+msgfmt core_lib/locale/fr/LC_MESSAGES/django.po -o core_lib/locale/fr/LC_MESSAGES/django.mo
+msgfmt core_lib/locale/de/LC_MESSAGES/django.po -o core_lib/locale/de/LC_MESSAGES/django.mo
+```
+
+**Note:** For Django projects, you can alternatively use:
+```bash
+django-admin makemessages -l fr -l de --pythonpath=core_lib
+django-admin compilemessages --pythonpath=core_lib
+```
+
+---
+
 ## 📚 Documentation
 
 Detailed documentation is available in the `docs/` directory:
