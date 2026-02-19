@@ -631,7 +631,8 @@ class GoogleGenAIProvider(BaseProvider):
         except Exception as e:  # pragma: no cover - network errors
             error_reason = classify_error(e)
 
-            # Classify ServerError (503/504 overload) as a server_error for clean logging
+            # Classify ServerError (503/504) and ClientError 499 CANCELLED as server-side
+            # transient failures for clean logging (warning instead of full traceback).
             is_server_overload = False
             try:
                 from google.genai import errors as genai_errors
@@ -639,6 +640,10 @@ class GoogleGenAIProvider(BaseProvider):
                     is_server_overload = True
                     if not error_reason or error_reason == "unknown":
                         error_reason = "server_error"
+                elif isinstance(e, genai_errors.ClientError) and "499" in str(e):
+                    # 499 CANCELLED: the server aborted the streaming call (transient)
+                    is_server_overload = True
+                    error_reason = "server_error"
             except ImportError:
                 pass
 

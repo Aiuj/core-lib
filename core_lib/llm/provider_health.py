@@ -417,7 +417,12 @@ def classify_error(error: Exception) -> str:
     
     if any(x in error_type for x in ["timeout", "timedout"]):
         return "timeout"
-    
+
+    # Server-side cancellation (Google/Vertex 499 CANCELLED — the server aborted the call,
+    # not the client; treat as a brief transient server error with a short cooldown).
+    if "499" in error_str or "cancelled" in error_str:
+        return "server_error"
+
     # Connection errors
     if any(x in error_str for x in ["connection", "connect", "unreachable", "network"]):
         return "connection_error"
