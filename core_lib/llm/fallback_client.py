@@ -359,11 +359,26 @@ class FallbackLLMClient:
                 except Exception as e:
                     last_error = e
                     error_reason = classify_error(e)
-                    
-                    logger.warning(
+
+                    wake_on_lan_cfg = getattr(config, "wake_on_lan", None)
+                    wol_enabled = isinstance(wake_on_lan_cfg, dict) and bool(
+                        wake_on_lan_cfg.get("enabled", True)
+                    )
+                    is_expected_wol_connection_error = (
+                        error_reason == "connection_error"
+                        and config.provider == "ollama"
+                        and wol_enabled
+                    )
+
+                    log_message = (
                         f"Provider {provider_id} failed (attempt {retry + 1}/{self._max_retries}): "
                         f"{type(e).__name__}: {e} (classified as: {error_reason})"
                     )
+
+                    if is_expected_wol_connection_error:
+                        logger.info(log_message)
+                    else:
+                        logger.warning(log_message)
                     
                     # Mark unhealthy on last retry
                     if retry == self._max_retries - 1:

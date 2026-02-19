@@ -61,7 +61,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 from core_lib import get_module_logger
 
@@ -129,13 +129,14 @@ class ProviderConfig:
     provider-specific configs (GeminiConfig, OpenAIConfig, OllamaConfig).
     
     Attributes:
-        provider: Provider name (gemini, openai, azure-openai, ollama)
+        provider: Provider name (gemini, vertex, openai, azure-openai, ollama)
         model: Model name/identifier
         api_key: API key (for cloud providers)
         host: Base URL/host (for Ollama or custom endpoints)
         temperature: Sampling temperature
         max_tokens: Maximum tokens to generate
         thinking_enabled: Enable step-by-step thinking
+        thinking_config: Optional provider-specific thinking configuration
         priority: Lower number = higher priority (for fallback ordering)
         enabled: Whether this provider is enabled
         min_intelligence_level: Minimum intelligence level to use this provider (0-10)
@@ -150,6 +151,7 @@ class ProviderConfig:
     temperature: float = 0.7
     max_tokens: Optional[int] = None
     thinking_enabled: bool = False
+    thinking_config: Optional[Dict[str, Any]] = None
     priority: int = 100
     enabled: bool = True
     
@@ -165,6 +167,10 @@ class ProviderConfig:
     azure_api_version: Optional[str] = None
     organization: Optional[str] = None
     project: Optional[str] = None
+    location: Optional[str] = None
+    service_account_file: Optional[str] = None
+    wake_on_lan: Optional[Dict[str, Any]] = None
+    _missing_service_account_logged: ClassVar[Set[str]] = set()
     
     def __post_init__(self):
         """Normalize provider name and set defaults."""
@@ -180,6 +186,7 @@ class ProviderConfig:
         if not self.model:
             defaults = {
                 "gemini": "gemini-2.0-flash",
+                "vertex": "gemini-2.0-flash",
                 "openai": "gpt-4o-mini",
                 "azure-openai": "gpt-4o-mini",
                 "ollama": "llama3.2",
@@ -222,9 +229,43 @@ class ProviderConfig:
             normalized["max_tokens"] = int(max_tokens)
         
         # Thinking mode
-        thinking = data.get("thinking_enabled") or data.get("thinkingEnabled") or data.get("thinking")
-        if thinking is not None:
-            normalized["thinking_enabled"] = bool(thinking) if not isinstance(thinking, str) else thinking.lower() == "true"
+        thinking = data.get("thinking")
+        if thinking is None and ("thinking_enabled" in data or "thinkingEnabled" in data):
+            thinking = data.get("thinking_enabled", data.get("thinkingEnabled"))
+
+        thinking_level = data.get("thinking_level") if "thinking_level" in data else data.get("thinkingLevel")
+        thinking_budget = data.get("thinking_budget") if "thinking_budget" in data else data.get("thinkingBudget")
+        include_thoughts = data.get("include_thoughts") if "include_thoughts" in data else data.get("includeThoughts")
+
+        thinking_cfg: Dict[str, Any] = {}
+
+        if isinstance(thinking, dict):
+            thinking_cfg.update(thinking)
+            if "enabled" in thinking:
+                normalized["thinking_enabled"] = bool(thinking.get("enabled"))
+        elif isinstance(thinking, (int, float)):
+            budget = int(thinking)
+            thinking_cfg["budget"] = budget
+            normalized["thinking_enabled"] = budget > 0
+        elif isinstance(thinking, str):
+            thinking_lc = thinking.lower().strip()
+            if thinking_lc in {"true", "false"}:
+                normalized["thinking_enabled"] = thinking_lc == "true"
+            else:
+                thinking_cfg["level"] = thinking_lc
+                normalized["thinking_enabled"] = thinking_lc not in {"off", "none", "disabled", "disable", "0"}
+        elif thinking is not None:
+            normalized["thinking_enabled"] = bool(thinking)
+
+        if thinking_level is not None:
+            thinking_cfg["level"] = str(thinking_level).lower()
+        if thinking_budget is not None:
+            thinking_cfg["budget"] = int(thinking_budget)
+        if include_thoughts is not None:
+            thinking_cfg["include_thoughts"] = bool(include_thoughts)
+
+        if thinking_cfg:
+            normalized["thinking_config"] = thinking_cfg
         
         # Priority
         if "priority" in data:
@@ -256,17 +297,32 @@ class ProviderConfig:
         # OpenAI-specific
         normalized["organization"] = data.get("organization") or data.get("org")
         normalized["project"] = data.get("project")
+        normalized["location"] = data.get("location") or data.get("region")
+        normalized["service_account_file"] = (
+            data.get("service_account_file") or 
+            data.get("serviceAccountFile") or 
+            data.get("credentials_file") or
+            data.get("google_application_credentials")
+        )
         
         # Collect remaining keys as extra
         known_keys = {
             "provider", "type", "model", "model_name", "api_key", "apiKey", "key",
             "host", "base_url", "baseUrl", "endpoint", "temperature", "max_tokens",
-            "maxTokens", "thinking_enabled", "thinkingEnabled", "thinking", "priority",
+            "maxTokens", "thinking_enabled", "thinkingEnabled", "thinking", "thinking_config",
+            "thinkingConfig", "thinking_level", "thinkingLevel", "thinking_budget", "thinkingBudget",
+            "include_thoughts", "includeThoughts", "priority",
             "enabled", "azure_endpoint", "azureEndpoint", "azure_api_version",
-            "azureApiVersion", "organization", "org", "project"
+            "azureApiVersion", "organization", "org", "project", "location", "region",
+            "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials",
+            "wake_on_lan", "wakeOnLan", "wol"
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
+
+        wake_on_lan = data.get("wake_on_lan") or data.get("wakeOnLan") or data.get("wol")
+        if isinstance(wake_on_lan, dict):
+            normalized["wake_on_lan"] = wake_on_lan
         
         return cls(**{k: v for k, v in normalized.items() if v is not None or k in ("api_key", "host")})
     
@@ -278,13 +334,33 @@ class ProviderConfig:
         """
         if self.provider == "gemini":
             from .providers.google_genai_provider import GeminiConfig
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
             return GeminiConfig(
-                api_key=self.api_key or "",
+                api_key=api_key,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
+                project=None,
+                location=None,
+                service_account_file=None,
+            )
+
+        elif self.provider == "vertex":
+            from .providers.google_genai_provider import GeminiConfig
+            return GeminiConfig(
+                api_key=None,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
+                base_url=self.host or "https://generativelanguage.googleapis.com",
+                project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
+                location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
+                service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
             )
         
         elif self.provider in ("openai", "azure-openai"):
@@ -309,10 +385,13 @@ class ProviderConfig:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "http://localhost:11434",
                 **{k: v for k, v in self.extra.items() if k in (
                     "timeout", "num_ctx", "num_predict", "repeat_penalty", "top_k", "top_p"
                 )}
+                ,
+                wake_on_lan=self.wake_on_lan,
             )
         
         else:
@@ -336,7 +415,34 @@ class ProviderConfig:
         if not self.enabled:
             return False
         
-        if self.provider in ("gemini", "openai"):
+        if self.provider == "gemini":
+            # AI Studio (API Key) only
+            return bool(self.api_key) or bool(os.getenv("GEMINI_API_KEY")) or bool(os.getenv("GOOGLE_GENAI_API_KEY"))
+
+        if self.provider == "vertex":
+            has_project = bool(self.project) or bool(os.getenv("GOOGLE_CLOUD_PROJECT")) or bool(os.getenv("GOOGLE_PROJECT_ID"))
+            has_location = bool(self.location) or bool(os.getenv("GOOGLE_CLOUD_LOCATION")) or bool(os.getenv("GOOGLE_CLOUD_REGION"))
+            service_account = self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
+            if not service_account:
+                return has_project and has_location and False
+
+            normalized_path = str(service_account).strip().strip('"').strip("'")
+            expanded_path = os.path.expanduser(normalized_path)
+            has_service_account = os.path.isfile(expanded_path)
+
+            if not has_service_account:
+                cache_key = f"vertex:{expanded_path}"
+                if cache_key not in self._missing_service_account_logged:
+                    logger.error(
+                        "Vertex provider disabled: GOOGLE_APPLICATION_CREDENTIALS file not found: %s",
+                        expanded_path,
+                    )
+                    self._missing_service_account_logged.add(cache_key)
+
+            return has_project and has_location and has_service_account
+            
+        elif self.provider == "openai":
             return bool(self.api_key)
         elif self.provider == "azure-openai":
             return bool(self.api_key) and bool(self.azure_endpoint)

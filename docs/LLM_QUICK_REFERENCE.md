@@ -25,6 +25,15 @@ print(resp["content"])  # plain text
 client = create_gemini_client(api_key="your-key", model="gemini-1.5-flash")
 resp = client.chat("Explain quantum computing")
 print(resp["content"])  # plain text
+
+# Google Vertex AI (single turn via ADC)
+client = create_gemini_client(
+    model="gemini-1.5-pro",
+    project="my-gcp-project",
+    location="europe-west9",
+)
+resp = client.chat("Summarize the last earnings call")
+print(resp["content"])
 ```
 
 ## Key Features
@@ -83,6 +92,11 @@ client = LLMClient(config)
     - `GEMINI_MAX_TOKENS`
     - `GEMINI_THINKING_ENABLED` = `true|false`
     - `GEMINI_BASE_URL` (default: Google endpoint)
+- Gemini (Vertex AI via ADC):
+    - `GOOGLE_CLOUD_PROJECT` (or `GOOGLE_PROJECT_ID`)
+    - `GOOGLE_CLOUD_LOCATION` (or `GOOGLE_CLOUD_REGION`)
+    - `GOOGLE_APPLICATION_CREDENTIALS` (optional, path to service account JSON)
+    - `GEMINI_SERVICE_ACCOUNT_FILE` (optional, alias for service account file)
 - Ollama:
     - `OLLAMA_MODEL` (default: `qwen3:1.7b`)
     - `OLLAMA_TEMPERATURE` (default: `0.1`)
@@ -208,6 +222,62 @@ resp = client.chat(messages)
 - **Graceful degradation**: Partial failures don't break the entire system
 - **Comprehensive logging**: All retry attempts and rate limit events are logged
 - **Transparent operation**: No code changes required to benefit from resilience
+
+## Advanced Features
+
+### Vertex AI Context Caching
+
+Reduce costs and latency for large, repetitive contexts (e.g., long documents, rule sets) using Context Caching.
+
+#### Implicit Caching (Automatic)
+Vertex AI automatically caches context for **all users** at no extra cost if:
+1. The prompt is **> 2048 tokens**.
+2. You place the large, static content (documents, instructions) at the **beginning** of the prompt.
+3. Subsequent requests share the exact same prefix.
+
+**Savings:** ~90% cost reduction on cached input tokens.
+**Action:** Structure your prompts so static info (documents, system prompts) comes first.
+
+#### Explicit Caching (Manual)
+For guaranteed caching of specific large contexts (e.g., a referenced RFx document):
+
+1. **Create the cache** (using `google-genai` SDK directly):
+```python
+from google import genai
+from google.genai.types import CreateCachedContentConfig
+
+# Initialize standard client
+client = genai.Client(vertexai=True, project="my-project", location="us-central1")
+
+# Create cache
+cache = client.caches.create(
+    model="gemini-1.5-pro-001",
+    config=CreateCachedContentConfig(
+        contents=[...], # Your large content content list
+        ttl="3600s",
+        display_name="my-rfx-cache" 
+    )
+)
+cache_name = cache.name # e.g. "projects/.../cachedContents/123..."
+print(f"Created cache: {cache_name}")
+```
+
+2. **Use the cache** with `core-lib`:
+```python
+client = create_gemini_client(
+    model="gemini-1.5-pro-001", 
+    project="my-project", 
+    location="us-central1"
+)
+
+# Pass the cache name to chat() via cached_content
+response = client.chat(
+    messages=[{"role": "user", "content": "Analyze section 4 based on the cached RFx."}],
+    cached_content=cache_name
+)
+```
+
+**Note:** When using `cached_content`, system instructions and tools configured in the cache are used. Providing a new `system_message` in `chat()` when using a cache may be ignored or cause warnings, as instructions should typically be baked into the cache.
 
 ## References
 - Google GenAI Python SDK: https://googleapis.github.io/python-genai/

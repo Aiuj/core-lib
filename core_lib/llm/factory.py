@@ -2,9 +2,12 @@
 
 import os
 import warnings
-from typing import Optional, Dict, Any, Union, Type
+from typing import Optional, Dict, Any, Union, Type, TYPE_CHECKING
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from .llm_client import LLMClient
+
+if TYPE_CHECKING:
+    from core_lib.config.llm_settings import LLMSettings
 
 
 class LLMFactory:
@@ -25,6 +28,7 @@ class LLMFactory:
         cls,
         provider: Optional[str] = None,
         config: Optional[LLMConfig] = None,
+        settings: Optional["LLMSettings"] = None,
         **kwargs
     ) -> LLMClient:
         """Create an LLM client using the most appropriate method.
@@ -54,6 +58,12 @@ class LLMFactory:
         """
         if config is not None:
             # Apply any overrides to the provided config
+            if kwargs:
+                config = cls._apply_overrides_to_config(config, kwargs)
+            return LLMClient(config)
+
+        if settings is not None:
+            config = settings.to_llm_config()
             if kwargs:
                 config = cls._apply_overrides_to_config(config, kwargs)
             return LLMClient(config)
@@ -408,6 +418,7 @@ class LLMFactory:
 def create_llm_client(
     provider: Optional[str] = None,
     config: Optional[LLMConfig] = None,
+    settings: Optional["LLMSettings"] = None,
     **kwargs
 ) -> LLMClient:
     """Create an LLM client using the factory.
@@ -433,7 +444,7 @@ def create_llm_client(
         config = GeminiConfig(api_key="...", model="gemini-pro")
         client = create_llm_client(config=config)
     """
-    return LLMFactory.create(provider=provider, config=config, **kwargs)
+    return LLMFactory.create(provider=provider, config=config, settings=settings, **kwargs)
 
 
 def create_client_from_env(

@@ -34,12 +34,16 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from core_lib import get_module_logger
 
 logger = get_module_logger()
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 if TYPE_CHECKING:
     from .provider_registry import ProviderConfig
@@ -160,7 +164,7 @@ class ProviderHealthTracker:
         # Fallback to local tracking
         if key in self._local_health:
             status = self._local_health[key]
-            if status.recovery_at and datetime.utcnow() < status.recovery_at:
+            if status.recovery_at and _utcnow() < status.recovery_at:
                 return False
             else:
                 # Expired, remove from local cache
@@ -189,8 +193,8 @@ class ProviderHealthTracker:
         
         status_data = {
             "reason": reason,
-            "marked_at": datetime.utcnow().isoformat(),
-            "recovery_at": (datetime.utcnow().timestamp() + effective_ttl),
+            "marked_at": _utcnow().isoformat(),
+            "recovery_at": (_utcnow().timestamp() + effective_ttl),
         }
         
         if cache:
@@ -208,11 +212,11 @@ class ProviderHealthTracker:
         from datetime import timedelta
         self._local_health[key] = HealthStatus(
             is_healthy=False,
-            last_check=datetime.utcnow(),
+            last_check=_utcnow(),
             failure_reason=reason,
             failure_count=1,
-            last_failure=datetime.utcnow(),
-            recovery_at=datetime.utcnow() + timedelta(seconds=effective_ttl),
+            last_failure=_utcnow(),
+            recovery_at=_utcnow() + timedelta(seconds=effective_ttl),
         )
         logger.info(
             f"Marked provider {provider}:{model} unhealthy locally for {effective_ttl}s "

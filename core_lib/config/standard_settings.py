@@ -173,6 +173,8 @@ class StandardSettings(ApiSettings):
         
         # Auto-detect based on provider or model settings
         return (
+            EnvParser.get_env("EMBEDDING_PROVIDERS_FILE") or
+            EnvParser.get_env("LLM_PROVIDERS_FILE") or
             EnvParser.get_env("EMBEDDING_PROVIDER") or
             EnvParser.get_env("EMBEDDING_MODEL")
         ) is not None

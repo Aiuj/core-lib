@@ -214,10 +214,9 @@ uv add git+https://github.com/Aiuj/core-lib.git@v0.3.0
 git clone https://github.com/Aiuj/core-lib.git
 cd core-lib
 
-# Install in editable mode
-pip install -e .
-# OR with uv
-uv pip install -e .
+# Install virtual env using uv with all dependencies:
+
+uv sync -U --all-extras
 ```
 
 And add in the `.vscode/settings.json` the following:
@@ -287,7 +286,7 @@ settings = StandardSettings.from_env()
 
 # Use with existing clients - backward compatible
 if settings.llm:
-    llm_config = settings.get_llm_config()  # Returns OpenAIConfig/GeminiConfig/etc.
+  llm_config = settings.llm.to_llm_config()  # Returns OpenAIConfig/GeminiConfig/etc.
 if settings.cache:
     redis_config = settings.get_redis_config()  # Returns RedisConfig
 
@@ -507,6 +506,11 @@ from core_lib import create_llm_client, LLMClient
 
 # Auto-detect from environment
 client = create_llm_client()
+
+# Or pass settings directly (respects Vertex AI settings)
+from core_lib.config import LLMSettings
+llm_settings = LLMSettings.from_env()
+client = create_llm_client(settings=llm_settings)
 
 # Or specify provider and settings
 client = create_llm_client(provider="openai", model="gpt-4", temperature=0.2)

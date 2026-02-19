@@ -4,6 +4,14 @@ from typing import Optional
 from .embeddings_config import embeddings_settings
 from .base import BaseEmbeddingClient
 from .ollama import OllamaEmbeddingClient
+from ..config.embeddings_settings import EmbeddingsSettings
+from ..config.provider_chain_utils import (
+    build_kwargs_from_config,
+    build_provider_chain,
+    create_client_from_runtime_chain,
+    get_multi_url_value,
+    load_runtime_settings_if_needed,
+)
 from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
@@ -194,7 +202,6 @@ class EmbeddingFactory:
             model=model,
             embedding_dim=embedding_dim,
             use_l2_norm=use_l2_norm,
-            norm_method=norm_method,
             api_key=api_key,
             task_type=task_type,
             title=title,
@@ -330,31 +337,26 @@ class EmbeddingFactory:
         if config is None:
             config = embeddings_settings
 
-        provider_kwargs = {}
+        provider_kwargs = build_kwargs_from_config(
+            config,
+            field_specs=[
+                ("api_key", "api_key", "truthy"),
+                ("base_url", "base_url", "truthy"),
+                ("organization", "organization", "truthy"),
+                ("project", "project", "truthy"),
+                ("task_type", "task_type", "truthy"),
+                ("title", "title", "truthy"),
+                ("device", "device", "truthy"),
+                ("cache_dir", "cache_dir", "truthy"),
+                ("trust_remote_code", "trust_remote_code", "exists"),
+                ("use_sentence_transformers", "use_sentence_transformers", "exists"),
+                ("infinity_wake_on_lan", "wake_on_lan", "truthy"),
+            ],
+        )
 
-        # Add provider-specific kwargs based on config
-        if hasattr(config, 'api_key') and config.api_key:
-            provider_kwargs['api_key'] = config.api_key
-        if hasattr(config, 'base_url') and config.base_url:
-            provider_kwargs['base_url'] = config.base_url
-        if hasattr(config, 'organization') and config.organization:
-            provider_kwargs['organization'] = config.organization
-        if hasattr(config, 'project') and config.project:
-            provider_kwargs['project'] = config.project
-        if hasattr(config, 'google_api_key') and config.google_api_key:
-            provider_kwargs['api_key'] = config.google_api_key
-        if hasattr(config, 'task_type') and config.task_type:
-            provider_kwargs['task_type'] = config.task_type
-        if hasattr(config, 'title') and config.title:
-            provider_kwargs['title'] = config.title
-        if hasattr(config, 'device') and config.device:
-            provider_kwargs['device'] = config.device
-        if hasattr(config, 'cache_dir') and config.cache_dir:
-            provider_kwargs['cache_dir'] = config.cache_dir
-        if hasattr(config, 'trust_remote_code'):
-            provider_kwargs['trust_remote_code'] = config.trust_remote_code
-        if hasattr(config, 'use_sentence_transformers'):
-            provider_kwargs['use_sentence_transformers'] = config.use_sentence_transformers
+        # Preserve existing precedence: google_api_key overrides api_key when set.
+        if hasattr(config, "google_api_key") and getattr(config, "google_api_key"):
+            provider_kwargs["api_key"] = getattr(config, "google_api_key")
 
         return cls.create(
             provider=config.provider,
@@ -371,6 +373,8 @@ def create_embedding_client(
     embedding_dim: Optional[int] = None,
     use_l2_norm: bool = False,
     norm_method: Optional[str] = None,
+    intelligence_level: Optional[int] = None,
+    usage: Optional[str] = None,
     **kwargs
 ) -> BaseEmbeddingClient:
     """Create an embedding client with auto-detection or specified provider.
@@ -389,24 +393,57 @@ def create_embedding_client(
     Returns:
         Configured embedding client instance (FallbackEmbeddingClient if multiple URLs detected)
     """
-    import os
-    
+    # Use fresh settings snapshot when provider is not explicitly forced
+    runtime_settings = load_runtime_settings_if_needed(
+        provider,
+        loader=lambda: EmbeddingsSettings.from_env(
+            load_dotenv=False,
+            intelligence_level=intelligence_level,
+            usage=usage,
+        ),
+    )
+
+    from .fallback_client import FallbackEmbeddingClient
+
+    client_from_chain = create_client_from_runtime_chain(
+        provider=provider,
+        runtime_settings=runtime_settings,
+        model=model,
+        chain_overrides={"embedding_dim": embedding_dim},
+        create_fallback=lambda provider_configs: FallbackEmbeddingClient.from_config(
+            provider_configs=provider_configs,
+            common_model=model,
+            common_embedding_dim=embedding_dim,
+            common_use_l2_norm=use_l2_norm,
+            common_norm_method=norm_method,
+        ),
+        create_single=lambda provider_name, model_name, single_cfg: EmbeddingFactory.create(
+            provider=provider_name,
+            model=model_name,
+            embedding_dim=single_cfg.pop("embedding_dim", embedding_dim),
+            use_l2_norm=use_l2_norm,
+            norm_method=norm_method,
+            **single_cfg,
+            **kwargs,
+        ),
+    )
+    if client_from_chain is not None:
+        return client_from_chain
+
     # Detect if we should use fallback client (comma-separated URLs)
-    provider_name = provider or embeddings_settings.provider.lower()
-    
-    # Check for comma-separated URLs based on provider
-    url_to_check = None
-    if provider_name == "infinity":
-        url_to_check = os.getenv("INFINITY_BASE_URL") or os.getenv("EMBEDDING_BASE_URL")
-    elif provider_name == "ollama":
-        url_to_check = os.getenv("OLLAMA_URL") or os.getenv("EMBEDDING_BASE_URL")
-    elif provider_name == "openai":
-        url_to_check = os.getenv("OPENAI_BASE_URL") or os.getenv("EMBEDDING_BASE_URL")
-    else:
-        url_to_check = os.getenv("EMBEDDING_BASE_URL")
+    provider_name = provider or (runtime_settings.provider.lower() if runtime_settings else embeddings_settings.provider.lower())
+    url_to_check = get_multi_url_value(
+        provider_name=provider_name,
+        provider_env_map={
+            "infinity": ["INFINITY_BASE_URL"],
+            "ollama": ["OLLAMA_URL"],
+            "openai": ["OPENAI_BASE_URL"],
+        },
+        default_env_vars=["EMBEDDING_BASE_URL"],
+    )
     
     # If comma-separated URLs detected, use FallbackEmbeddingClient
-    if url_to_check and "," in url_to_check:
+    if url_to_check:
         from .fallback_client import FallbackEmbeddingClient
         logger.debug(f"Detected comma-separated URLs for provider '{provider_name}', using FallbackEmbeddingClient for HA")
         return FallbackEmbeddingClient.from_env(provider=provider_name)
@@ -428,7 +465,12 @@ def create_client_from_env() -> BaseEmbeddingClient:
     Returns:
         Configured embedding client instance based on environment variables
     """
-    return EmbeddingFactory.from_config()
+    runtime_settings = EmbeddingsSettings.from_env(load_dotenv=False)
+    if runtime_settings.provider_configs and len(runtime_settings.provider_configs) > 1:
+        from .fallback_client import FallbackEmbeddingClient
+        provider_configs = build_provider_chain(runtime_settings.provider_configs)
+        return FallbackEmbeddingClient.from_config(provider_configs=provider_configs)
+    return EmbeddingFactory.from_config(config=runtime_settings)
 
 
 def create_openai_client(

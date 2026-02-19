@@ -42,6 +42,7 @@ class InfinityRerankerClient(BaseRerankerClient):
         base_url: Optional[str] = None,
         timeout: Optional[int] = None,
         token: Optional[str] = None,
+        wake_on_lan: Optional[dict] = None,
         cache_duration_seconds: Optional[int] = None,
         return_documents: bool = True,
         **kwargs
@@ -53,6 +54,7 @@ class InfinityRerankerClient(BaseRerankerClient):
             base_url: Base URL(s) - single or comma-separated (default: http://localhost:7997)
             timeout: Request timeout in seconds (default: 30)
             token: Authentication token for secured Infinity servers
+            wake_on_lan: Optional Wake-on-LAN config for sleeping hosts
             cache_duration_seconds: How long to cache results
             return_documents: Whether to include document text in results
             **kwargs: Additional parameters
@@ -82,6 +84,7 @@ class InfinityRerankerClient(BaseRerankerClient):
             base_urls=base_url,
             timeout=timeout,
             token=token,
+            wake_on_lan=wake_on_lan,
         )
         
         # Set default model if not provided

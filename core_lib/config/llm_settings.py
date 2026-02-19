@@ -39,6 +39,9 @@ class LLMSettings(BaseSettings):
     # Gemini specific
     google_api_key: Optional[str] = None
     safety_settings: Optional[Dict[str, Any]] = None
+    google_project: Optional[str] = None
+    google_location: Optional[str] = None
+    google_service_account_file: Optional[str] = None
     
     @classmethod
     def from_env(
@@ -97,6 +100,12 @@ class LLMSettings(BaseSettings):
         elif provider.lower() in ("gemini", "google"):
             settings_dict.update({
                 "google_api_key": EnvParser.get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY"),
+                "google_project": EnvParser.get_env("GOOGLE_CLOUD_PROJECT", "GOOGLE_PROJECT_ID"),
+                "google_location": EnvParser.get_env("GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_REGION"),
+                "google_service_account_file": EnvParser.get_env(
+                    "GOOGLE_APPLICATION_CREDENTIALS",
+                    "GEMINI_SERVICE_ACCOUNT_FILE",
+                ),
             })
         
         # Apply overrides
@@ -114,12 +123,12 @@ class LLMSettings(BaseSettings):
         # Azure first since it's more specific than generic OpenAI
         if EnvParser.get_env("AZURE_OPENAI_API_KEY") or EnvParser.get_env("AZURE_OPENAI_ENDPOINT"):
             return "azure"
-        elif EnvParser.get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY"):
-            return "gemini"
-        elif EnvParser.get_env("OLLAMA_HOST", "OLLAMA_BASE_URL"):
-            return "ollama"
         elif EnvParser.get_env("OPENAI_API_KEY"):
             return "openai"
+        elif EnvParser.get_env("OLLAMA_HOST", "OLLAMA_BASE_URL"):
+            return "ollama"
+        elif EnvParser.get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY"):
+            return "gemini"
         
         return "openai"  # Default
     
@@ -127,8 +136,12 @@ class LLMSettings(BaseSettings):
         """Validate LLM configuration."""
         if self.provider.lower() in ("openai", "azure") and not self.api_key:
             raise SettingsError("OpenAI/Azure provider requires api_key")
-        elif self.provider.lower() in ("gemini", "google") and not self.google_api_key:
-            raise SettingsError("Gemini provider requires google_api_key")
+        elif self.provider.lower() in ("gemini", "google"):
+            has_vertex_config = bool(self.google_project and self.google_location)
+            if not self.google_api_key and not has_vertex_config:
+                raise SettingsError(
+                    "Gemini provider requires google_api_key or Vertex settings (google_project + google_location)"
+                )
         
         if self.temperature < 0 or self.temperature > 2:
             raise SettingsError("Temperature must be between 0 and 2")
@@ -154,4 +167,53 @@ class LLMSettings(BaseSettings):
             "ollama_timeout": self.ollama_timeout,
             "google_api_key": self.google_api_key,
             "safety_settings": self.safety_settings,
+            "google_project": self.google_project,
+            "google_location": self.google_location,
+            "google_service_account_file": self.google_service_account_file,
         }
+
+    def to_llm_config(self):
+        """Convert settings to a provider-specific LLMConfig instance."""
+        provider = self.provider.lower()
+
+        if provider in ("openai", "azure"):
+            from core_lib.llm import OpenAIConfig
+            return OpenAIConfig(
+                api_key=self.api_key or "",
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                base_url=self.base_url,
+                organization=self.organization,
+                project=self.project,
+                azure_endpoint=self.azure_endpoint,
+                azure_api_version=self.azure_api_version,
+            )
+
+        if provider in ("gemini", "google"):
+            from core_lib.llm import GeminiConfig
+            return GeminiConfig(
+                api_key=self.google_api_key,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                base_url=self.base_url or "https://generativelanguage.googleapis.com",
+                safety_settings=self.safety_settings,
+                project=self.google_project,
+                location=self.google_location,
+                service_account_file=self.google_service_account_file,
+            )
+
+        if provider == "ollama":
+            from core_lib.llm import OllamaConfig
+            return OllamaConfig(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                base_url=self.ollama_host or "http://localhost:11434",
+            )
+
+        raise SettingsError(f"Unsupported LLM provider: {self.provider}")

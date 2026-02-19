@@ -15,6 +15,7 @@ def run_uvicorn_server(
     log_level: str = "info",
     reload: bool = False,
     app_module_path: Optional[str] = None,
+    ws: str = "websockets-sansio",
     flush_logs_on_startup: bool = True,
     flush_logs_on_exit: bool = True,
 ) -> None:
@@ -33,6 +34,7 @@ def run_uvicorn_server(
         log_level: Uvicorn log level (default: "info")
         reload: Enable auto-reload on code changes (default: False)
         app_module_path: Module path for reload mode (e.g., "my_app:app")
+        ws: WebSocket protocol implementation for uvicorn (default: "websockets-sansio")
         flush_logs_on_startup: Flush logs before starting server (default: True)
         flush_logs_on_exit: Register atexit handler to flush logs (default: True)
     
@@ -102,6 +104,7 @@ def run_uvicorn_server(
         host=host,
         port=port,
         reload=reload,
+        ws=ws,
         log_config=None,  # CRITICAL: Preserves OTLP/custom logging handlers
         log_level=log_level.lower()
     )
@@ -114,6 +117,7 @@ def run_uvicorn_from_settings(
     port_attr: str = "port",
     reload_attr: str = "reload",
     log_level_attr: str = "log_level",
+    ws: str = "websockets-sansio",
     app_module_path: Optional[str] = None,
 ) -> None:
     """Run uvicorn server with configuration from settings object.
@@ -128,6 +132,7 @@ def run_uvicorn_from_settings(
         port_attr: Attribute name for port (default: "port")
         reload_attr: Attribute name for reload flag (default: "reload")
         log_level_attr: Attribute name for log level (default: "log_level")
+        ws: WebSocket protocol implementation for uvicorn (default: "websockets-sansio")
         app_module_path: Module path for reload mode (e.g., "my_app:app")
     
     Example:
@@ -153,5 +158,6 @@ def run_uvicorn_from_settings(
         port=port,
         log_level=log_level,
         reload=reload,
+        ws=ws,
         app_module_path=app_module_path,
     )
