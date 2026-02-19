@@ -31,11 +31,11 @@ class TestGoogleGenAIProviderRateLimit:
     def test_model_rpm_mapping(self):
         """Test that different models get correct RPM limits."""
         test_cases = [
-            ("gemini-2.5-pro", 5),
-            ("gemini-2.5-flash", 10),
-            ("gemini-2.5-flash-lite", 15),
-            ("gemma-3", 30),
-            ("gemini-embedding-001", 100),
+            ("gemini-2.5-pro", 10),
+            ("gemini-2.5-flash", 30),
+            ("gemini-2.5-flash-lite", 30),
+            ("gemma-3", 60),
+            ("gemini-embedding-001", 600),
             ("unknown-model", 60),  # Default fallback
         ]
         

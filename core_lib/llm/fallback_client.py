@@ -126,6 +126,7 @@ class FallbackLLMClient:
         health_tracker: Optional[ProviderHealthTracker] = None,
         max_retries_per_provider: int = 1,
         intelligence_level: Optional[int] = None,
+        http_timeout_ms: Optional[int] = None,
     ):
         """Initialize fallback client with a provider registry.
         
@@ -134,6 +135,8 @@ class FallbackLLMClient:
             health_tracker: Optional custom health tracker (uses global if None)
             max_retries_per_provider: Retries per provider before moving to next
             intelligence_level: Optional default intelligence level for filtering
+            http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
+                Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS env var when set.
         """
         if not registry or not registry.providers:
             raise ValueError("Registry must have at least one configured provider")
@@ -142,6 +145,7 @@ class FallbackLLMClient:
         self._health_tracker = health_tracker or get_health_tracker()
         self._max_retries = max_retries_per_provider
         self._default_intelligence_level = intelligence_level
+        self._http_timeout_ms = http_timeout_ms
         
         # Last request metadata (for observability)
         self.last_used_provider: Optional[str] = None
@@ -169,7 +173,12 @@ class FallbackLLMClient:
         """Get or create a cached LLMClient for a provider config."""
         cache_key = self._build_cache_key(config)
         if cache_key not in self._client_cache:
-            self._client_cache[cache_key] = config.to_client()
+            if self._http_timeout_ms is not None and config.provider in ("gemini", "vertex"):
+                llm_config = config.to_llm_config()
+                llm_config.http_timeout_ms = self._http_timeout_ms
+                self._client_cache[cache_key] = LLMClient(llm_config)
+            else:
+                self._client_cache[cache_key] = config.to_client()
         return self._client_cache[cache_key]
 
     def _build_cache_key(self, config: ProviderConfig) -> str:
@@ -190,6 +199,7 @@ class FallbackLLMClient:
             f"tier={config.tier or ''}",
             f"level={config.min_intelligence_level}-{config.max_intelligence_level}",
             f"keyfp={api_key_fingerprint}",
+            f"timeout_ms={self._http_timeout_ms or ''}",
         ])
     
     def _iter_providers(
@@ -493,6 +503,7 @@ class FallbackLLMClient:
         registry: ProviderRegistry,
         intelligence_level: Optional[int] = None,
         max_retries: int = 1,
+        http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
         """Create from an existing ProviderRegistry.
         
@@ -500,6 +511,7 @@ class FallbackLLMClient:
             registry: Configured ProviderRegistry
             intelligence_level: Default intelligence level filter
             max_retries: Retries per provider
+            http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
         Returns:
             FallbackLLMClient instance
@@ -508,6 +520,7 @@ class FallbackLLMClient:
             registry=registry,
             intelligence_level=intelligence_level,
             max_retries_per_provider=max_retries,
+            http_timeout_ms=http_timeout_ms,
         )
     
     @classmethod
@@ -517,6 +530,7 @@ class FallbackLLMClient:
         file_env_var: str = "LLM_PROVIDERS_FILE",
         intelligence_level: Optional[int] = None,
         max_retries: int = 1,
+        http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
         """Create from environment configuration.
         
@@ -530,6 +544,7 @@ class FallbackLLMClient:
             file_env_var: Environment variable with config file path
             intelligence_level: Default intelligence level filter
             max_retries: Retries per provider
+            http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
         Returns:
             FallbackLLMClient instance
@@ -539,6 +554,7 @@ class FallbackLLMClient:
             registry=registry,
             intelligence_level=intelligence_level,
             max_retries=max_retries,
+            http_timeout_ms=http_timeout_ms,
         )
     
     @classmethod
@@ -547,6 +563,7 @@ class FallbackLLMClient:
         providers: List[Dict[str, Any]],
         intelligence_level: Optional[int] = None,
         max_retries: int = 1,
+        http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
         """Create from a list of provider configuration dictionaries.
         
@@ -554,6 +571,7 @@ class FallbackLLMClient:
             providers: List of provider config dicts
             intelligence_level: Default intelligence level filter
             max_retries: Retries per provider
+            http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
         Returns:
             FallbackLLMClient instance
@@ -571,6 +589,7 @@ class FallbackLLMClient:
             registry=registry,
             intelligence_level=intelligence_level,
             max_retries=max_retries,
+            http_timeout_ms=http_timeout_ms,
         )
 
 
@@ -579,6 +598,7 @@ def create_fallback_llm_client(
     providers: Optional[List[Dict[str, Any]]] = None,
     intelligence_level: Optional[int] = None,
     max_retries: int = 1,
+    http_timeout_ms: Optional[int] = None,
 ) -> FallbackLLMClient:
     """Create a FallbackLLMClient from config or environment.
     
@@ -610,8 +630,10 @@ def create_fallback_llm_client(
             providers=providers,
             intelligence_level=intelligence_level,
             max_retries=max_retries,
+            http_timeout_ms=http_timeout_ms,
         )
     return FallbackLLMClient.from_env(
         intelligence_level=intelligence_level,
         max_retries=max_retries,
+        http_timeout_ms=http_timeout_ms,
     )

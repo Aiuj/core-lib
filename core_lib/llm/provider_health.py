@@ -51,13 +51,13 @@ if TYPE_CHECKING:
 # Default TTL for different failure types (in seconds)
 DEFAULT_UNHEALTHY_TTL = 300  # 5 minutes
 FAILURE_TTL_MAP = {
-    "rate_limit": 300,      # 5 minutes for rate limits
+    "rate_limit": 60,       # 1 minute for rate limits (was 300)
     "quota_exceeded": 3600, # 1 hour for quota exceeded
-    "timeout": 300,         # 5 minutes for timeouts (model likely overloaded)
-    "server_error": 300,    # 5 minutes for server errors (503/504 overload)
+    "timeout": 60,          # 1 minute for timeouts (was 300)
+    "server_error": 60,     # 1 minute for server errors (was 300)
     "connection_error": 60, # 1 minute for connection errors
     "auth_error": 3600,     # 1 hour for auth errors (unlikely to self-resolve)
-    "unknown": 180,         # 3 minutes for unknown errors
+    "unknown": 60,          # 1 minute for unknown errors (was 180)
 }
 
 
@@ -314,12 +314,12 @@ class ProviderHealthTracker:
                         recovery_at = status.get("recovery_at")
                         if recovery_at:
                             import time as _time
-                            secs_left = int(recovery_at - _time.monotonic())
+                            secs_left = int(recovery_at - _time.time())
                             if secs_left > 0:
                                 recovery_in = f", recovers in {secs_left}s"
                     elif key in self._local_health:
                         s = self._local_health[key]
-                        reason = s.reason or reason
+                        reason = s.failure_reason or reason
                 except Exception:
                     pass
                 logger.debug(f"Skipping unhealthy provider {p.provider}:{p.model} (reason={reason}{recovery_in})")

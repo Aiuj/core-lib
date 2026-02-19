@@ -552,6 +552,7 @@ def create_langchain_model(
 
 def create_langchain_model_with_fallback(
     intelligence_level: int = 5,
+    http_timeout_ms: Optional[int] = None,
     **kwargs: Any,
 ) -> CoreLibChatModel:
     """Create a LangChain-compatible chat model with automatic fallback.
@@ -568,6 +569,8 @@ def create_langchain_model_with_fallback(
     Args:
         intelligence_level: Intelligence level for provider routing (0-10).
                Default is 5 (standard tier).
+        http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
+               Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS env var when set.
         **kwargs: Additional arguments passed to CoreLibChatModel
         
     Returns:
@@ -588,5 +591,5 @@ def create_langchain_model_with_fallback(
         ```
     """
     from .fallback_client import create_fallback_llm_client
-    client = create_fallback_llm_client(intelligence_level=intelligence_level)
+    client = create_fallback_llm_client(intelligence_level=intelligence_level, http_timeout_ms=http_timeout_ms)
     return CoreLibChatModel(client=client, intelligence_level=intelligence_level, **kwargs)

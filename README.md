@@ -295,6 +295,16 @@ print(f"App: {settings.app_name} v{settings.version}")
 print(f"LLM Model: {settings.llm.model if settings.llm else 'Not configured'}")
 ```
 
+### Cache Maintenance
+
+```bash
+uv run python scripts/clear_cache.py                        # Clear all registered cache keys
+uv run python scripts/clear_cache.py --scope company --company-id <company_id>
+uv run python scripts/clear_cache.py --include-llm-health   # Also clear llm:health:* provider status
+uv run python scripts/clear_cache.py --dotenv-dir C:/Dev/github/agent-rfx --include-llm-health
+uv run python scripts/clear_cache.py --flushdb              # Flush full Redis/Valkey DB
+```
+
 ### Settings Singleton Manager
 
 Manage a single global Settings instance throughout your application:

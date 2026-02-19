@@ -8,7 +8,10 @@ GenerateContentConfig, and chat via client.chats.create(...).send_message(...).
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
+import os
 import time
+import json
+
 
 from pydantic import BaseModel
 
@@ -28,6 +31,24 @@ logger = get_module_logger()
 
 # Global flag to ensure instrumentation happens only once
 _instrumentation_initialized = False
+
+
+def _get_http_timeout_ms() -> int:
+    """Get Google GenAI HTTP timeout in milliseconds.
+
+    Uses GOOGLE_GENAI_HTTP_TIMEOUT_MS when set; defaults to 60000ms.
+    """
+    raw = os.getenv("GOOGLE_GENAI_HTTP_TIMEOUT_MS", "").strip()
+    if not raw:
+        return 60_000
+    try:
+        timeout = int(raw)
+        if timeout > 0:
+            return timeout
+    except ValueError:
+        pass
+    logger.warning("Invalid GOOGLE_GENAI_HTTP_TIMEOUT_MS=%r, falling back to 60000", raw)
+    return 60_000
 
 
 def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -75,6 +96,7 @@ class GeminiConfig(LLMConfig):
     location: Optional[str] = None
     service_account_file: Optional[str] = None
     thinking_config: Optional[Dict[str, Any]] = None
+    http_timeout_ms: Optional[int] = None
 
     def __init__(
         self,
@@ -89,6 +111,7 @@ class GeminiConfig(LLMConfig):
         project: Optional[str] = None,
         location: Optional[str] = None,
         service_account_file: Optional[str] = None,
+        http_timeout_ms: Optional[int] = None,
     ):
         super().__init__("gemini", model, temperature, max_tokens, thinking_enabled)
         self.api_key = api_key
@@ -103,6 +126,7 @@ class GeminiConfig(LLMConfig):
         self.location = location
         self.service_account_file = service_account_file
         self.thinking_config = dict(thinking_config) if thinking_config else None
+        self.http_timeout_ms = http_timeout_ms
 
     @classmethod
     def from_env(cls) -> "GeminiConfig":
@@ -170,12 +194,12 @@ class GoogleGenAIProvider(BaseProvider):
     # reflect only RPM (requests per minute); TPM/RPD intentionally ignored for now.
     _MODEL_RPM: Dict[str, int] = {
         "gemini-3-pro-preview": 5,    # Gemini 3.0 Pro
-        "gemini-3-flash-preview": 15, # Gemini 3.0 Flash
-        "gemini-2.5-pro": 5,          # Gemini 2.5 Pro
-        "gemini-2.5-flash-lite": 15,  # Gemini 2.5 Flash-Lite
-        "gemini-2.5-flash": 10,       # Gemini 2.5 Flash (keep after flash-lite for matching specificity)
-        "gemma-3": 30,         # Gemma 3
-        "embedding": 100,      # Gemini Embedding models
+        "gemini-3-flash-preview": 30, # Gemini 3.0 Flash
+        "gemini-2.5-pro": 10,         # Gemini 2.5 Pro
+        "gemini-2.5-flash-lite": 30,  # Gemini 2.5 Flash-Lite
+        "gemini-2.5-flash": 30,       # Gemini 2.5 Flash
+        "gemma-3": 60,                # Gemma 3
+        "embedding": 600,             # Gemini Embedding models
     }
     
     # Models known to NOT support native JSON mode (structured output)
@@ -224,16 +248,20 @@ class GoogleGenAIProvider(BaseProvider):
                 except Exception as e:
                     logger.error(f"Failed to load service account file: {e}")
             
+            http_timeout_ms = config.http_timeout_ms if config.http_timeout_ms is not None else _get_http_timeout_ms()
             self._client = genai.Client(
                 **client_kwargs,
-                http_options={"timeout": 15_000, "retry_options": None},  # ms; no SDK-internal retries
+                http_options={"timeout": http_timeout_ms, "retry_options": None},  # ms; no SDK-internal retries
             )
         else:
             # AI Studio (Standard) Mode
+            http_timeout_ms = config.http_timeout_ms if config.http_timeout_ms is not None else _get_http_timeout_ms()
             self._client = genai.Client(
                 api_key=config.api_key,
-                http_options={"timeout": 15_000, "retry_options": None},  # ms; no SDK-internal retries
+                http_options={"timeout": http_timeout_ms, "retry_options": None},  # ms; no SDK-internal retries
             )
+
+        logger.debug(f"Configured Google GenAI HTTP timeout: {http_timeout_ms}ms")
 
         # Instrument only once globally to avoid "already instrumented" warnings
         global _instrumentation_initialized
@@ -742,12 +770,27 @@ class GoogleGenAIProvider(BaseProvider):
                     cached_content=cached_content,
                 )
                 start = time.perf_counter()
-                resp = self._client.models.generate_content(
+                
+                # Use streaming to keep connection alive during long generations (prevents 504/timeouts)
+                stream = self._client.models.generate_content_stream(
                     model=self.config.model,
                     contents=user_text,
                     **extra,
                 )
+                
+                # Consume stream to accumulate response
+                # We need to manually aggregate usage and content since we're consuming chunks
+                chunks = []
+                for chunk in stream:
+                    chunks.append(chunk)
+
                 latency_ms = (time.perf_counter() - start) * 1000
+                
+                # Use the last chunk for metadata, but we'll need to aggregate text/function calls
+                resp = chunks[-1] if chunks else None
+                if not resp:
+                     raise RuntimeError("Empty response stream from Google GenAI")
+                     
             else:
                 prompt = self._to_genai_messages(working_messages)
                 extra = self._build_config(
@@ -758,37 +801,53 @@ class GoogleGenAIProvider(BaseProvider):
                     thinking_enabled_override=thinking_enabled,
                     cached_content=cached_content,
                 )
-                # Preserve multi-turn via chats API
-                # NOTE: chats.create might not support cached_content in the create call?
-                # The docs say pass it to generateContent. Not sure about chat sessions.
-                # However, for chat, we often send history + new message.
-                # If cached content is used, it usually replaces the initial context.
-                # google.genai chat might be tricky with cache. 
-                # Docs say: "You can use a context cache... in a generative AI application."
-                # Chat creates a session.
-                # Let's assume passed in config it works.
                 chat = self._client.chats.create(model=self.config.model)
                 start = time.perf_counter()
-                resp = chat.send_message(prompt, **extra)  # type: ignore[arg-type]
+                
+                # Use streaming to keep connection alive
+                stream = chat.send_message_stream(prompt, **extra)  # type: ignore[arg-type]
+                
+                chunks = []
+                for chunk in stream:
+                    chunks.append(chunk)
+
                 latency_ms = (time.perf_counter() - start) * 1000
+                
+                resp = chunks[-1] if chunks else None
+                if not resp:
+                     raise RuntimeError("Empty response stream from Google GenAI")
 
-            tool_calls: List[Dict[str, Any]] = []
-            usage_metadata = getattr(resp, "usage_metadata", None)
-            usage: Dict[str, Any] = {}
+            # Aggregate content from chunks
+            # text: concatenate all chunks
+            # usage: usually in last chunk
+            # function_calls: accumulate from all chunks
+            
+            full_text = ""
+            all_tool_calls: List[Dict[str, Any]] = []
+            
+            for chunk in chunks:
+                # Accumulate text
+                chunk_text = self._extract_text_from_response(chunk)
+                if chunk_text:
+                    full_text += chunk_text
+                
+                # Accumulate function calls
+                if getattr(chunk, "function_calls", None):
+                    for fc in chunk.function_calls:  # type: ignore[attr-defined]
+                        all_tool_calls.append(
+                            {
+                                "id": fc.get("id") if isinstance(fc, dict) else None,
+                                "function": {
+                                    "name": fc.get("name") if isinstance(fc, dict) else getattr(fc, "name", ""),
+                                    "arguments": fc.get("args") if isinstance(fc, dict) else getattr(fc, "args", {}),
+                                },
+                                "type": "function",
+                            }
+                        )
 
-            if getattr(resp, "function_calls", None):
-                for fc in resp.function_calls:  # type: ignore[attr-defined]
-                    tool_calls.append(
-                        {
-                            "id": fc.get("id") if isinstance(fc, dict) else None,
-                            "function": {
-                                "name": fc.get("name") if isinstance(fc, dict) else getattr(fc, "name", ""),
-                                "arguments": fc.get("args") if isinstance(fc, dict) else getattr(fc, "args", {}),
-                            },
-                            "type": "function",
-                        }
-                    )
-
+            # Use aggregated values
+            tool_calls = all_tool_calls
+            
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)
             try:
                 usage_metadata = getattr(resp, "usage_metadata", None)
@@ -802,132 +861,98 @@ class GoogleGenAIProvider(BaseProvider):
                     output_tokens = getattr(usage_metadata, "candidates_token_count", None)
                     total_tokens = getattr(usage_metadata, "total_token_count", None)
 
-                if input_tokens is not None:
-                    usage["prompt_tokens"] = input_tokens
-                if output_tokens is not None:
-                    usage["completion_tokens"] = output_tokens
-                if total_tokens is not None:
-                    usage["total_tokens"] = total_tokens
-
-                if total_tokens is None and input_tokens is not None and output_tokens is not None:
-                    total_tokens = input_tokens + output_tokens
-
-                tokens_per_second = None
-                if total_tokens is not None and "latency_ms" in locals() and latency_ms > 0:
-                    tokens_per_second = (total_tokens / latency_ms) * 1000
-                if "latency_ms" in locals():
-                    usage["latency_ms"] = latency_ms
-                if tokens_per_second is not None:
-                    usage["tokens_per_second"] = tokens_per_second
-
-                trace_metadata = {
-                    "gen_ai.system": "google-gemini",
-                    "gen_ai.request.model": self.config.model,
-                    "gen_ai.usage.input_tokens": input_tokens,
-                    "gen_ai.usage.output_tokens": output_tokens,
-                    "tokens.total": total_tokens,
-                    "gen_ai.response.latency_ms": latency_ms if "latency_ms" in locals() else None,
-                    "latency_ms": latency_ms if "latency_ms" in locals() else None,
-                    "tokens_per_second": tokens_per_second,
-                    "features.structured_output": str(bool(structured_output)).lower(),
-                    "features.tools": str(bool(tools)).lower(),
-                    "features.search_grounding": str(use_search_grounding).lower(),
+                usage = {
+                    "prompt_tokens": input_tokens,
+                    "completion_tokens": output_tokens,
+                    "total_tokens": total_tokens,
                 }
-                add_trace_metadata({k: v for k, v in trace_metadata.items() if v is not None})
                 
-                log_llm_usage(
-                    provider="google-gemini",
-                    model=self.config.model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=total_tokens,
-                    latency_ms=latency_ms if "latency_ms" in locals() else None,
-                    structured=bool(structured_output),
-                    has_tools=bool(tools),
-                    search_grounding=use_search_grounding,
-                    host=self.config.base_url,
-                    metadata={"single_turn": is_single_turn},
-                )
-            except Exception as e:
-                # Service usage logging should never break the call, but log warning for debugging
-                logger.warning(f"Failed to log LLM usage: {e}")
-
-            if structured_output is not None:
-                # Prefer SDK-native parsed output, but ensure the return value is JSON-serializable
-                # to avoid recursion/serialization issues in callers.
-                content: Any
-                # Extract text properly to avoid warnings about non-text parts (e.g., thought_signature)
-                raw_text: str = self._extract_text_from_response(resp)
-                
-                if use_fallback_json:
-                    # Use manual JSON parsing when native mode not available
-                    content = parse_structured_output(raw_text, structured_output)
-                    if content is None:
-                        # Parsing failed, return error dict
-                        logger.warning(f"Fallback JSON parsing failed for model {self.config.model}")
-                        content = {}
-                else:
-                    # Check if the response was truncated (finish_reason=MAX_TOKENS)
-                    finish_reason = None
-                    try:
-                        candidates = getattr(resp, "candidates", None)
-                        if candidates:
-                            finish_reason = str(getattr(candidates[0], "finish_reason", "")).upper()
-                    except Exception:
-                        pass
-                    if finish_reason and "MAX_TOKENS" in finish_reason:
-                        raise ValueError(
-                            f"Response truncated (finish_reason={finish_reason}): structured output JSON is incomplete. "
-                            "Consider reducing the prompt size or increasing max_output_tokens."
-                        )
-
-                    # Try native structured output
-                    parsed = getattr(resp, "parsed", None)
-                    if parsed is not None:
-                        if isinstance(parsed, BaseModel):
-                            content = parsed.model_dump()
-                        else:
-                            content = parsed
-                    else:
-                        # Fallback for older SDKs: validate from JSON text to a BaseModel, then dump to dict
-                        text = raw_text
-                        try:
-                            data = structured_output.model_validate_json(text)  # type: ignore[attr-defined]
-                            content = data.model_dump()
-                        except Exception as parse_exc:
-                            import json as _json
-                            try:
-                                content = _json.loads(text) if text else {}
-                            except _json.JSONDecodeError as json_exc:
-                                # Truncated JSON — the response was cut off mid-output.
-                                # Raise so the fallback client can try the next provider.
-                                text_preview = (text or "")[:200]
-                                logger.warning(
-                                    f"Truncated structured output from {self.config.model} "
-                                    f"({len(text or '')} chars, finish_reason={finish_reason}): {json_exc}. "
-                                    "Delegating to next provider."
-                                )
-                                raise ValueError(
-                                    f"Truncated JSON response from {self.config.model}: {json_exc}"
-                                ) from json_exc
-                # Also return text and content_json for convenience
-                import json as _json
-                return {
-                    "content": content,
-                    "structured": True,
-                    "tool_calls": tool_calls,
+                # Add trace metadata for observability
+                add_trace_metadata({
                     "usage": usage,
-                    "text": raw_text,
-                    "content_json": _json.dumps(content, ensure_ascii=False),
-                }
+                    "latency_ms": latency_ms,
+                    "model": self.config.model,
+                    "provider": "google_genai"
+                })
+            except Exception as e:
+                logger.warning(f"Failed to log usage metadata: {str(e)}")
 
-            # Plain text chat
-            return {
-                "content": self._extract_text_from_response(resp),
-                "structured": False,
+            extracted_text = full_text
+            
+            # Handle structured output parsing if needed
+            content_json = None
+            parsed_result = None
+
+            if structured_output:
+                if use_fallback_json:
+                    # Fallback mode: parse JSON from text
+                    try:
+                        # Clean up code blocks if present
+                        json_text = extracted_text.strip()
+                        if "```json" in json_text:
+                            json_text = json_text.split("```json")[1].split("```")[0].strip()
+                        elif "```" in json_text:
+                            json_text = json_text.split("```")[1].split("```")[0].strip()
+                            
+                        content_json = json.loads(json_text)
+                        parsed_result = structured_output.model_validate(content_json)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse fallback JSON: {e}")
+                        # Don't fail completely, return text
+                else:
+                    # Native mode: try to get parsed object from last chunk
+                    # Usually present in resp.parsed if the model supports it
+                    try:
+                        parsed_result = getattr(resp, "parsed", None)
+                        if parsed_result is None and extracted_text:
+                            # Sometimes parsed is None but text contains JSON
+                            try:
+                                content_json = json.loads(extracted_text)
+                                parsed_result = structured_output.model_validate(content_json)
+                            except:
+                                pass
+                    except Exception as e:
+                         logger.warning(f"Failed to retrieve native parsed result: {e}")
+
+            # Extract thinking content if present (Gemini 2.0 Flash Thinking)
+            # Thinking content is in 'thought_signature' parts
+            thought_text = None
+            if self.config.thinking_enabled:
+                thought_parts = []
+                # iterate all chunks for thoughts
+                for chunk in chunks:
+                    candidates = getattr(chunk, "candidates", [])
+                    if candidates and len(candidates) > 0:
+                        content = getattr(candidates[0], "content", None)
+                        if content:
+                            parts = getattr(content, "parts", [])
+                            for part in parts:
+                                # Check for thought_signature or thought (SDK dependent)
+                                # In google-genai, it is usually part.thought if typed, or checked via attribute
+                                if hasattr(part, "thought") and part.thought:
+                                    thought_parts.append(part.thought)
+                
+                if thought_parts:
+                    thought_text = "\n".join(thought_parts)
+
+            result = {
+                "content": extracted_text,
+                "role": "assistant",
                 "tool_calls": tool_calls,
                 "usage": usage,
+                "model": self.config.model,
+                "provider": "google_genai",
             }
+            
+            if thought_text:
+                result["thought"] = thought_text
+                
+            if parsed_result:
+                result["structured"] = parsed_result
+                if content_json:
+                    result["content_json"] = content_json
+            
+            return result
 
         # Make the API call (fallback already determined above)
         return _make_api_call()
