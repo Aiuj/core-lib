@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from .base_job_queue import BaseJobQueue, JobStatus, Job
 from .job_manager import get_job_queue
 from core_lib.tracing.logger import get_module_logger
+from core_lib.exceptions import ConfigurationError
 
 
 logger = get_module_logger()
