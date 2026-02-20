@@ -880,39 +880,45 @@ class GoogleGenAIProvider(BaseProvider):
             extracted_text = full_text
             
             # Handle structured output parsing if needed
-            content_json = None
             parsed_result = None
 
             if structured_output:
                 if use_fallback_json:
-                    # Fallback mode: parse JSON from text
-                    try:
-                        # Clean up code blocks if present
-                        json_text = extracted_text.strip()
-                        if "```json" in json_text:
-                            json_text = json_text.split("```json")[1].split("```")[0].strip()
-                        elif "```" in json_text:
-                            json_text = json_text.split("```")[1].split("```")[0].strip()
-                            
-                        content_json = json.loads(json_text)
-                        parsed_result = structured_output.model_validate(content_json)
-                    except Exception as e:
-                        logger.warning(f"Failed to parse fallback JSON: {e}")
-                        # Don't fail completely, return text
+                    # Fallback mode: parse JSON from text response.
+                    # Use parse_structured_output which handles:
+                    # 1. Markdown code-block wrappers (```json ... ```)
+                    # 2. Schema-as-instance: model echoes JSON Schema structure
+                    #    with actual values inside "properties" instead of a
+                    #    plain instance (common in smaller/local Gemma models).
+                    parsed_dict = parse_structured_output(extracted_text, structured_output)
+                    if parsed_dict is not None:
+                        try:
+                            parsed_result = structured_output.model_validate(parsed_dict)
+                        except Exception as e:
+                            logger.warning(f"Failed to validate recovered JSON against schema: {e}")
+                    else:
+                        logger.warning(
+                            "Failed to parse fallback JSON for model %s; "
+                            "will return unstructured text",
+                            self.config.model,
+                        )
                 else:
                     # Native mode: try to get parsed object from last chunk
                     # Usually present in resp.parsed if the model supports it
                     try:
                         parsed_result = getattr(resp, "parsed", None)
                         if parsed_result is None and extracted_text:
-                            # Sometimes parsed is None but text contains JSON
-                            try:
-                                content_json = json.loads(extracted_text)
-                                parsed_result = structured_output.model_validate(content_json)
-                            except:
-                                pass
+                            # Sometimes parsed is None but text contains JSON.
+                            # Use parse_structured_output so the same recovery
+                            # logic applies (code blocks, schema-as-instance).
+                            parsed_dict = parse_structured_output(extracted_text, structured_output)
+                            if parsed_dict is not None:
+                                try:
+                                    parsed_result = structured_output.model_validate(parsed_dict)
+                                except Exception:
+                                    pass
                     except Exception as e:
-                         logger.warning(f"Failed to retrieve native parsed result: {e}")
+                        logger.warning(f"Failed to retrieve native parsed result: {e}")
 
             # Extract thinking content if present (Gemini 2.0 Flash Thinking)
             # Thinking content is in 'thought_signature' parts
@@ -946,12 +952,19 @@ class GoogleGenAIProvider(BaseProvider):
             
             if thought_text:
                 result["thought"] = thought_text
-                
+
             if parsed_result:
-                result["structured"] = parsed_result
-                if content_json:
-                    result["content_json"] = content_json
-            
+                # Follow the standard core-lib provider contract:
+                # - structured=True (boolean flag, not the object)
+                # - content = model_dump() dict so callers read content, not structured
+                # - text = raw LLM text for debugging/logging
+                result["content"] = parsed_result.model_dump()
+                result["structured"] = True
+                result["text"] = extracted_text
+                result["content_json"] = json.dumps(result["content"], ensure_ascii=False)
+            else:
+                result["structured"] = False
+
             return result
 
         # Make the API call (fallback already determined above)

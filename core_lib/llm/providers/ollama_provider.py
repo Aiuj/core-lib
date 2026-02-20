@@ -328,31 +328,38 @@ class OllamaProvider(BaseProvider):
 
                 # Use parse_structured_output which handles:
                 # 1. Markdown code-block wrappers (```json ... ```)
-                # 2. Schema-as-instance: model returns JSON Schema structure with
-                #    actual values inside "properties" instead of a flat dict
+                # 2. Schema-as-instance: model echoes JSON Schema structure with
+                #    actual values inside "properties" instead of a plain instance
                 clean_text = _strip_markdown_code_block(content_text) if content_text else ""
                 parsed = parse_structured_output(clean_text, structured_output) if clean_text else None
+
                 if parsed is not None:
-                    content: Any = parsed
+                    # Successfully extracted a valid structured instance.
+                    # Return structured=True so callers can trust content is a dict.
+                    return {
+                        "content": parsed,
+                        "structured": True,
+                        "tool_calls": tool_calls or [],
+                        "usage": usage,
+                        "text": content_text,
+                        "content_json": _json.dumps(parsed, ensure_ascii=False),
+                    }
                 else:
-                    # Last-resort raw fallback so the caller always gets something
-                    try:
-                        content = _json.loads(clean_text) if clean_text else {}
-                    except Exception:
-                        content = {"_raw": content_text}
+                    # Could not validate the model output against the schema even
+                    # after all recovery attempts.  Signal structured=False so
+                    # callers know they received plain text, not a parsed instance.
                     logger.warning(
                         "ollama structured output could not be validated against %s; "
-                        "returning raw parse result",
+                        "falling back to unstructured text response",
                         structured_output.__name__,
                     )
-                return {
-                    "content": content,
-                    "structured": True,
-                    "tool_calls": tool_calls or [],
-                    "usage": usage,
-                    "text": content_text,
-                    "content_json": _json.dumps(content, ensure_ascii=False),
-                }
+                    return {
+                        "content": content_text,
+                        "structured": False,
+                        "tool_calls": tool_calls or [],
+                        "usage": usage,
+                        "text": content_text,
+                    }
 
             return {
                 "content": content_text,
