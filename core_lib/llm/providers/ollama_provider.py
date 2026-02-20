@@ -323,17 +323,28 @@ class OllamaProvider(BaseProvider):
                 logger.warning(f"Failed to log LLM usage: {e}")
 
             if resp_format is not None and structured_output is not None:
-                try:
-                    data = structured_output.model_validate_json(content_text)  # type: ignore[attr-defined]
-                    content: Any = data.model_dump()
-                except Exception:
-                    import json as _json
+                import json as _json
+                from ..json_parser import parse_structured_output, _strip_markdown_code_block
 
+                # Use parse_structured_output which handles:
+                # 1. Markdown code-block wrappers (```json ... ```)
+                # 2. Schema-as-instance: model returns JSON Schema structure with
+                #    actual values inside "properties" instead of a flat dict
+                clean_text = _strip_markdown_code_block(content_text) if content_text else ""
+                parsed = parse_structured_output(clean_text, structured_output) if clean_text else None
+                if parsed is not None:
+                    content: Any = parsed
+                else:
+                    # Last-resort raw fallback so the caller always gets something
                     try:
-                        content = _json.loads(content_text) if content_text else {}
+                        content = _json.loads(clean_text) if clean_text else {}
                     except Exception:
                         content = {"_raw": content_text}
-                import json as _json
+                    logger.warning(
+                        "ollama structured output could not be validated against %s; "
+                        "returning raw parse result",
+                        structured_output.__name__,
+                    )
                 return {
                     "content": content,
                     "structured": True,

@@ -124,10 +124,80 @@ def clean_and_parse_json_response(response_str, force_list=False):
     return None
 
 
+def _strip_markdown_code_block(text: str) -> str:
+    """Strip markdown code block wrappers (```json ... ``` or ``` ... ```) from text."""
+    stripped = text.strip()
+    if stripped.startswith("```json") and stripped.endswith("```"):
+        return stripped[7:-3].strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        return stripped[3:-3].strip()
+    return stripped
+
+
+def _unwrap_schema_as_instance(
+    data: Dict[str, Any],
+    schema: Type[BaseModel],
+) -> Optional[Dict[str, Any]]:
+    """Detect and unwrap when a model returns a JSON Schema wrapper with values in 'properties'.
+
+    Some local models (e.g. Ollama with smaller models) return a JSON Schema-shaped
+    document instead of a plain instance::
+
+        {
+          "title": "ComplianceAwareAnswer",
+          "type": "object",
+          "properties": {
+            "answer": "<actual answer text>",
+            "compliance_category": "yes"
+          },
+          "required": ["answer"]
+        }
+
+    When the values inside ``properties`` are plain values (not sub-schema dicts),
+    this function extracts them so that Pydantic validation can succeed.
+
+    Returns the unwrapped properties dict when the pattern is detected, else ``None``.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    # Must look like a JSON Schema wrapper
+    if not (data.get("type") == "object" and isinstance(data.get("properties"), dict)):
+        return None
+
+    properties: Dict[str, Any] = data["properties"]
+    if not properties:
+        return None
+
+    # Real schema sub-objects have at least one of these keys as dict values
+    _schema_indicator_keys = frozenset(
+        {"type", "description", "enum", "items", "properties", "anyOf", "allOf", "oneOf", "$ref"}
+    )
+    has_schema_values = any(
+        isinstance(v, dict) and bool(_schema_indicator_keys & set(v.keys()))
+        for v in properties.values()
+    )
+    if has_schema_values:
+        # Genuine schema definition, not value payload
+        return None
+
+    # At least some keys must overlap with the Pydantic model's fields
+    expected_fields = set(schema.model_fields.keys())
+    if not (expected_fields & set(properties.keys())):
+        return None
+
+    logger.info(
+        "Detected schema-as-instance response pattern for %s – unwrapping 'properties'",
+        schema.__name__,
+    )
+    return properties
+
+
 def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Extract JSON object from text response.
     
     Tries multiple strategies:
+    0. Strip markdown code-block wrappers
     1. Parse entire text as JSON
     2. Find JSON object with regex (first {...})
     3. Find JSON array with regex (first [...])
@@ -140,6 +210,9 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
     if not text:
         return None
+
+    # Strategy 0: strip markdown code-block wrappers before any parsing attempt
+    text = _strip_markdown_code_block(text)
     
     # Strategy 1: Try parsing entire text as JSON
     try:
@@ -179,6 +252,11 @@ def parse_structured_output(
     """Parse text response into structured output matching Pydantic schema.
     
     This is a fallback when native structured output is not available.
+    Handles two common local-model quirks:
+    
+    * Markdown code-block wrappers (``` json ... ``` or ``` ... ```).
+    * Schema-as-instance responses where the model echoes the JSON Schema
+      structure and places actual values inside the ``"properties"`` dict.
     
     Args:
         text: LLM text response
@@ -187,24 +265,45 @@ def parse_structured_output(
     Returns:
         Dict matching schema or None if parsing/validation fails
     """
-    # Extract JSON from text
+    # Extract JSON from text (also strips markdown code blocks)
     json_data = extract_json_from_text(text)
     if json_data is None:
         logger.warning("Could not extract JSON from LLM response for structured output")
         return None
     
     # Validate against Pydantic schema
-    try:
-        validated = schema.model_validate(json_data)
-        return validated.model_dump()
-    except ValidationError as e:
+    if isinstance(json_data, dict):
+        try:
+            validated = schema.model_validate(json_data)
+            return validated.model_dump()
+        except ValidationError:
+            # Validation failed – try to detect and unwrap schema-as-instance pattern
+            unwrapped = _unwrap_schema_as_instance(json_data, schema)
+            if unwrapped is not None:
+                try:
+                    validated = schema.model_validate(unwrapped)
+                    return validated.model_dump()
+                except ValidationError as e2:
+                    logger.warning(
+                        f"JSON validation failed after schema-as-instance unwrap "
+                        f"for {schema.__name__}: {e2}",
+                        extra={"validation_errors": e2.errors()},
+                    )
+                    return None
+            logger.warning(
+                "Could not validate JSON against schema %s after all fallbacks",
+                schema.__name__,
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error validating JSON: {e}")
+            return None
+    else:
         logger.warning(
-            f"JSON validation failed against schema {schema.__name__}: {e}",
-            extra={"validation_errors": e.errors()}
+            "Extracted JSON is not a dict (got %s), cannot validate against schema %s",
+            type(json_data).__name__,
+            schema.__name__,
         )
-        return None
-    except Exception as e:
-        logger.warning(f"Unexpected error validating JSON: {e}")
         return None
 
 
