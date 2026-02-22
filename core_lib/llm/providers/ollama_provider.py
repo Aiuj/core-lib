@@ -323,25 +323,43 @@ class OllamaProvider(BaseProvider):
                 logger.warning(f"Failed to log LLM usage: {e}")
 
             if resp_format is not None and structured_output is not None:
-                try:
-                    data = structured_output.model_validate_json(content_text)  # type: ignore[attr-defined]
-                    content: Any = data.model_dump()
-                except Exception:
-                    import json as _json
-
-                    try:
-                        content = _json.loads(content_text) if content_text else {}
-                    except Exception:
-                        content = {"_raw": content_text}
                 import json as _json
-                return {
-                    "content": content,
-                    "structured": True,
-                    "tool_calls": tool_calls or [],
-                    "usage": usage,
-                    "text": content_text,
-                    "content_json": _json.dumps(content, ensure_ascii=False),
-                }
+                from ..json_parser import parse_structured_output, _strip_markdown_code_block
+
+                # Use parse_structured_output which handles:
+                # 1. Markdown code-block wrappers (```json ... ```)
+                # 2. Schema-as-instance: model echoes JSON Schema structure with
+                #    actual values inside "properties" instead of a plain instance
+                clean_text = _strip_markdown_code_block(content_text) if content_text else ""
+                parsed = parse_structured_output(clean_text, structured_output) if clean_text else None
+
+                if parsed is not None:
+                    # Successfully extracted a valid structured instance.
+                    # Return structured=True so callers can trust content is a dict.
+                    return {
+                        "content": parsed,
+                        "structured": True,
+                        "tool_calls": tool_calls or [],
+                        "usage": usage,
+                        "text": content_text,
+                        "content_json": _json.dumps(parsed, ensure_ascii=False),
+                    }
+                else:
+                    # Could not validate the model output against the schema even
+                    # after all recovery attempts.  Signal structured=False so
+                    # callers know they received plain text, not a parsed instance.
+                    logger.warning(
+                        "ollama structured output could not be validated against %s; "
+                        "falling back to unstructured text response",
+                        structured_output.__name__,
+                    )
+                    return {
+                        "content": content_text,
+                        "structured": False,
+                        "tool_calls": tool_calls or [],
+                        "usage": usage,
+                        "text": content_text,
+                    }
 
             return {
                 "content": content_text,

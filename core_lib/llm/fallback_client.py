@@ -156,9 +156,11 @@ class FallbackLLMClient:
         # Client cache to avoid recreating clients
         self._client_cache: Dict[str, LLMClient] = {}
         
-        # Log providers in priority order with their level ranges
+        # Log providers in priority order with their level ranges (skip disabled ones)
         provider_details = []
         for p in sorted(registry.providers, key=lambda x: x.priority):
+            if not getattr(p, 'enabled', True):
+                continue
             tier_info = f" [{p.tier}]" if hasattr(p, 'tier') and p.tier else ""
             level_info = f" (IQ{p.min_intelligence_level}-{p.max_intelligence_level})" if p.min_intelligence_level is not None else ""
             provider_details.append(
@@ -166,7 +168,7 @@ class FallbackLLMClient:
             )
         
         logger.info(
-            f"Initialized FallbackLLMClient with {len(registry.providers)} providers: {', '.join(provider_details)}"
+            f"Initialized FallbackLLMClient with {len(provider_details)} providers: {', '.join(provider_details)}"
         )
     
     def _get_client(self, config: ProviderConfig) -> LLMClient:
