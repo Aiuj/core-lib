@@ -36,8 +36,13 @@ class TracingSettings(BaseSettings):
         """Create tracing settings from environment variables."""
         cls._load_dotenv_if_requested(load_dotenv, dotenv_paths)
         
+        # Read LANGFUSE_TRACING_ENABLED (preferred) with fallback to legacy TRACING_ENABLED
+        langfuse_enabled = EnvParser.get_env("LANGFUSE_TRACING_ENABLED", env_type=bool)
+        if langfuse_enabled is None:
+            langfuse_enabled = EnvParser.get_env("TRACING_ENABLED", default=True, env_type=bool)
+
         settings_dict = {
-            "enabled": EnvParser.get_env("TRACING_ENABLED", default=True, env_type=bool),
+            "enabled": langfuse_enabled,
             "service_name": EnvParser.get_env("APP_NAME", "SERVICE_NAME"),
             "service_version": EnvParser.get_env("APP_VERSION", "SERVICE_VERSION", default="0.1.0"),
             "langfuse_public_key": EnvParser.get_env("LANGFUSE_PUBLIC_KEY"),

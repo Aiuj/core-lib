@@ -514,7 +514,7 @@ class TestTracingSettings(unittest.TestCase):
         """Set up test environment."""
         self.original_env = {}
         tracing_vars = [
-            "TRACING_ENABLED", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
+            "LANGFUSE_TRACING_ENABLED", "TRACING_ENABLED", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
             "LANGFUSE_HOST", "APP_NAME", "APP_VERSION"
         ]
         for var in tracing_vars:

@@ -1290,7 +1290,7 @@ GOOGLE_GENAI_API_KEY=your-key
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRACING_ENABLED` | `true` | Enable tracing |
+| `LANGFUSE_TRACING_ENABLED` | `true` | Enable Langfuse tracing (also accepts legacy `TRACING_ENABLED`) |
 | `LANGFUSE_PUBLIC_KEY` | Required | Langfuse public key |
 | `LANGFUSE_SECRET_KEY` | Required | Langfuse secret key |
 | `LANGFUSE_HOST` | `"http://localhost:3000"` | Langfuse host URL |

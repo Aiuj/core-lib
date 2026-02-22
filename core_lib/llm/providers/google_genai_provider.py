@@ -867,13 +867,26 @@ class GoogleGenAIProvider(BaseProvider):
                     "total_tokens": total_tokens,
                 }
                 
-                # Add trace metadata for observability
+                # Add trace metadata for observability (Langfuse - no-op when LANGFUSE_TRACING_ENABLED=false)
                 add_trace_metadata({
                     "usage": usage,
                     "latency_ms": latency_ms,
                     "model": self.config.model,
                     "provider": "google_genai"
                 })
+
+                # Log to OTLP/OpenSearch via standard logger (independent of Langfuse)
+                log_llm_usage(
+                    provider="google_genai",
+                    model=self.config.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    latency_ms=latency_ms,
+                    structured=bool(structured_output and not use_fallback_json),
+                    has_tools=bool(tools),
+                    search_grounding=use_search_grounding,
+                )
             except Exception as e:
                 logger.warning(f"Failed to log usage metadata: {str(e)}")
 
