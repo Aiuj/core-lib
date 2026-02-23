@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from types import SimpleNamespace
 from pydantic import BaseModel
 
 from core_lib.llm.providers.google_genai_provider import GoogleGenAIProvider, GeminiConfig
@@ -67,6 +68,46 @@ class TestGeminiJSONModeFallback:
             assert result["structured"] is True
             assert result["content"]["result"] == "success"
             assert result["content"]["score"] == 0.95
+
+    def test_gemini_json_in_text_is_parsed_when_native_parsed_missing(self):
+        """Test native-mode fallback: parse JSON from text when resp.parsed is missing."""
+        config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash")
+
+        with patch('google.genai.Client') as mock_client_class, \
+             patch('openinference.instrumentation.google_genai.GoogleGenAIInstrumentor'):
+
+            provider = GoogleGenAIProvider(config)
+
+            text_json = '{"result": "success", "score": 0.95}'
+            chunk = SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[SimpleNamespace(text=text_json)]
+                        )
+                    )
+                ],
+                function_calls=None,
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                ),
+                parsed=None,
+            )
+
+            mock_client = mock_client_class.return_value
+            mock_client.models.generate_content_stream.return_value = [chunk]
+
+            result = provider.chat(
+                messages=[{"role": "user", "content": "test"}],
+                structured_output=SampleSchema,
+            )
+
+            assert result["structured"] is True
+            assert result["content"] == {"result": "success", "score": 0.95}
+            assert result.get("text") == text_json
+            assert result.get("content_json") == text_json
 
 
 if __name__ == "__main__":

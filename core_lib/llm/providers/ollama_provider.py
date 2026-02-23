@@ -346,13 +346,32 @@ class OllamaProvider(BaseProvider):
                     }
                 else:
                     # Could not validate the model output against the schema even
-                    # after all recovery attempts.  Signal structured=False so
-                    # callers know they received plain text, not a parsed instance.
-                    logger.warning(
-                        "ollama structured output could not be validated against %s; "
-                        "falling back to unstructured text response",
-                        structured_output.__name__,
-                    )
+                    # after all recovery attempts.  Check if the model returned its
+                    # own schema definition — if so, clear the text so callers do not
+                    # surface the schema JSON as an answer.
+                    from ..json_parser import extract_json_from_text, _is_pydantic_schema_echo
+                    try:
+                        raw_json = extract_json_from_text(content_text) if content_text else None
+                        if isinstance(raw_json, dict) and _is_pydantic_schema_echo(
+                            raw_json, structured_output
+                        ):
+                            logger.warning(
+                                "ollama: LLM returned its own schema definition instead of an "
+                                "answer; clearing response text",
+                            )
+                            content_text = ""
+                        else:
+                            logger.warning(
+                                "ollama structured output could not be validated against %s; "
+                                "falling back to unstructured text response",
+                                structured_output.__name__,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "ollama structured output could not be validated against %s; "
+                            "falling back to unstructured text response",
+                            structured_output.__name__,
+                        )
                     return {
                         "content": content_text,
                         "structured": False,

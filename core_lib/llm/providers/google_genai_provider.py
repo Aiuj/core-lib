@@ -24,7 +24,12 @@ from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.llm.rate_limiter import RateLimitConfig, RateLimiter
 from core_lib.llm.retry import RetryConfig, retry_handler
-from core_lib.llm.json_parser import parse_structured_output, augment_prompt_for_json
+from core_lib.llm.json_parser import (
+    parse_structured_output,
+    augment_prompt_for_json,
+    extract_json_from_text,
+    _is_pydantic_schema_echo,
+)
 from core_lib.llm.provider_health import classify_error
 
 logger = get_module_logger()
@@ -52,17 +57,20 @@ def _get_http_timeout_ms() -> int:
 
 
 def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove additionalProperties from JSON schema recursively.
+    """Remove additionalProperties from JSON schema recursively and add propertyOrdering.
     
     The Gemini API does not support the 'additionalProperties' field in JSON schemas.
     When Pydantic models have extra='forbid', they generate additionalProperties: false,
     which causes Gemini API errors. This function recursively removes that field.
     
+    Additionally, Gemini 2.0 requires an explicit 'propertyOrdering' list to define
+    the preferred structure. We derive this from the keys of the 'properties' dict.
+    
     Args:
         schema: JSON schema dictionary (from Pydantic's model_json_schema())
         
     Returns:
-        Cleaned schema without additionalProperties
+        Cleaned schema without additionalProperties and with propertyOrdering
     """
     if not isinstance(schema, dict):
         return schema
@@ -83,7 +91,11 @@ def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
             ]
         else:
             cleaned[key] = value
-    
+            
+    # Add propertyOrdering if this is an object with properties
+    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+        cleaned["propertyOrdering"] = list(cleaned["properties"].keys())
+        
     return cleaned
 
 
@@ -553,19 +565,16 @@ class GoogleGenAIProvider(BaseProvider):
             # We convert to dict and clean it for maximum compatibility
             try:
                 json_schema = structured_output.model_json_schema()
-                cleaned_schema = _clean_schema_for_gemini(json_schema)
-                cfg = {
-                    **cfg,
-                    "response_mime_type": "application/json",
-                    "response_schema": cleaned_schema,
-                }
             except AttributeError:
-                # Fallback: if not a Pydantic model, pass through as-is
-                cfg = {
-                    **cfg,
-                    "response_mime_type": "application/json",
-                    "response_schema": structured_output,
-                }
+                # Fallback: if not a Pydantic model, assume it's already a dict
+                json_schema = structured_output
+                
+            cleaned_schema = _clean_schema_for_gemini(json_schema)
+            cfg = {
+                **cfg,
+                "response_mime_type": "application/json",
+                "response_json_schema": cleaned_schema,
+            }
         result = {"config": types.GenerateContentConfig(**cfg)}
         if cached_content:
             result["cached_content"] = cached_content
@@ -910,11 +919,33 @@ class GoogleGenAIProvider(BaseProvider):
                         except Exception as e:
                             logger.warning(f"Failed to validate recovered JSON against schema: {e}")
                     else:
-                        logger.warning(
-                            "Failed to parse fallback JSON for model %s; "
-                            "will return unstructured text",
-                            self.config.model,
-                        )
+                        # Check whether the model returned its own JSON Schema definition
+                        # instead of a filled instance (e.g. gemma-3-4b-it).  If so,
+                        # clear extracted_text so callers never surface the schema JSON
+                        # as an answer.
+                        try:
+                            raw_json = extract_json_from_text(extracted_text)
+                            if isinstance(raw_json, dict) and _is_pydantic_schema_echo(
+                                raw_json, structured_output
+                            ):
+                                logger.warning(
+                                    "LLM returned its own schema definition instead of an "
+                                    "answer for model %s; clearing response text",
+                                    self.config.model,
+                                )
+                                extracted_text = ""
+                            else:
+                                logger.warning(
+                                    "Failed to parse fallback JSON for model %s; "
+                                    "will return unstructured text",
+                                    self.config.model,
+                                )
+                        except Exception:
+                            logger.warning(
+                                "Failed to parse fallback JSON for model %s; "
+                                "will return unstructured text",
+                                self.config.model,
+                            )
                 else:
                     # Native mode: try to get parsed object from last chunk
                     # Usually present in resp.parsed if the model supports it
@@ -922,12 +953,30 @@ class GoogleGenAIProvider(BaseProvider):
                         parsed_result = getattr(resp, "parsed", None)
                         if parsed_result is None and extracted_text:
                             # Sometimes parsed is None but text contains JSON.
-                            # Use parse_structured_output so the same recovery
-                            # logic applies (code blocks, schema-as-instance).
+                            # Use parse_structured_output so the full fuzzy recovery
+                            # pipeline applies (code blocks, schema-echo, schema-as-instance,
+                            # key normalisation, nested dicts, Literal coercion).
                             parsed_dict = parse_structured_output(extracted_text, structured_output)
                             if parsed_dict is not None:
                                 try:
                                     parsed_result = structured_output.model_validate(parsed_dict)
+                                except Exception:
+                                    pass
+                            else:
+                                # parse_structured_output exhausted all strategies.
+                                # If the model returned its own schema definition,
+                                # clear the text so it is never surfaced as an answer.
+                                try:
+                                    raw_json = extract_json_from_text(extracted_text)
+                                    if isinstance(raw_json, dict) and _is_pydantic_schema_echo(
+                                        raw_json, structured_output
+                                    ):
+                                        logger.warning(
+                                            "LLM (native mode) returned its own schema definition "
+                                            "for model %s; clearing response text",
+                                            self.config.model,
+                                        )
+                                        extracted_text = ""
                                 except Exception:
                                     pass
                     except Exception as e:

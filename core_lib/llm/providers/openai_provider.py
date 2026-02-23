@@ -274,24 +274,45 @@ class OpenAIProvider(BaseProvider):
 
             # If structured_output requested, attempt to validate
             if resp_format is not None and structured_output is not None:
-                try:
-                    data = structured_output.model_validate_json(content_text)  # type: ignore[attr-defined]
-                    content: Any = data.model_dump()
-                except Exception:
-                    import json as _json
-
-                    try:
-                        content = _json.loads(content_text) if content_text else {}
-                    except Exception:
-                        content = {"_raw": content_text}
                 import json as _json
+                from ..json_parser import parse_structured_output as _parse_structured_output
+
+                # Attempt 1: native SDK validation
+                parsed_dict: Any = None
+                try:
+                    validated = structured_output.model_validate_json(content_text)  # type: ignore[attr-defined]
+                    parsed_dict = validated.model_dump()
+                except Exception:
+                    pass
+
+                # Attempt 2: comprehensive fuzzy recovery (handles markdown fences,
+                # schema-echo, schema-as-instance, key normalisation, nested dicts,
+                # Literal/enum coercion).
+                if parsed_dict is None:
+                    parsed_dict = _parse_structured_output(content_text, structured_output) if content_text else None
+
+                if parsed_dict is not None:
+                    return {
+                        "content": parsed_dict,
+                        "structured": True,
+                        "tool_calls": tool_calls or [],
+                        "usage": usage,
+                        "text": content_text,
+                        "content_json": _json.dumps(parsed_dict, ensure_ascii=False),
+                    }
+
+                # All recovery failed – return unstructured so callers can decide.
+                logger.warning(
+                    "openai: structured output could not be validated against %s; "
+                    "falling back to unstructured text",
+                    structured_output.__name__,
+                )
                 return {
-                    "content": content,
-                    "structured": True,
+                    "content": content_text,
+                    "structured": False,
                     "tool_calls": tool_calls or [],
                     "usage": usage,
                     "text": content_text,
-                    "content_json": _json.dumps(content, ensure_ascii=False),
                 }
 
             # Plain text
