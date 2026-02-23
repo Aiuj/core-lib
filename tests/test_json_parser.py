@@ -109,15 +109,19 @@ class TestAugmentPromptForJson:
     """Test prompt augmentation for JSON output."""
     
     def test_augment_prompt(self):
-        """Test that prompt is augmented with schema."""
+        """Test that prompt is augmented with a JSON template (not the full schema definition)."""
         prompt = "Analyze this data"
         result = augment_prompt_for_json(prompt, SampleSchema)
-        
+
         assert "Analyze this data" in result
         assert "JSON" in result
-        assert "schema" in result.lower()
+        # New compact-template format uses "format" not "schema"
+        assert "format" in result.lower()
         assert "result" in result  # Field from schema
         assert "score" in result   # Field from schema
+        # The output must NOT contain nested schema sub-objects that confuse small models
+        assert '"type"' not in result
+        assert '"description"' not in result
     
     def test_augment_empty_prompt(self):
         """Test augmenting empty prompt."""

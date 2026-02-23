@@ -480,29 +480,80 @@ def parse_structured_output(
     return None
 
 
+def _build_json_prompt_template(schema: Type[BaseModel]) -> str:
+    """Build a minimal single-line JSON template with descriptive placeholders.
+
+    Avoids dumping the full Pydantic JSON Schema definition (which confuses small
+    models like Gemma into echoing the schema rather than filling it in).
+
+    Rules:
+    * Enum / Literal fields → ``"val1|val2|val3"`` so the model picks one.
+    * Nullable fields with a default → the default value (often ``null``).
+    * Optional nullable fields without a default → ``null``.
+    * Free-text string fields → ``"<field_name>"``.
+    * Boolean fields → ``true``.
+    * Integer / number fields → ``0``.
+
+    Example output for ``ComplianceAwareAnswer``::
+
+        {"answer": "<answer>", "compliance_category": "yes|no|partial|custom|unknown", "compliance_reasoning": null}
+    """
+    schema_json = schema.model_json_schema()
+    properties = schema_json.get("properties", {})
+
+    example: Dict[str, Any] = {}
+    for field_name, field_schema in properties.items():
+        enum_values = field_schema.get("enum")
+        if enum_values is not None:
+            example[field_name] = "|".join(str(v) for v in enum_values)
+            continue
+
+        # Resolve anyOf (used for Optional / Union types)
+        any_of = field_schema.get("anyOf", [])
+        is_nullable = any(t.get("type") == "null" for t in any_of)
+        non_null_types = [t for t in any_of if t.get("type") != "null"]
+
+        field_type = field_schema.get("type") or (
+            non_null_types[0].get("type") if non_null_types else "string"
+        )
+
+        # Use explicit default when present
+        if "default" in field_schema:
+            example[field_name] = field_schema["default"]
+        elif is_nullable:
+            example[field_name] = None
+        elif field_type == "boolean":
+            example[field_name] = True
+        elif field_type in ("integer", "number"):
+            example[field_name] = 0
+        else:
+            example[field_name] = f"<{field_name}>"
+
+    return json.dumps(example, ensure_ascii=False)
+
+
 def augment_prompt_for_json(
     prompt: str,
     schema: Type[BaseModel],
 ) -> str:
-    """Augment prompt to request JSON output matching schema.
-    
+    """Augment a prompt to request JSON output matching *schema*.
+
+    Uses a compact example template (not the full JSON Schema definition) so that
+    small models such as Gemma fill in values rather than echoing the schema back.
+
     Args:
-        prompt: Original user prompt
-        schema: Pydantic model defining expected structure
-        
+        prompt: Original user prompt.
+        schema: Pydantic model defining expected structure.
+
     Returns:
-        Enhanced prompt requesting JSON format
+        Enhanced prompt requesting JSON format.
     """
-    # Get schema description
-    schema_json = schema.model_json_schema()
-    
-    # Build JSON format instruction
-    json_instruction = f"""
-Your response MUST be valid JSON matching this exact schema:
+    template = _build_json_prompt_template(schema)
 
-{json.dumps(schema_json, indent=2)}
+    json_instruction = (
+        "\n\nRespond with ONLY a JSON object in this exact format "
+        "(no markdown, no code block, no extra text):\n"
+        f"{template}"
+    )
 
-Respond ONLY with the JSON object, no additional text or explanation.
-"""
-    
-    return f"{prompt}\n\n{json_instruction}"
+    return f"{prompt}{json_instruction}"
