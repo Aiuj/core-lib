@@ -13,10 +13,14 @@ import re
 from typing import List, Dict, Optional
 
 # Module-level detector configured with max_input_length=200
+# Use model="lite" to always use the bundled 0.89MB model (lid.176.ftz).
+# The default "auto" mode tries the 126MB large model first and only falls
+# back on MemoryError — on a fresh container this triggers a 126MB download
+# on the first detection call, blocking the request for many seconds.
 _LANG_DETECTOR_CONFIG = None
 DETECTOR = None
 try:
-    _LANG_DETECTOR_CONFIG = LangDetectConfig(max_input_length=200)
+    _LANG_DETECTOR_CONFIG = LangDetectConfig(max_input_length=200, model="lite")
     DETECTOR = LangDetector(_LANG_DETECTOR_CONFIG)
     # Provide a module-level detect wrapper that prefers the configured detector
     def _module_detect(text, **kwargs):
@@ -379,3 +383,21 @@ class LanguageUtils:
 
         most_common = Counter(detections).most_common(1)
         return most_common[0][0] if most_common else None
+
+
+def detect_language_code(text: str, min_length: int = 5) -> Optional[str]:
+    """Detect the language of *text* and return its ISO 639-1 code.
+
+    A module-level convenience wrapper around
+    :meth:`LanguageUtils.detect_language_safe` for callers that just need a
+    plain language code string without instantiating the class.
+
+    Args:
+        text: Input text to analyse.
+        min_length: Minimum character length required for detection (default 5).
+
+    Returns:
+        ISO 639-1 language code (e.g. ``'fr'``, ``'en'``) or ``None`` if the
+        text is too short or detection is inconclusive.
+    """
+    return LanguageUtils.detect_language_safe(text, min_length=min_length)
