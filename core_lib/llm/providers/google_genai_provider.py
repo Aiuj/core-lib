@@ -208,7 +208,7 @@ class GoogleGenAIProvider(BaseProvider):
         "gemini-3-pro-preview": 5,    # Gemini 3.0 Pro
         "gemini-3-flash-preview": 30, # Gemini 3.0 Flash
         "gemini-2.5-pro": 10,         # Gemini 2.5 Pro
-        "gemini-2.5-flash-lite": 30,  # Gemini 2.5 Flash-Lite
+        "gemini-2.5-flash-lite": 120, # Gemini 2.5 Flash-Lite
         "gemini-2.5-flash": 30,       # Gemini 2.5 Flash
         "gemma-3": 60,                # Gemma 3
         "embedding": 600,             # Gemini Embedding models
