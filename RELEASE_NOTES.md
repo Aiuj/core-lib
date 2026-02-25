@@ -23,6 +23,40 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## February 2026
+
+### v0.3.5 - Vertex AI, Wake-on-LAN & Structured Output (Feb 25, 2026)
+
+- **Vertex AI Support**: Added full Google Vertex AI integration in `GoogleGenAIProvider`
+  - Project, location, and context caching settings via `GeminiConfig`
+  - Model availability checks and improved `ProjectConfig` handling
+- **Thinking Config**: Added `thinking_config` support to `ProviderConfig`, `GeminiConfig`, and `OllamaConfig` for extended reasoning models
+- **Structured Output Improvements**: Major JSON parsing hardening across providers
+  - Markdown code block stripping and schema unwrapping in responses
+  - Improved structured output handling in `GoogleGenAI` and `Ollama` providers
+  - JSON prompt template builder and enhanced prompt augmentation for structured output
+  - Validation improvements in various providers and tests
+- **Wake-on-LAN for Infinity**: Implemented Wake-on-LAN support for Infinity API servers
+  - Automatic WoL packet triggering on provider failure with enhanced fallback logging
+- **Infinity Multi-Server Failover**: Multi-server failover for Infinity embedding and reranker clients
+  - Provider chain utilities and config loader for embeddings and rerankers
+  - Improved error handling and logging for fallback and infinity clients
+- **Langfuse Tracing Config**: Added `LANGFUSE_TRACING_ENABLED` env var support and updated documentation
+  - Added intelligence level context field to LLM usage logging
+- **Language Detection**: Updated to lite model for faster detection; added convenience wrapper for language code extraction
+- **Industry Category Translations**: Added German and French translations with compile script
+- **Timezone-Aware Datetime**: Updated datetime handling to use timezone-aware methods; added utility helpers
+- **Database Settings**: Added `connect_timeout` configuration and validation; conditional inclusion in connection strings
+- **Server Mode Config**: Added `server_mode` configuration for unified multi-protocol server deployments
+- **Uvicorn WebSocket**: Added `ws` parameter for WebSocket protocol selection in server functions
+- **FastAPI Logging**: Enhanced request logging in FastAPI middleware; adjusted uvicorn access log configuration
+- **Cache Maintenance Script**: Added `scripts/clear_cache.py` for cache key management
+- **Gemini Rate Limits**: Updated rate limit for `gemini-2.5-flash-lite` to 120 RPM
+- **Google GenAI HTTP Timeouts**: Added configurable HTTP timeout settings to `GoogleGenAIProvider`
+- **Bug Fixes**: Fixed 499 CANCELLED classification as transient server error; fixed `ConfigurationError` import in job worker
+
+---
+
 ## January 2026
 
 ### v0.3.4 - Auth, Reliability & Usage Tracking (Jan 30, 2026)
