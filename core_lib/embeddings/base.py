@@ -16,7 +16,6 @@ from .embedding_utils import (
     get_best_normalization_method,
 )
 from core_lib.tracing.logger import get_module_logger
-from core_lib.tracing.service_usage import log_embedding_usage
 import time
 
 logger = get_module_logger()
@@ -168,19 +167,6 @@ class BaseEmbeddingClient:
             cached_result = cache_get(cache_key)
             if cached_result is not None:
                 logger.debug(f"Cache hit for embedding: {cache_key}")
-                # Log cached usage
-                estimated_tokens = len(text) // 4
-                log_embedding_usage(
-                    provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
-                    model=self.model,
-                    input_tokens=estimated_tokens,
-                    num_texts=1,
-                    embedding_dim=self.embedding_dim,
-                    latency_ms=0,
-                    host="local-cache",
-                    cost_override=0.0,
-                    metadata={"cached": True}
-                )
                 return cached_result
         
         start_time = time.time()
@@ -227,19 +213,6 @@ class BaseEmbeddingClient:
                 cached_result = cache_get(cache_key)
                 if cached_result is not None:
                     logger.debug(f"Cache hit for embedding: {cache_key}")
-                    # Log cached usage for individual hit
-                    estimated_tokens = len(text) // 4
-                    log_embedding_usage(
-                        provider=self.__class__.__name__.replace("EmbeddingClient", "").lower(),
-                        model=self.model,
-                        input_tokens=estimated_tokens,
-                        num_texts=1,
-                        embedding_dim=self.embedding_dim,
-                        latency_ms=0,
-                        host="local-cache",
-                        cost_override=0.0,
-                        metadata={"cached": True}
-                    )
                     results.append((i, cached_result))
                 else:
                     uncached_texts.append(text)

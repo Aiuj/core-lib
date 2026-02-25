@@ -288,6 +288,7 @@ class GoogleGenAIProvider(BaseProvider):
         # Vertex AI has much higher rate limits than AI Studio, so we apply a
         # multiplier when running in Vertex mode.
         self._is_vertex = use_vertex
+        self._location = location  # Cloud region for Vertex AI (e.g. "us-central1")
         model_lc = (config.model or "").lower()
         rpm = 60  # default fallback
         # Choose the most specific matching key (longest substring match)
@@ -881,7 +882,13 @@ class GoogleGenAIProvider(BaseProvider):
                     "usage": usage,
                     "latency_ms": latency_ms,
                     "model": self.config.model,
-                    "provider": "google_genai"
+                    "provider": "google_genai",
+                    "host": (
+                        f"https://{self._location}-aiplatform.googleapis.com"
+                        if self._is_vertex and self._location
+                        else "https://generativelanguage.googleapis.com"
+                    ),
+                    "region": self._location,
                 })
 
                 # Log to OTLP/OpenSearch via standard logger (independent of Langfuse)
@@ -895,6 +902,12 @@ class GoogleGenAIProvider(BaseProvider):
                     structured=bool(structured_output and not use_fallback_json),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    host=(
+                        f"https://{self._location}-aiplatform.googleapis.com"
+                        if self._is_vertex and self._location
+                        else "https://generativelanguage.googleapis.com"
+                    ),
+                    region=self._location,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log usage metadata: {str(e)}")

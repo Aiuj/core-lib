@@ -165,6 +165,7 @@ def log_llm_usage(
     has_tools: bool = False,
     search_grounding: bool = False,
     host: Optional[str] = None,
+    region: Optional[str] = None,
     purpose: Optional[str] = None,
     intelligence_level: Optional[int] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -188,6 +189,8 @@ def log_llm_usage(
         search_grounding: Whether search grounding was enabled
         host: Service host URL (e.g., "http://localhost:11434" for Ollama,
               "https://api.openai.com" for OpenAI)
+        region: Cloud region where the request was processed (e.g., "us-central1"
+                for Google Vertex AI, "eastus" for Azure OpenAI)
         purpose: What the LLM call is for (e.g., "answer-generation", "grounding", "translation")
         intelligence_level: Intelligence level requested (0-10)
         metadata: Additional context (user_id, session_id, etc.) - automatically
@@ -232,7 +235,10 @@ def log_llm_usage(
     if host:
         event["gen_ai.host"] = host
         event["server.address"] = host  # OTel semantic convention
-    
+
+    if region:
+        event["cloud.region"] = region  # OTel semantic convention
+
     if effective_purpose:
         event["gen_ai.purpose"] = effective_purpose
     
@@ -292,6 +298,7 @@ def log_embedding_usage(
     embedding_dim: Optional[int] = None,
     latency_ms: Optional[float] = None,
     host: Optional[str] = None,
+    region: Optional[str] = None,
     purpose: Optional[str] = None,
     cost_override: Optional[float] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -308,6 +315,8 @@ def log_embedding_usage(
         latency_ms: Request latency in milliseconds
         host: Service host URL (e.g., "http://localhost:7997" for Infinity,
               "https://api.openai.com" for OpenAI)
+        region: Cloud region where the request was processed (e.g., "us-central1"
+                for Google Vertex AI, "eastus" for Azure OpenAI)
         purpose: What the embedding is for (e.g., "query-search", "qa-storage", "document-indexing")
         cost_override: Manual cost override (e.g. 0.0 for cached hits)
         metadata: Additional context
@@ -345,7 +354,10 @@ def log_embedding_usage(
     
     if host:
         event["gen_ai.host"] = host
-    
+
+    if region:
+        event["cloud.region"] = region  # OTel semantic convention
+
     if effective_purpose:
         event["embedding.purpose"] = effective_purpose
     
@@ -398,6 +410,8 @@ def log_reranker_usage(
     input_tokens: Optional[int] = None,
     output_tokens: Optional[int] = None,
     latency_ms: Optional[float] = None,
+    host: Optional[str] = None,
+    region: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -410,6 +424,9 @@ def log_reranker_usage(
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
         latency_ms: Request latency in milliseconds
+        host: Service host URL (e.g., "http://localhost:7997" for Infinity,
+              "https://api.cohere.ai" for Cohere)
+        region: Cloud region where the request was processed
         metadata: Additional context
         error: Error message if the request failed
     """
@@ -427,6 +444,13 @@ def log_reranker_usage(
         "cost_usd": round(cost, 6),
     }
     
+    if host:
+        event["gen_ai.host"] = host
+        event["server.address"] = host  # OTel semantic convention
+
+    if region:
+        event["cloud.region"] = region  # OTel semantic convention
+
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
         event["tokens.input"] = input_tokens
@@ -451,8 +475,10 @@ def log_reranker_usage(
     else:
         event["status"] = "success"
         
+    host_str = f" ({host})" if host else ""
+    region_str = f" [{region}]" if region else ""
     logger.info(
-        f"Reranker usage: {provider}/{model} - {num_documents} documents, ${cost:.6f}",
+        f"Reranker usage: {provider}/{model}{host_str}{region_str} - {num_documents} documents, ${cost:.6f}",
         extra={"extra_attrs": event}
     )
 

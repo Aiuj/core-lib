@@ -95,6 +95,12 @@ class InfinityRerankerClient(BaseRerankerClient):
             f"Initialized Infinity reranker: model={self.model}, "
             f"servers={len(self._api_client.base_urls)}"
         )
+        self._last_used_url: Optional[str] = self._api_client.base_urls[0] if self._api_client.base_urls else None
+
+    @property
+    def host(self) -> Optional[str]:
+        """Last Infinity server URL used (updated after each request for failover visibility)."""
+        return self._last_used_url
 
     def _rerank_raw(
         self,
@@ -121,6 +127,7 @@ class InfinityRerankerClient(BaseRerankerClient):
             
             # Make request via shared API client with automatic failover
             data, used_url = self._api_client.post('/rerank', json=request_body)
+            self._last_used_url = used_url
             
             # Extract usage
             usage = None

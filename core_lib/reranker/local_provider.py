@@ -94,6 +94,11 @@ class LocalRerankerClient(BaseRerankerClient):
             logger.error(error_msg)
             raise RerankerError(error_msg)
 
+    @property
+    def host(self) -> Optional[str]:
+        """Local in-process model, not a remote service."""
+        return "local"
+
     def _rerank_raw(
         self,
         query: str,

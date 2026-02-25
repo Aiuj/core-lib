@@ -75,8 +75,13 @@ class CohereRerankerClient(BaseRerankerClient):
         
         # Initialize Cohere client
         self.client = cohere.Client(api_key=self.api_key)
-        
+
         logger.debug(f"Initialized Cohere reranker: model={self.model}")
+
+    @property
+    def host(self) -> Optional[str]:
+        """Cohere API endpoint."""
+        return "https://api.cohere.ai"
 
     def _rerank_raw(
         self,

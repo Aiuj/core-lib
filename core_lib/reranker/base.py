@@ -76,6 +76,11 @@ class BaseRerankerClient:
             f"cache_enabled={self.cache_duration_seconds > 0}"
         )
 
+    @property
+    def host(self) -> Optional[str]:
+        """Service host URL used for requests. Override in concrete providers."""
+        return None
+
     def _generate_cache_key(self, query: str, documents: List[str], top_k: Optional[int]) -> str:
         """Generate a cache key for the given query and documents."""
         cache_data = {
@@ -137,7 +142,8 @@ class BaseRerankerClient:
             num_documents=len(documents),
             input_tokens=usage.get("input_tokens") if usage else None,
             output_tokens=usage.get("output_tokens") if usage else None,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
+            host=self.host,
         )
         
         # Add document text if requested
