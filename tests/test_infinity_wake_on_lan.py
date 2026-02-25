@@ -19,14 +19,13 @@ class _Response:
         return self._payload
 
 
-def test_wol_strategy_applies_initial_timeout_for_matching_host():
+def test_wol_strategy_applies_initial_timeout_when_enabled():
     strategy = WakeOnLanStrategy(
         {
             "enabled": True,
             "initial_timeout_seconds": 2,
             "targets": [
                 {
-                    "host": "powerspec",
                     "mac_address": "FC:34:97:9E:C8:AF",
                     "port": 7777,
                 }
@@ -35,7 +34,7 @@ def test_wol_strategy_applies_initial_timeout_for_matching_host():
     )
 
     assert strategy.maybe_get_initial_timeout("http://powerspec:7997", 30) == 2
-    assert strategy.maybe_get_initial_timeout("http://localhost:7997", 30) == 30
+    assert strategy.maybe_get_initial_timeout("http://localhost:7997", 30) == 2
 
 
 def test_wol_strategy_wakes_host_only_once(monkeypatch):
@@ -44,7 +43,6 @@ def test_wol_strategy_wakes_host_only_once(monkeypatch):
             "enabled": True,
             "targets": [
                 {
-                    "host": "powerspec",
                     "mac_address": "FC:34:97:9E:C8:AF",
                     "port": 7777,
                     "wait_seconds": 0,
@@ -81,7 +79,6 @@ def test_infinity_client_retries_after_wol_on_timeout(monkeypatch):
             "initial_timeout_seconds": 2,
             "targets": [
                 {
-                    "host": "powerspec",
                     "mac_address": "FC:34:97:9E:C8:AF",
                     "port": 7777,
                     "wait_seconds": 0,
@@ -108,23 +105,12 @@ def test_infinity_client_retries_after_wol_on_timeout(monkeypatch):
     assert post_mock.call_args_list[1].kwargs["timeout"] == 8
 
 
-def test_infinity_client_fails_over_without_wol_for_non_target(monkeypatch):
+def test_infinity_client_fails_over_without_wol_when_disabled(monkeypatch):
     client = InfinityAPIClient(
         base_urls=["http://powerspec:7997", "http://127.0.0.1:7997"],
         timeout=30,
         max_retries_per_url=1,
-        wake_on_lan={
-            "enabled": True,
-            "initial_timeout_seconds": 2,
-            "targets": [
-                {
-                    "host": "some-other-host",
-                    "mac_address": "FC:34:97:9E:C8:AF",
-                    "port": 7777,
-                    "wait_seconds": 0,
-                }
-            ],
-        },
+        wake_on_lan={"enabled": False},
     )
 
     post_mock = Mock(
@@ -156,7 +142,6 @@ def test_wol_defaults_host_from_base_url_and_port_9(monkeypatch):
     captured = {}
 
     def _fake_send(target):
-        captured["host"] = target.host
         captured["port"] = target.port
 
     monkeypatch.setattr(strategy, "_send_magic_packet", _fake_send)
@@ -166,5 +151,4 @@ def test_wol_defaults_host_from_base_url_and_port_9(monkeypatch):
 
     assert timeout_value == 2
     assert wake_result.succeeded is True
-    assert captured["host"] == "*"
     assert captured["port"] == 9

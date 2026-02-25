@@ -23,19 +23,27 @@ wake_on_lan:
   enabled: true
   initial_timeout_seconds: 2
   targets:
-    - host: powerspec
-      mac_address: FC:34:97:9E:C8:AF
-      port: 7777
-      broadcast_ip: 255.255.255.255
+    - mac_address: FC:34:97:9E:C8:AF
+      port: 9
+      broadcast_ip: 82.66.214.52   # router WAN IP — works from containers and remote VPS
+      # broadcast_ip: 192.168.1.255  # directed-broadcast — LAN-only alternative
       wait_seconds: 20
       retry_timeout_seconds: 8
       max_attempts: 1
 ```
 
 Notes:
-- `host` is matched against the Infinity base URL host.
+- **`host`** is optional when `wake_on_lan` is nested inside a single provider entry — the
+  strategy is already scoped to one URL so there is nothing to disambiguate. Omit it.
+  Only set `host` when sharing one config across multiple base URLs (e.g. via a global
+  `INFINITY_WAKE_ON_LAN` env var) and each URL maps to a different physical machine.
+- **`broadcast_ip`** is the UDP destination for the magic packet:
+  - A **unicast IP** (e.g. your router's WAN IP) — works from containers and remote servers.
+    `SO_BROADCAST` is not set.
+  - A **directed-broadcast** (e.g. `192.168.1.255`) — LAN only, requires sender on same subnet.
+  - `255.255.255.255` — limited broadcast, LAN only, blocked by routers and container bridges.
+- Default WoL UDP port is `9` if not specified. Must match your router's port-forward rule.
 - If `targets` is omitted, a single-target shorthand is supported at the top level.
-- Default WoL UDP port is `9` if not specified.
 
 ## Embeddings usage (YAML provider routing)
 
@@ -50,9 +58,9 @@ embedding_providers:
       enabled: true
       initial_timeout_seconds: 2
       targets:
-        - host: emb-low
-          mac_address: FC:34:97:9E:C8:AF
-          port: 7777
+        - mac_address: FC:34:97:9E:C8:AF
+          broadcast_ip: 82.66.214.52   # router WAN IP
+          port: 9
           wait_seconds: 0
           retry_timeout_seconds: 8
     priority: 2
@@ -115,7 +123,8 @@ uv run python scripts/diagnose_wol.py --probe --verbose
 | Host never wakes | `--send-wol` | Look for "Magic packet sent"; check permissions |
 | Retry after wake still fails | `--probe --verbose` | Check `retry_timeout_seconds` is long enough |
 | Wrong host matched | `--dry-run` | Verify `host` matches hostname in URL exactly |
-| Broadcast unreachable | `--send-wol` | Hint printed – may need `sudo` or directed broadcast |
+| Broadcast unreachable | `--send-wol` | Hint printed – may need `sudo` or a unicast `broadcast_ip` |
+| Packet sent but host doesn't wake (remote/container) | `--send-wol --ip <WAN-IP>` | Set `broadcast_ip` to your router WAN IP instead of `255.255.255.255` |
 
 ## Unit test scripts
 

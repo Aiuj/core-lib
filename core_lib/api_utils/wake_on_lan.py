@@ -19,9 +19,16 @@ logger = get_module_logger()
 
 @dataclass(frozen=True)
 class WakeTarget:
-    """Wake configuration for one host."""
+    """Wake configuration for one host.
 
-    host: str
+    ``broadcast_ip`` is the UDP destination for the magic packet.  It can be:
+    - A plain unicast IP (e.g. a router's WAN IP) — works from containers and
+      remote servers (``SO_BROADCAST`` is NOT set).
+    - A directed-broadcast (e.g. ``192.168.1.255``) — LAN-only.
+    - ``255.255.255.255`` — limited broadcast, LAN-only, blocked by routers
+      and container bridge networks.
+    """
+
     mac_address: str
     port: int = 9
     broadcast_ip: str = "255.255.255.255"
@@ -48,7 +55,6 @@ class WakeOnLanStrategy:
       "initial_timeout_seconds": 2,
       "targets": [
         {
-          "host": "powerspec",
           "mac_address": "FC:34:97:9E:C8:AF",
           "port": 7777,
           "wait_seconds": 20,
@@ -58,7 +64,7 @@ class WakeOnLanStrategy:
       ]
     }
 
-    A shorthand single-target form is also supported by providing host/mac at
+    A shorthand single-target form is also supported by providing mac at
     the top level without "targets".
     """
 
@@ -107,27 +113,23 @@ class WakeOnLanStrategy:
 
     @classmethod
     def _build_target(cls, source: Dict[str, Any]) -> Optional[WakeTarget]:
-        host = str(source.get("host") or source.get("match_host") or "").strip().lower()
         mac_raw = source.get("mac_address") or source.get("mac")
         mac_address = cls._normalize_mac(str(mac_raw or ""))
 
         if not mac_address:
             return None
 
-        # Optional host: when omitted, this target applies to the API client's base_url host.
-        # We represent it as wildcard and resolve at lookup time.
-        if not host:
-            host = "*"
-
         wait_seconds = cls._to_optional_float(source.get("wait_seconds"))
         if wait_seconds is None or wait_seconds < 0:
             wait_seconds = 20.0
 
+        raw_target_ip = source.get("target_ip") or source.get("ip")
+        target_ip: Optional[str] = str(raw_target_ip).strip() if raw_target_ip else None
+
         return WakeTarget(
-            host=host,
             mac_address=mac_address,
             port=cls._to_positive_int(source.get("port"), default=9),
-            broadcast_ip=str(source.get("broadcast_ip") or "255.255.255.255"),
+            broadcast_ip=target_ip or str(source.get("broadcast_ip") or "255.255.255.255"),
             wait_seconds=wait_seconds,
             retry_timeout_seconds=cls._to_optional_float(
                 source.get("retry_timeout_seconds")
@@ -160,29 +162,25 @@ class WakeOnLanStrategy:
         parsed = urlparse(base_url)
         return (parsed.hostname or "").strip().lower()
 
-    def _find_target(self, base_url: str) -> Optional[WakeTarget]:
-        host = self._extract_host(base_url)
-        if not host:
-            return None
-
-        wildcard_target: Optional[WakeTarget] = None
-        for target in self._targets:
-            if target.host == host:
-                return target
-            if target.host == "*":
-                wildcard_target = target
-        return wildcard_target
+    def _find_target(self) -> Optional[WakeTarget]:
+        return self._targets[0] if self._targets else None
 
     @staticmethod
     def _build_magic_packet(mac_hex: str) -> bytes:
         mac_bytes = bytes.fromhex(mac_hex)
         return b"\xff" * 6 + mac_bytes * 16
 
+    @staticmethod
+    def _is_broadcast(ip: str) -> bool:
+        """Return True when ip looks like a broadcast address (last octet is 255)."""
+        return ip.endswith(".255") or ip == "255.255.255.255"
+
     def _send_magic_packet(self, target: WakeTarget) -> None:
         packet = self._build_magic_packet(target.mac_address)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            if self._is_broadcast(target.broadcast_ip):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.sendto(packet, (target.broadcast_ip, target.port))
         finally:
             sock.close()
@@ -192,7 +190,7 @@ class WakeOnLanStrategy:
         if not self.enabled:
             return default_timeout
 
-        target = self._find_target(base_url)
+        target = self._find_target()
         if not target:
             return default_timeout
 
@@ -213,11 +211,11 @@ class WakeOnLanStrategy:
         if not self.enabled:
             return WakeResult(attempted=False, succeeded=False)
 
-        target = self._find_target(base_url)
+        target = self._find_target()
         if not target:
             return WakeResult(attempted=False, succeeded=False)
 
-        target_host = self._extract_host(base_url) if target.host == "*" else target.host
+        target_host = self._extract_host(base_url)
 
         if base_url in self._woken_hosts:
             return WakeResult(attempted=False, succeeded=False)

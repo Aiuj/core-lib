@@ -140,6 +140,14 @@ def parse_args() -> argparse.Namespace:
         help="Override or supply a MAC address (format: FC:34:97:9E:C8:AF).",
     )
     parser.add_argument(
+        "--ip",
+        default=None,
+        help="Destination IP for the magic packet. Can be a WAN/unicast IP (e.g. your router's "
+             "public IP) or a directed-broadcast (e.g. 192.168.1.255). Use a unicast IP when "
+             "sending from inside a container or a remote VPS. Overrides broadcast_ip in config "
+             "when --mac is also supplied.",
+    )
+    parser.add_argument(
         "--wol-port",
         type=int,
         default=None,
@@ -302,9 +310,10 @@ def cmd_show_config(cfg: Dict[str, Any], color: bool) -> None:
         strategy = WakeOnLanStrategy(wol)
         print(f"\n  Parsed targets  : {len(strategy._targets)}")
         for i, t in enumerate(strategy._targets):
+            kind = "broadcast" if t.broadcast_ip.endswith(".255") or t.broadcast_ip == "255.255.255.255" else "unicast"
             print(f"    [{i}] host={t.host}  mac={t.mac_address}  port={t.port}  "
-                  f"wait={t.wait_seconds}s  retry_timeout={t.retry_timeout_seconds}s  "
-                  f"max_attempts={t.max_attempts}")
+                  f"dest={t.broadcast_ip} ({kind})  wait={t.wait_seconds}s  "
+                  f"retry_timeout={t.retry_timeout_seconds}s  max_attempts={t.max_attempts}")
         print(f"  initial_timeout : {strategy.initial_timeout_seconds}s")
         print(f"  enabled         : {strategy.enabled}")
 
@@ -360,11 +369,11 @@ def cmd_health(cfg: Dict[str, Any], color: bool) -> None:
         except req.exceptions.Timeout:
             elapsed = (time.time() - start) * 1000
             print(f"  {_err(f'Timeout after {effective_timeout}s', color)}")
-            if strategy and strategy._find_target(url):
+            if strategy and strategy._find_target():
                 print(f"  {_info('Host is in WoL targets – would send magic packet before retry.', color)}")
         except req.exceptions.ConnectionError as exc:
             print(f"  {_err(f'Connection refused/unreachable: {exc}', color)}")
-            if strategy and strategy._find_target(url):
+            if strategy and strategy._find_target():
                 print(f"  {_info('Host is in WoL targets – would send magic packet before retry.', color)}")
         except Exception as exc:
             print(f"  {_err(str(exc), color)}")
@@ -407,7 +416,8 @@ def cmd_dry_run(cfg: Dict[str, Any], color: bool) -> None:
             print(f"    {_ok('Matched WoL target', color)}")
             print(f"    host             : {target.host}")
             print(f"    mac_address      : {target.mac_address}")
-            print(f"    udp_port         : {target.port}")
+            kind = "broadcast" if target.broadcast_ip.endswith(".255") or target.broadcast_ip == "255.255.255.255" else "unicast"
+            print(f"    destination      : {target.broadcast_ip} ({kind})  port {target.port}")
             print(f"    initial_timeout  : {initial_t}s  (vs normal {cfg['timeout']}s)")
             print(f"    wait_after_wake  : {target.wait_seconds}s")
             print(f"    retry_timeout    : {target.retry_timeout_seconds or cfg['timeout']}s")
@@ -434,6 +444,7 @@ def cmd_send_wol(
     cfg: Dict[str, Any],
     host_override: Optional[str],
     mac_override: Optional[str],
+    ip_override: Optional[str],
     port_override: Optional[int],
     color: bool,
 ) -> None:
@@ -454,6 +465,8 @@ def cmd_send_wol(
         if host_override:
             wol.pop("targets", None)
             wol["host"] = host_override
+        if ip_override:
+            wol["broadcast_ip"] = ip_override
         if port_override:
             wol["port"] = port_override
         wol["enabled"] = True
@@ -474,17 +487,13 @@ def cmd_send_wol(
         return
 
     # Pick target
-    target = None
-    if host_override:
-        for t in strategy._targets:
-            if t.host == host_override.lower() or t.host == "*":
-                target = t
-                break
-    if target is None:
-        target = strategy._targets[0]
+    target = strategy._targets[0] if strategy._targets else None
 
-    print(f"\n  Target host    : {target.host}")
-    print(f"  MAC address    : {target.mac_address}")
+    if target is None:
+        print(_err("No WoL target configured.", color))
+        return
+
+    print(f"\n  MAC address    : {target.mac_address}")
     print(f"  UDP port       : {port_override or target.port}")
     print(f"  Broadcast IP   : {target.broadcast_ip}")
 
@@ -657,7 +666,7 @@ def main() -> None:
         cmd_health(cfg, color)
 
     if args.send_wol:
-        cmd_send_wol(cfg, args.host, args.mac, args.wol_port, color)
+        cmd_send_wol(cfg, args.host, args.mac, args.ip, args.wol_port, color)
 
     if args.probe:
         cmd_probe(cfg, args.model, color)
