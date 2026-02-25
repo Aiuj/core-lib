@@ -250,6 +250,7 @@ EMBEDDING_MODEL=text-embedding-ada-002
 - 📖 **Comprehensive Guide**: [EMBEDDINGS_GUIDE.md](./EMBEDDINGS_GUIDE.md)
 - 🚀 **Infinity Setup**: [INFINITY_QUICKSTART.md](./INFINITY_QUICKSTART.md)
 - 🔧 **Infinity Provider**: [INFINITY_PROVIDER.md](./INFINITY_PROVIDER.md)
+- 🌙 **Wake-on-LAN (Embeddings)**: [WAKE_ON_LAN.md](./WAKE_ON_LAN.md)
 
 ## Support
 

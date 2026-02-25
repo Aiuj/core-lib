@@ -52,6 +52,9 @@ dev = [
     "langchain-core>=0.3.0",
 ]
 
+[project.scripts]
+diagnose-wol = "core_lib.scripts.diagnose_wol:main"
+
 [project.urls]
 Homepage = "https://github.com/Aiuj/core-lib"
 Repository = "https://github.com/Aiuj/core-lib"
