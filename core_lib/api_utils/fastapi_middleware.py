@@ -1,11 +1,21 @@
 ﻿"""FastAPI middleware utilities for tracing and logging context."""
 
+import logging
 from typing import Any, Optional, Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..tracing.logging_context import LoggingContext
 from .. import parse_from
+
+_logger = logging.getLogger(__name__)
+
+# Paths that are excluded from request logging to reduce noise
+_SILENT_PATHS = frozenset({
+    "/health", "/healthz", "/ready", "/readiness", "/liveness",
+    "/metrics", "/favicon.ico",
+    "/docs", "/redoc", "/openapi.json",
+})
 
 
 class FromContextMiddleware(BaseHTTPMiddleware):
@@ -82,7 +92,10 @@ class FromContextMiddleware(BaseHTTPMiddleware):
                 # Add to tracing metadata if tracing client is available
                 if self.tracing_client and from_dict:
                     self.tracing_client.add_metadata(metadata=from_dict)
-                
+
+                if request.url.path not in _SILENT_PATHS:
+                    _logger.info("%s %s", request.method, str(request.url))
+
                 response = await call_next(request)
             return response
         except Exception:
@@ -155,6 +168,10 @@ async def inject_from_logging_context(
         with LoggingContext(from_dict):
             if tracing_client and from_dict:
                 tracing_client.add_metadata(metadata=from_dict)
+
+            if request.url.path not in _SILENT_PATHS:
+                _logger.info("%s %s", request.method, str(request.url))
+
             response = await call_next(request)
         return response
     except Exception:

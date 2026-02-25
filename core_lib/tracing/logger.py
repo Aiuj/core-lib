@@ -380,7 +380,7 @@ def setup_logging(
         noisy_loggers = [
             # HTTP clients and servers
             "urllib3", "requests", "aiohttp", "httpx", "httpcore", "h11",
-            "uvicorn", "uvicorn.error", "uvicorn.access",
+            "uvicorn", "uvicorn.error",
             "primp", "primp.client", "primp.response",  # HTTP client used by duckduckgo-search
             # Database and cache clients
             "opensearch", "psycopg2", "redis", "asyncpg", "elasticsearch",
@@ -402,6 +402,18 @@ def setup_logging(
             except Exception:
                 pass
         
+        # Silence uvicorn.access completely — our FromContextMiddleware logs the full
+        # URL (with host:port) instead.  Uvicorn attaches its own handler directly on
+        # this logger, so setting level alone is not enough; we also clear its handlers
+        # and disable propagation to keep the line from reaching any root handler.
+        try:
+            _uva = logging.getLogger("uvicorn.access")
+            _uva.setLevel(logging.ERROR)
+            _uva.handlers = []
+            _uva.propagate = False
+        except Exception:
+            pass
+
         # Set langfuse to ERROR to suppress context warnings
         try:
             logging.getLogger("langfuse").setLevel(logging.ERROR)
