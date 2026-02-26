@@ -297,3 +297,62 @@ class TestFallbackEmbeddingClient:
         mock_provider2._generate_embedding_raw.reset_mock()
         client._generate_embedding_raw(["test2"])
         assert mock_provider2._generate_embedding_raw.call_count == 1
+
+    # -----------------------------------------------------------------------
+    # WoL warmup awareness
+    # -----------------------------------------------------------------------
+
+    def test_fallback_skips_provider_in_warmup(self):
+        """Provider in WoL warmup must be skipped; secondary should serve request."""
+        mock_warmup = Mock()
+        mock_warmup.model = "model1"
+        mock_warmup.embedding_dim = 384
+        mock_warmup.is_in_warmup.return_value = True
+
+        mock_secondary = Mock()
+        mock_secondary.model = "model2"
+        mock_secondary.embedding_dim = 384
+        mock_secondary.is_in_warmup.return_value = False
+        mock_secondary._generate_embedding_raw.return_value = [[0.1, 0.2]]
+
+        client = FallbackEmbeddingClient(providers=[mock_warmup, mock_secondary])
+        result = client._generate_embedding_raw(["test"])
+
+        assert result == [[0.1, 0.2]]
+        mock_warmup._generate_embedding_raw.assert_not_called()
+
+    def test_fallback_does_not_mark_warmup_provider_unhealthy(self):
+        """A provider that triggers WoL during a request must not be marked unhealthy.
+
+        Scenario: provider 0 is reachable (no skip at top of loop), but its
+        internal InfinityAPIClient fires WoL mid-request and raises.  By the
+        time FallbackEmbeddingClient catches the exception, is_in_warmup() is True,
+        so no health penalty should be recorded.
+        """
+        warmup_state = {"active": False}
+
+        mock_warmup = Mock()
+        mock_warmup.model = "model1"
+        mock_warmup.embedding_dim = 384
+        # is_in_warmup() becomes True only after _generate_embedding_raw raises
+        mock_warmup.is_in_warmup.side_effect = lambda: warmup_state["active"]
+
+        def _fire_and_raise(texts):
+            warmup_state["active"] = True   # WoL fired during this call
+            raise Exception("host booting — WoL sent")
+
+        mock_warmup._generate_embedding_raw.side_effect = _fire_and_raise
+
+        mock_secondary = Mock()
+        mock_secondary.model = "model2"
+        mock_secondary.embedding_dim = 384
+        mock_secondary.is_in_warmup.return_value = False
+        mock_secondary._generate_embedding_raw.return_value = [[0.3, 0.4]]
+
+        client = FallbackEmbeddingClient(providers=[mock_warmup, mock_secondary])
+        result = client._generate_embedding_raw(["test"])
+
+        assert result == [[0.3, 0.4]]
+        # No health penalty should have been recorded for provider 0
+        assert client._is_provider_healthy_cached(0) is not False
+        assert not client._is_provider_overloaded_cached(0)

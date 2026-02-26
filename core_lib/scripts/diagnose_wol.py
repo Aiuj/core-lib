@@ -311,8 +311,8 @@ def cmd_show_config(cfg: Dict[str, Any], color: bool) -> None:
         print(f"\n  Parsed targets  : {len(strategy._targets)}")
         for i, t in enumerate(strategy._targets):
             kind = "broadcast" if t.broadcast_ip.endswith(".255") or t.broadcast_ip == "255.255.255.255" else "unicast"
-            print(f"    [{i}] host={t.host}  mac={t.mac_address}  port={t.port}  "
-                  f"dest={t.broadcast_ip} ({kind})  wait={t.wait_seconds}s  "
+            print(f"    [{i}] dest={t.broadcast_ip}  mac={t.mac_address}  port={t.port}  "
+                  f"({kind})  wait={t.wait_seconds}s  "
                   f"retry_timeout={t.retry_timeout_seconds}s  max_attempts={t.max_attempts}")
         print(f"  initial_timeout : {strategy.initial_timeout_seconds}s")
         print(f"  enabled         : {strategy.enabled}")
@@ -404,31 +404,39 @@ def cmd_dry_run(cfg: Dict[str, Any], color: bool) -> None:
     print(f"\n  WoL enabled          : {strategy.enabled}")
     print(f"  Initial timeout      : {strategy.initial_timeout_seconds}s  "
           f"(applies to sleeping hosts before sending packet)")
+    warmup = strategy.warmup_seconds
+    if warmup:
+        print(f"  Warmup window        : {warmup:.0f}s  (non-blocking — routes to secondary after WoL)")
     print(f"  Number of targets    : {len(strategy._targets)}")
 
     for url in cfg["urls"]:
-        host = urlparse(url).hostname or url
-        target = strategy._find_target(url)
+        target = strategy._find_target()
         initial_t = strategy.maybe_get_initial_timeout(url, cfg["timeout"])
 
         print(f"\n  URL: {url}")
         if target:
             print(f"    {_ok('Matched WoL target', color)}")
-            print(f"    host             : {target.host}")
-            print(f"    mac_address      : {target.mac_address}")
             kind = "broadcast" if target.broadcast_ip.endswith(".255") or target.broadcast_ip == "255.255.255.255" else "unicast"
             print(f"    destination      : {target.broadcast_ip} ({kind})  port {target.port}")
+            print(f"    mac_address      : {target.mac_address}")
             print(f"    initial_timeout  : {initial_t}s  (vs normal {cfg['timeout']}s)")
-            print(f"    wait_after_wake  : {target.wait_seconds}s")
+            if warmup:
+                print(f"    warmup_seconds   : {warmup:.0f}s")
+            else:
+                print(f"    wait_after_wake  : {target.wait_seconds}s")
             print(f"    retry_timeout    : {target.retry_timeout_seconds or cfg['timeout']}s")
             print(f"    max_attempts     : {target.max_attempts}")
             print(f"\n    Simulated request flow:")
             print(f"      1. POST /embeddings  timeout={initial_t}s")
             print(f"      2. On Timeout/ConnError → send magic packet to {target.mac_address} UDP {target.port}")
-            if target.wait_seconds:
-                print(f"      3. Wait {target.wait_seconds}s for host to boot")
-            print(f"      {'4' if target.wait_seconds else '3'}. Retry POST /embeddings  timeout={target.retry_timeout_seconds or cfg['timeout']}s")
-            print(f"      {'5' if target.wait_seconds else '4'}. On failure → fail over to next URL (if any)")
+            if warmup:
+                print(f"      3. Route to secondary for {warmup:.0f}s warmup window")
+                print(f"      4. After {warmup:.0f}s → retry this URL normally")
+            else:
+                if target.wait_seconds:
+                    print(f"      3. Wait {target.wait_seconds}s for host to boot")
+                print(f"      {'4' if target.wait_seconds else '3'}. Retry POST /embeddings  timeout={target.retry_timeout_seconds or cfg['timeout']}s")
+                print(f"      {'5' if target.wait_seconds else '4'}. On failure → fail over to next URL (if any)")
         else:
             print(f"    {_warn('No WoL target for this host – normal failover only.', color)}")
             print(f"    initial_timeout  : {initial_t}s  (== normal timeout)")

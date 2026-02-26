@@ -113,6 +113,10 @@ class OllamaProvider(BaseProvider):
         self._ollama = ollama
         self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
 
+    def is_in_warmup(self) -> bool:
+        """Return True while a non-blocking WoL warmup window is active."""
+        return self._wake_on_lan.is_in_warmup(self.config.base_url or "")
+
     def _is_connection_or_timeout_error(self, error: Exception) -> bool:
         """Return True when error indicates host may be sleeping/unreachable."""
         error_type = type(error).__name__.lower()
@@ -267,6 +271,15 @@ class OllamaProvider(BaseProvider):
                 if self._is_connection_or_timeout_error(first_error):
                     wake_result = self._wake_on_lan.maybe_wake(base_url_for_wol, first_error)
                     if wake_result.succeeded:
+                        if wake_result.warmup_seconds:
+                            # Non-blocking mode: WoL packet was sent, don't wait here.
+                            # Re-raise so FallbackLLMClient can route to a secondary
+                            # provider immediately while the main server powers on.
+                            logger.info(
+                                f"WoL sent to {base_url_for_wol} (non-blocking) — "
+                                f"routing to secondary for {wake_result.warmup_seconds:.0f}s warmup"
+                            )
+                            raise
                         retry_timeout = wake_result.retry_timeout_seconds or default_timeout
                         logger.info(
                             f"Retrying Ollama request after WoL wake with timeout={retry_timeout}s"

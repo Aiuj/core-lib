@@ -150,6 +150,15 @@ class LLMClient:
                 "usage": {},
             }
 
+    def is_in_warmup(self) -> bool:
+        """Return True while the underlying provider is in a WoL warmup window.
+
+        During this window the server is powering on.  ``FallbackLLMClient``
+        uses this to skip the provider and route requests to a secondary without
+        permanently marking it unhealthy.
+        """
+        return self._provider.is_in_warmup()
+
     def close(self) -> None:
         """Release underlying provider resources."""
         if self._closed:

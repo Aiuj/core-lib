@@ -409,3 +409,156 @@ class TestFallbackLLMClientContextManager:
         client.close()
         
         assert client._client_cache == {}
+
+
+# ---------------------------------------------------------------------------
+# WoL non-blocking warmup integration with FallbackLLMClient
+# ---------------------------------------------------------------------------
+
+class TestFallbackLLMClientWoLWarmup:
+    """Tests for non-blocking Wake-on-LAN warmup handling in FallbackLLMClient."""
+
+    def _make_registry_with_ollama_secondary(self):
+        """Two-provider registry: Ollama (priority 1) + OpenAI (priority 2)."""
+        from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+        registry = ProviderRegistry()
+        registry.add(ProviderConfig(
+            provider="ollama",
+            model="qwen3:1.7b",
+            host="http://powerspec:11434",
+            priority=1,
+            wake_on_lan={
+                "enabled": True,
+                "warmup_seconds": 30,
+                "targets": [{"mac_address": "FC:34:97:9E:C8:AF", "wait_seconds": 0}],
+            },
+        ))
+        registry.add(ProviderConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            priority=2,
+        ))
+        return registry
+
+    def _make_client_mock(self, in_warmup=False, chat_side_effect=None, chat_return=None):
+        """Return a MagicMock that mimics LLMClient with is_in_warmup support."""
+        mock = MagicMock()
+        mock.is_in_warmup.return_value = in_warmup
+        if chat_side_effect is not None:
+            mock.chat.side_effect = chat_side_effect
+        else:
+            mock.chat.return_value = chat_return or {
+                "content": "ok",
+                "usage": {},
+                "tool_calls": [],
+                "structured": False,
+            }
+        return mock
+
+    def test_skips_provider_in_warmup(self, mock_health_tracker):
+        """FallbackLLMClient must skip a provider whose is_in_warmup() is True."""
+        registry = self._make_registry_with_ollama_secondary()
+        fallback = FallbackLLMClient(
+            registry=registry,
+            health_tracker=mock_health_tracker,
+        )
+
+        primary_mock = self._make_client_mock(in_warmup=True)
+        secondary_mock = self._make_client_mock(chat_return={
+            "content": "secondary answer",
+            "usage": {},
+            "tool_calls": [],
+            "structured": False,
+        })
+
+        def fake_get_client(config):
+            if config.provider == "ollama":
+                return primary_mock
+            return secondary_mock
+
+        fallback._get_client = fake_get_client
+
+        response = fallback.chat(messages=[{"role": "user", "content": "hello"}])
+
+        assert response["content"] == "secondary answer"
+        primary_mock.chat.assert_not_called()
+        secondary_mock.chat.assert_called_once()
+
+    def test_does_not_mark_unhealthy_during_warmup(self, mock_health_tracker):
+        """Provider should NOT be marked unhealthy when WoL warmup is active."""
+        registry = self._make_registry_with_ollama_secondary()
+        fallback = FallbackLLMClient(
+            registry=registry,
+            health_tracker=mock_health_tracker,
+        )
+
+        # Primary raises a connection error, then immediately enters warmup
+        primary_call_count = {"n": 0}
+
+        def primary_chat(**_kw):
+            primary_call_count["n"] += 1
+            raise RuntimeError("connection refused")
+
+        primary_mock = self._make_client_mock()
+        primary_mock.chat.side_effect = primary_chat
+
+        secondary_mock = self._make_client_mock(chat_return={
+            "content": "from secondary",
+            "usage": {},
+            "tool_calls": [],
+            "structured": False,
+        })
+
+        # After the exception the provider transitions to warmup
+        warmup_states = [False, True]  # first call returns False (not yet in warmup), then True
+
+        primary_mock.is_in_warmup.side_effect = warmup_states.__iter__().__next__
+
+        def fake_get_client(config):
+            if config.provider == "ollama":
+                return primary_mock
+            return secondary_mock
+
+        fallback._get_client = fake_get_client
+
+        response = fallback.chat(messages=[{"role": "user", "content": "hello"}])
+
+        assert response["content"] == "from secondary"
+        # Provider should NOT be marked unhealthy (warmup was active)
+        health = mock_health_tracker.get_status("ollama", "qwen3:1.7b")
+        assert health.is_healthy, (
+            "Ollama provider must stay healthy in tracker when warmup handles the failure"
+        )
+
+    def test_returns_to_main_after_warmup(self, mock_health_tracker):
+        """After warmup expires, FallbackLLMClient must try main provider first."""
+        registry = self._make_registry_with_ollama_secondary()
+        fallback = FallbackLLMClient(
+            registry=registry,
+            health_tracker=mock_health_tracker,
+        )
+
+        primary_answer = {
+            "content": "main server answer",
+            "usage": {},
+            "tool_calls": [],
+            "structured": False,
+        }
+        # Warmup has already expired (is_in_warmup returns False)
+        primary_mock = self._make_client_mock(in_warmup=False, chat_return=primary_answer)
+        secondary_mock = self._make_client_mock()
+
+        def fake_get_client(config):
+            if config.provider == "ollama":
+                return primary_mock
+            return secondary_mock
+
+        fallback._get_client = fake_get_client
+
+        response = fallback.chat(messages=[{"role": "user", "content": "hello"}])
+
+        assert response["content"] == "main server answer"
+        primary_mock.chat.assert_called_once()
+        secondary_mock.chat.assert_not_called()
+

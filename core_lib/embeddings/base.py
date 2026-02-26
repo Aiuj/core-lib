@@ -307,6 +307,14 @@ class BaseEmbeddingClient:
         """
         return bool(self.query_prefix or self.passage_prefix)
 
+    def is_in_warmup(self) -> bool:
+        """Return True if this provider is in a WoL warmup window.
+
+        Override in subclasses that support Wake-on-LAN.  The default is
+        ``False`` so providers without WoL are never skipped.
+        """
+        return False
+
     def _generate_embedding_raw(self, texts: List[str]) -> List[List[float]]:
         """Abstract method for generating raw embeddings without normalization.
         

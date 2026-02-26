@@ -596,11 +596,19 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             tried_providers.add(idx)
             
             provider = self.providers[idx]
-            
+
+            # Skip providers that are currently in a WoL warmup window — the
+            # host is booting; route to a secondary instead.
+            if provider.is_in_warmup():
+                logger.debug(
+                    f"Skipping provider {idx} (WoL warmup in progress — host is booting)"
+                )
+                continue
+
             # Check cached health status
             cached_health = self._is_provider_healthy_cached(idx)
             cached_overload = self._is_provider_overloaded_cached(idx)
-            
+
             if cached_overload:
                 # Provider is overloaded - skip unless it's time to recheck
                 if not self._should_check_health(idx):
@@ -659,8 +667,15 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     # Determine error type: connection error vs overload vs other failure
                     is_connection_error = self._is_connection_error(e)
                     is_overload = self._is_overload_error(e)
-                    
-                    if is_connection_error:
+
+                    if provider.is_in_warmup():
+                        # WoL was fired during this request — host is booting.
+                        # Log at debug only; no overload counter increment.
+                        logger.debug(
+                            f"Provider {idx} ({provider_info}) fired WoL and is in warmup "
+                            f"— routing to next provider: {e}"
+                        )
+                    elif is_connection_error:
                         # Server is unreachable (network issue, host down)
                         logger.warning(
                             f"Provider {idx} ({provider_info}) is unreachable "
@@ -685,8 +700,13 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             
             # All retries for this provider failed
             if not provider_succeeded:
+                # Don't penalise a provider that is intentionally in WoL warmup.
+                if provider.is_in_warmup():
+                    logger.debug(
+                        f"Provider {idx} failed during WoL warmup — skipping health penalty"
+                    )
                 # Mark provider based on error type
-                if last_error and self._is_overload_error(last_error):
+                elif last_error and self._is_overload_error(last_error):
                     # Temporary overload - mark with shorter TTL
                     self._mark_provider_overloaded(idx)
                 else:

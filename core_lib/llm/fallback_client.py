@@ -302,7 +302,18 @@ class FallbackLLMClient:
         
         for config, is_fallback in self._iter_providers(level):
             provider_id = f"{config.provider}:{config.model}"
-            
+
+            # Skip providers whose WoL warmup window is still active.
+            # After a non-blocking WoL wake the server needs time to power on;
+            # we route to secondary providers during this period and return to
+            # the main once the window elapses (without marking it unhealthy).
+            _warmup_client = self._get_client(config)
+            if _warmup_client.is_in_warmup():
+                logger.info(
+                    f"Skipping {provider_id}: WoL warmup in progress — routing to next provider"
+                )
+                continue
+
             # Try this provider with retries
             for retry in range(self._max_retries):
                 attempts += 1
@@ -413,11 +424,21 @@ class FallbackLLMClient:
                     else:
                         logger.warning(log_message)
                     
-                    # Mark unhealthy on last retry
+                    # Mark unhealthy on last retry — unless the provider just
+                    # triggered a non-blocking WoL wake; in that case the server
+                    # is booting and will be ready after the warmup window, so
+                    # we don't permanently demote it in the health tracker.
                     if retry == self._max_retries - 1:
-                        self._health_tracker.mark_unhealthy(
-                            config.provider, config.model, reason=error_reason
-                        )
+                        client_for_wol_check = self._get_client(config)
+                        if client_for_wol_check.is_in_warmup():
+                            logger.info(
+                                f"{provider_id} is in WoL warmup — skipping health demotion; "
+                                f"will retry after warmup window"
+                            )
+                        else:
+                            self._health_tracker.mark_unhealthy(
+                                config.provider, config.model, reason=error_reason
+                            )
                         providers_tried.append(provider_id)
         
         # All providers failed

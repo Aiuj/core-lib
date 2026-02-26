@@ -50,6 +50,20 @@ class BaseProvider(ABC):
         """
         self.config = config
 
+    def is_in_warmup(self) -> bool:
+        """Return True while this provider is in a post-WoL warmup window.
+
+        During a warmup window (non-blocking WoL mode) the underlying server is
+        booting up and should not be contacted.  Callers such as
+        ``FallbackLLMClient`` use this to skip the provider and route requests
+        to a secondary instead, without permanently marking the provider as
+        unhealthy.
+
+        The default implementation always returns False.  Providers that
+        support Wake-on-LAN (``OllamaProvider``) override this method.
+        """
+        return False
+
     def close(self) -> None:
         """Release any provider resources.
 

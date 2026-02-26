@@ -110,9 +110,17 @@ def load_provider_config_file(path: str, substitute_env: bool = True) -> Optiona
         except ImportError:
             logger.error("PyYAML not installed, cannot load YAML provider config")
             return None
-        data = yaml.safe_load(content) or {}
+        try:
+            data = yaml.safe_load(content) or {}
+        except yaml.YAMLError as exc:
+            logger.error("Failed to parse YAML provider config file %s: %s", file_path, exc)
+            return None
     else:
-        data = json.loads(content)
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse JSON provider config file %s: %s", file_path, exc)
+            return None
 
     if substitute_env:
         data = substitute_env_vars(data)

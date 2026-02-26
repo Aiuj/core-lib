@@ -23,7 +23,10 @@ logger = get_module_logger()
 
 class InfinityAPIError(Exception):
     """Base exception for Infinity API errors."""
-    pass
+
+    def __init__(self, message: str, is_warmup: bool = False):
+        super().__init__(message)
+        self.is_warmup = is_warmup
 
 
 class InfinityAPIClient:
@@ -93,6 +96,14 @@ class InfinityAPIClient:
             f"{', '.join(self.base_urls)}"
         )
 
+    def is_in_warmup(self) -> bool:
+        """Return True if any configured URL is currently in a WoL warmup window.
+
+        During the warmup window the host is booting up — callers should route
+        requests to a secondary server instead of waiting for this one.
+        """
+        return any(self.wake_on_lan.is_in_warmup(url) for url in self.base_urls)
+
     def _is_connection_or_timeout_error(self, error: Exception) -> bool:
         """Return True when error indicates host may be sleeping/unreachable."""
         if requests is None:
@@ -138,12 +149,25 @@ class InfinityAPIClient:
         
         errors = []
         urls_tried = []
-        
+        wol_warmup_fired = False  # set when WoL was fired in non-blocking mode
+
         # Try each URL, starting with the last successful one
         for attempt in range(len(self.base_urls)):
             url_index = (self.current_url_index + attempt) % len(self.base_urls)
             base_url = self.base_urls[url_index]
             full_url = f"{base_url}/{endpoint}"
+
+            # Skip hosts that are currently in a WoL warmup window.
+            # After sending a magic packet the host needs time to power on; we
+            # route to secondary providers for `warmup_seconds` instead of
+            # blocking until the host responds.  Once the window elapses the
+            # host will be attempted again as normal.
+            if self.wake_on_lan.is_in_warmup(base_url):
+                logger.info(
+                    f"Skipping {base_url}: WoL warmup in progress — routing to next server"
+                )
+                continue
+
             urls_tried.append(full_url)
             
             for retry in range(self.max_retries_per_url):
@@ -177,7 +201,8 @@ class InfinityAPIClient:
                 
                 except requests.exceptions.Timeout as e:
                     wake_result = self.wake_on_lan.maybe_wake(base_url, e)
-                    if wake_result.succeeded:
+                    if wake_result.succeeded and not wake_result.warmup_seconds:
+                        # Blocking mode: wait for the host and retry immediately.
                         retry_timeout = wake_result.retry_timeout_seconds or timeout
                         logger.info(
                             f"Retrying Infinity request after WoL wake: {full_url} "
@@ -199,17 +224,23 @@ class InfinityAPIClient:
                             errors.append(error_msg)
                             self.url_failures[url_index] += 1
                             logger.warning(error_msg)
+                    # Non-blocking (warmup) mode: WoL packet sent — skip blocking
+                    # retry and let the caller route to a secondary server instead.
+                    if wake_result.warmup_seconds:
+                        wol_warmup_fired = True
 
                     error_msg = f"Timeout after {effective_timeout}s: {full_url}"
                     errors.append(error_msg)
                     self.url_failures[url_index] += 1
-                    logger.warning(
-                        f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})"
-                    )
-                    
+                    if not wol_warmup_fired:
+                        logger.warning(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
+                    else:
+                        logger.debug(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
+
                 except requests.exceptions.ConnectionError as e:
                     wake_result = self.wake_on_lan.maybe_wake(base_url, e)
-                    if wake_result.succeeded:
+                    if wake_result.succeeded and not wake_result.warmup_seconds:
+                        # Blocking mode: wait for the host and retry immediately.
                         retry_timeout = wake_result.retry_timeout_seconds or timeout
                         logger.info(
                             f"Retrying Infinity request after WoL wake: {full_url} "
@@ -231,13 +262,18 @@ class InfinityAPIClient:
                             errors.append(error_msg)
                             self.url_failures[url_index] += 1
                             logger.warning(error_msg)
+                    # Non-blocking (warmup) mode: WoL packet sent — skip blocking
+                    # retry and let the caller route to a secondary server instead.
+                    if wake_result.warmup_seconds:
+                        wol_warmup_fired = True
 
                     error_msg = f"Connection failed: {full_url} - {str(e)}"
                     errors.append(error_msg)
                     self.url_failures[url_index] += 1
-                    logger.warning(
-                        f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})"
-                    )
+                    if not wol_warmup_fired:
+                        logger.warning(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
+                    else:
+                        logger.debug(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
                     break  # No point retrying connection errors
                     
                 except requests.exceptions.HTTPError as e:
@@ -278,8 +314,14 @@ class InfinityAPIClient:
             f"Tried {len(urls_tried)} URL(s): {', '.join(urls_tried)}. "
             f"Errors: {'; '.join(errors[:3])}"  # Limit to first 3 errors
         )
-        logger.error(error_summary)
-        raise InfinityAPIError(error_summary)
+        if wol_warmup_fired or self.is_in_warmup():
+            # Expected: host was sleeping, WoL sent, secondary will handle it.
+            logger.debug(
+                f"WoL warmup active — routing to secondary. ({error_summary})"
+            )
+        else:
+            logger.error(error_summary)
+        raise InfinityAPIError(error_summary, is_warmup=wol_warmup_fired or self.is_in_warmup())
     
     def get(
         self,

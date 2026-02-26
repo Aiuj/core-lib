@@ -1,6 +1,7 @@
 """Tests for Wake-on-LAN behavior in Ollama provider."""
 
 import sys
+import time
 import types
 
 from core_lib.api_utils.wake_on_lan import WakeResult
@@ -74,3 +75,111 @@ def test_ollama_provider_retries_after_wol(monkeypatch):
 
     assert result["content"] == "ok"
     assert call_timeouts == [2, 8]
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking warmup mode
+# ---------------------------------------------------------------------------
+
+def _make_ollama_provider(monkeypatch, wol_config: dict) -> OllamaProvider:
+    """Return an OllamaProvider with a fake Ollama module in sys.modules."""
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            self.host = host
+
+        def chat(self, **payload):
+            raise RuntimeError("connection refused")
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    config = OllamaConfig(
+        model="qwen3:1.7b",
+        base_url="http://powerspec:11434",
+        timeout=30,
+        wake_on_lan=wol_config,
+    )
+    return OllamaProvider(config)
+
+
+def test_ollama_is_in_warmup_false_by_default(monkeypatch):
+    """is_in_warmup() must be False before any WoL has been fired."""
+    provider = _make_ollama_provider(
+        monkeypatch,
+        {"enabled": True, "warmup_seconds": 30, "mac_address": "FC:34:97:9E:C8:AF"},
+    )
+    assert provider.is_in_warmup() is False
+
+
+def test_ollama_is_in_warmup_true_after_wake(monkeypatch):
+    """is_in_warmup() must be True immediately after a WoL packet is sent."""
+    provider = _make_ollama_provider(
+        monkeypatch,
+        {
+            "enabled": True,
+            "warmup_seconds": 30,
+            "targets": [{"mac_address": "FC:34:97:9E:C8:AF", "wait_seconds": 0}],
+        },
+    )
+    monkeypatch.setattr(provider._wake_on_lan, "_send_magic_packet", lambda _t: None)
+
+    # chat() should raise (connection refused) after firing WoL
+    result = provider.chat(messages=[{"role": "user", "content": "hello"}])
+    assert "error" in result  # OllamaProvider wraps exceptions in error dict
+
+    assert provider.is_in_warmup() is True
+
+
+def test_ollama_chat_reraises_in_nonblocking_warmup_mode(monkeypatch):
+    """In non-blocking warmup mode chat() must NOT retry on the same host after WoL."""
+    call_count = {"n": 0}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            pass
+
+        def chat(self, **payload):
+            call_count["n"] += 1
+            raise RuntimeError("connection refused")
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    config = OllamaConfig(
+        model="qwen3:1.7b",
+        base_url="http://powerspec:11434",
+        timeout=30,
+        wake_on_lan={
+            "enabled": True,
+            "warmup_seconds": 30,
+            "targets": [{"mac_address": "FC:34:97:9E:C8:AF", "wait_seconds": 0}],
+        },
+    )
+    provider = OllamaProvider(config)
+    monkeypatch.setattr(provider._wake_on_lan, "_send_magic_packet", lambda _t: None)
+
+    result = provider.chat(messages=[{"role": "user", "content": "hello"}])
+    # The provider must NOT attempt a second call on the same server
+    assert call_count["n"] == 1, "Expected exactly one call (no blocking retry)"
+    assert "error" in result
+
+
+def test_ollama_is_in_warmup_false_after_window_expires(monkeypatch):
+    """is_in_warmup() must revert to False once the warmup window has elapsed."""
+    provider = _make_ollama_provider(
+        monkeypatch,
+        {
+            "enabled": True,
+            "warmup_seconds": 5,
+            "targets": [{"mac_address": "FC:34:97:9E:C8:AF", "wait_seconds": 0}],
+        },
+    )
+    monkeypatch.setattr(provider._wake_on_lan, "_send_magic_packet", lambda _t: None)
+
+    url = "http://powerspec:11434"
+    provider._wake_on_lan.maybe_wake(url, RuntimeError("connection refused"))
+
+    # Back-date the wake timestamp past the warmup window
+    provider._wake_on_lan._waking_timestamps[url] = time.time() - 6
+
+    assert provider.is_in_warmup() is False

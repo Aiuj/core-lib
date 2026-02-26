@@ -92,6 +92,10 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
             f"servers={len(self._api_client.base_urls)}"
         )
 
+    def is_in_warmup(self) -> bool:
+        """Return True if the underlying Infinity API client is in a WoL warmup window."""
+        return self._api_client.is_in_warmup()
+
     def _generate_embedding_raw(self, texts: List[str]) -> List[List[float]]:
         """Generate raw embeddings using Infinity API.
         
@@ -147,21 +151,25 @@ class InfinityEmbeddingClient(BaseEmbeddingClient):
         except InfinityAPIError as e:
             self.embedding_time_ms = (time.time() - start_time) * 1000
             error_msg = f"Infinity embedding failed: {e}"
-            logger.error(error_msg)
-            
-            # Log error to OpenTelemetry/OpenSearch
-            try:
-                log_embedding_usage(
-                    provider="infinity",
-                    model=self.model,
-                    num_texts=len(texts),
-                    embedding_dim=self.embedding_dim,
-                    latency_ms=self.embedding_time_ms,
-                    error=str(e),
-                )
-            except Exception:
-                pass
-            
+
+            if getattr(e, 'is_warmup', False):
+                # Expected path: host was sleeping, WoL fired, routing to secondary.
+                # Don't log as an error and don't record a failure in usage tracking.
+                logger.debug(error_msg)
+            else:
+                logger.error(error_msg)
+                try:
+                    log_embedding_usage(
+                        provider="infinity",
+                        model=self.model,
+                        num_texts=len(texts),
+                        embedding_dim=self.embedding_dim,
+                        latency_ms=self.embedding_time_ms,
+                        error=str(e),
+                    )
+                except Exception:
+                    pass
+
             raise EmbeddingGenerationError(error_msg)
             
         except Exception as e:

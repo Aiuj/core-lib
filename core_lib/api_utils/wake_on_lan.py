@@ -44,28 +44,49 @@ class WakeResult:
     attempted: bool
     succeeded: bool
     retry_timeout_seconds: Optional[float] = None
+    warmup_seconds: Optional[float] = None
+    """When > 0, the caller should route to secondary servers for this many seconds
+    instead of retrying the waking host directly.  Set when *non-blocking* WoL mode
+    is active (``warmup_seconds`` configured on the strategy).
+    """
 
 
 class WakeOnLanStrategy:
     """Optional wake strategy for a subset of configured Infinity hosts.
 
-    Supported config shape:
+    Supported config shape — **shorthand** (target fields flat, single server):
+    {
+      "mac_address": "FC:34:97:9E:C8:AF",   # enabled defaults to true when block is present
+      "broadcast_ip": "82.66.214.52",
+      "port": 7777,
+      "wait_seconds": 20,
+      "retry_timeout_seconds": 8
+    }
+
+    **targets list** form (identical result; required for multiple machines):
     {
       "enabled": true,
-      "initial_timeout_seconds": 2,
+      "initial_timeout_seconds": 2,  # optional, default 2 s when enabled
       "targets": [
         {
           "mac_address": "FC:34:97:9E:C8:AF",
           "port": 7777,
           "wait_seconds": 20,
           "retry_timeout_seconds": 8,
-          "max_attempts": 1
+          "max_attempts": 1           # optional, default 1
         }
       ]
     }
 
-    A shorthand single-target form is also supported by providing mac at
-    the top level without "targets".
+    ``initial_timeout_seconds`` is optional.  When omitted (or set to ``None``)
+    and WoL is enabled, it defaults to **2 s** so that sleeping hosts
+    are detected quickly without the caller having to repeat the value.
+    Set it explicitly to override the default (e.g. ``5`` for slower networks).
+
+    ``enabled`` defaults to ``True`` whenever a non-empty ``wake_on_lan`` block
+    is provided, so you can omit ``enabled: true`` entirely.  Set
+    ``enabled: false`` explicitly to disable WoL while keeping the config in
+    place (e.g. for local development).
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -82,6 +103,15 @@ class WakeOnLanStrategy:
         )
         self._targets = self._parse_targets(cfg)
         self._woken_hosts: set[str] = set()
+        # Non-blocking mode: how long (seconds) to route to secondary servers after
+        # a WoL packet is sent, instead of blocking until the host wakes.
+        # Set to 0 or omit to keep the original blocking wait behaviour.
+        self.warmup_seconds: Optional[float] = self._to_optional_float(
+            cfg.get("warmup_seconds")
+        )
+        # Timestamps (host URL → epoch seconds) recording when a WoL was triggered,
+        # used to decide when the warmup window has elapsed.
+        self._waking_timestamps: Dict[str, float] = {}
 
     @staticmethod
     def _to_optional_float(value: Any) -> Optional[float]:
@@ -185,6 +215,32 @@ class WakeOnLanStrategy:
         finally:
             sock.close()
 
+    def is_in_warmup(self, base_url: str) -> bool:
+        """Return True while a WoL warmup window is active for *base_url*.
+
+        After sending a WoL packet in non-blocking mode, the waking host is
+        unavailable for ``warmup_seconds``.  During this window callers should
+        skip the host and route requests to secondary providers instead.
+        Once the window elapses the host is assumed to be operational and will
+        be tried again.
+
+        Returns False when warmup mode is disabled (``warmup_seconds`` not set)
+        or when no packet has been sent for this URL yet.
+        """
+        if not self.warmup_seconds or self.warmup_seconds <= 0:
+            return False
+        wake_time = self._waking_timestamps.get(base_url)
+        if wake_time is None:
+            return False
+        remaining = self.warmup_seconds - (time.time() - wake_time)
+        if remaining > 0:
+            logger.debug(
+                f"WoL warmup active for {base_url}: {remaining:.1f}s remaining "
+                f"(routing to secondary)"
+            )
+            return True
+        return False
+
     def maybe_get_initial_timeout(self, base_url: str, default_timeout: float) -> float:
         """Return a short initial timeout for configured sleeping hosts."""
         if not self.enabled:
@@ -220,18 +276,33 @@ class WakeOnLanStrategy:
         if base_url in self._woken_hosts:
             return WakeResult(attempted=False, succeeded=False)
 
-        logger.warning(
-            f"Infinity host appears unavailable ({base_url}): {error}. "
-            f"Attempting Wake-on-LAN for host '{target_host}'"
-        )
+        is_warmup_mode = bool(self.warmup_seconds and self.warmup_seconds > 0)
+        # In warmup mode the host being asleep is expected — only warn on
+        # classic blocking mode where the caller is about to stall.
+        if not is_warmup_mode:
+            logger.warning(
+                f"Infinity host appears unavailable ({base_url}): {error}. "
+                f"Attempting Wake-on-LAN for host '{target_host}'"
+            )
+        else:
+            logger.debug(
+                f"Infinity host appears unavailable ({base_url}): {error}. "
+                f"Attempting Wake-on-LAN for host '{target_host}'"
+            )
 
         for attempt in range(1, target.max_attempts + 1):
             try:
                 self._send_magic_packet(target)
-                logger.info(
-                    f"Sent WoL magic packet to {target_host} on UDP {target.port} "
-                    f"(attempt {attempt}/{target.max_attempts})"
-                )
+                if is_warmup_mode:
+                    logger.debug(
+                        f"Sent WoL magic packet to {target_host} on UDP {target.port} "
+                        f"(attempt {attempt}/{target.max_attempts})"
+                    )
+                else:
+                    logger.info(
+                        f"Sent WoL magic packet to {target_host} on UDP {target.port} "
+                        f"(attempt {attempt}/{target.max_attempts})"
+                    )
                 break
             except Exception as exc:
                 logger.error(
@@ -241,15 +312,26 @@ class WakeOnLanStrategy:
         else:
             return WakeResult(attempted=True, succeeded=False)
 
-        if target.wait_seconds > 0:
+        if self.warmup_seconds and self.warmup_seconds > 0:
+            # Non-blocking mode: record wake timestamp and let the caller route
+            # requests to secondary servers for the warmup window instead of
+            # sleeping here and retrying the same host.
+            self._waking_timestamps[base_url] = time.time()
             logger.info(
-                f"Waiting {target.wait_seconds:.1f}s for host '{target_host}' to wake"
+                f"WoL sent to '{target_host}' — warmup active for "
+                f"{self.warmup_seconds:.0f}s, routing to secondary"
             )
-            time.sleep(target.wait_seconds)
+        else:
+            if target.wait_seconds > 0:
+                logger.info(
+                    f"Waiting {target.wait_seconds:.1f}s for host '{target_host}' to wake"
+                )
+                time.sleep(target.wait_seconds)
 
         self._woken_hosts.add(base_url)
         return WakeResult(
             attempted=True,
             succeeded=True,
             retry_timeout_seconds=target.retry_timeout_seconds,
+            warmup_seconds=self.warmup_seconds if self.warmup_seconds else None,
         )
