@@ -232,15 +232,15 @@ diagnose-wol --health
 diagnose-wol --dry-run
 
 # Send a magic packet to a configured host manually
-diagnose-wol --send-wol --host powerspec
+diagnose-wol --send-wol --host 82.66.214.52
 
 # Fire a real /embeddings request and observe retry/WoL behaviour live
 diagnose-wol --probe
 
 # Override URL and supply MAC ad-hoc (no config required)
 diagnose-wol --probe \
-    --url http://powerspec:7997 \
-    --host powerspec \
+    --url http://2.66.214.52:7997 \
+    --host 2.66.214.52 \
     --mac FC:34:97:9E:C8:AF
 
 # Point at a non-default .env file
@@ -311,6 +311,13 @@ expected. Any output at all means the packet arrived.
 >    the issue is the router rule or the packet generation itself.
 > 3. On Linux, `sudo ufw allow 9/udp` (or equivalent) to ensure the port is not
 >    blocked by the host firewall.
+
+**Option 3 — `suspend` (put the server to sleep)**
+
+```bash
+# Go to sleep, send the packet and check that computer wakes up
+sudo systemctl suspend
+```
 
 ## Unit test scripts
 

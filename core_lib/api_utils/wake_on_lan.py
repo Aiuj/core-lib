@@ -239,6 +239,10 @@ class WakeOnLanStrategy:
                 f"(routing to secondary)"
             )
             return True
+        # Warmup window has elapsed — the host should be up.  Clear the woken
+        # state so that if the host goes back to sleep later it can be woken again.
+        self._waking_timestamps.pop(base_url, None)
+        self._woken_hosts.discard(base_url)
         return False
 
     def maybe_get_initial_timeout(self, base_url: str, default_timeout: float) -> float:
