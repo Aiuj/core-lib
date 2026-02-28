@@ -42,6 +42,7 @@ class OpenAIConfig(LLMConfig):
     project: Optional[str] = None
     azure_endpoint: Optional[str] = None
     azure_api_version: Optional[str] = None
+    thinking_budget: Optional[int] = None
 
     def __init__(
         self,
@@ -50,6 +51,7 @@ class OpenAIConfig(LLMConfig):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
+        thinking_budget: Optional[int] = None,
         base_url: Optional[str] = None,
         organization: Optional[str] = None,
         project: Optional[str] = None,
@@ -58,11 +60,23 @@ class OpenAIConfig(LLMConfig):
     ):
         super().__init__("openai", model, temperature, max_tokens, thinking_enabled)
         self.api_key = api_key
+        self.thinking_budget = thinking_budget
         self.base_url = base_url
         self.organization = organization
         self.project = project
         self.azure_endpoint = azure_endpoint
         self.azure_api_version = azure_api_version
+
+    @property
+    def is_alibaba(self) -> bool:
+        """True when base_url points to an Alibaba DashScope endpoint."""
+        return bool(
+            self.base_url and (
+                "dashscope" in self.base_url.lower()
+                or "aliyun" in self.base_url.lower()
+                or "alibaba" in self.base_url.lower()
+            )
+        )
 
     @classmethod
     def from_env(cls) -> "OpenAIConfig":
@@ -209,7 +223,55 @@ class OpenAIProvider(BaseProvider):
             # Structured output via response_format
             resp_format = self._build_response_format(structured_output)
             if resp_format is not None:
-                create_kwargs["response_format"] = resp_format
+                # Alibaba/DashScope has two quirks with structured output:
+                # 1. Requires the word "json" in the messages when response_format is set
+                # 2. Does not enforce json_schema strictly — use json_object + schema instruction
+                if self.config.is_alibaba:
+                    # Use simpler json_object format (Alibaba doesn't enforce json_schema)
+                    create_kwargs["response_format"] = {"type": "json_object"}
+                    # Build a schema hint to guide the model
+                    schema_hint = ""
+                    if structured_output is not None:
+                        try:
+                            schema = structured_output.model_json_schema()  # type: ignore[attr-defined]
+                            props = schema.get("properties", {})
+                            required = schema.get("required", list(props.keys()))
+                            field_descs = ", ".join(
+                                f'"{k}": {v.get("type", "string")}' for k, v in props.items()
+                            )
+                            schema_hint = (
+                                f' Respond ONLY with a JSON object matching this schema: '
+                                f'{{{field_descs}}}. Required fields: {required}.'
+                            )
+                        except Exception:
+                            schema_hint = " Respond ONLY with a valid JSON object."
+                    msgs = create_kwargs["messages"]
+                    combined_text = " ".join(
+                        (m.get("content") or "") for m in msgs if isinstance(m, dict)
+                    ).lower()
+                    if "json" not in combined_text or schema_hint:
+                        instruction = f"Respond in JSON.{schema_hint}"
+                        if msgs and msgs[0].get("role") == "system":
+                            msgs = [
+                                {"role": "system", "content": msgs[0]["content"] + " " + instruction},
+                                *msgs[1:],
+                            ]
+                        else:
+                            msgs = [{"role": "system", "content": instruction}] + msgs
+                        create_kwargs["messages"] = msgs
+                else:
+                    create_kwargs["response_format"] = resp_format
+
+            # Thinking mode — Alibaba/Qwen Chat Completions uses extra_body.
+            # We always send enable_thinking explicitly so that thinking: false
+            # actually disables CoT on models (e.g. qwen3.5-flash) that default
+            # to thinking mode ON.
+            use_thinking = thinking_enabled if thinking_enabled is not None else self.config.thinking_enabled
+            if self.config.is_alibaba:
+                extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
+                if use_thinking and self.config.thinking_budget is not None:
+                    extra_body["thinking_budget"] = self.config.thinking_budget
+                create_kwargs["extra_body"] = extra_body
 
             # Call API
             start = time.perf_counter()

@@ -29,7 +29,10 @@ from .factory import (
     create_openai_client,
     create_azure_openai_client,
     create_openai_compatible_client,
+    create_openai_responses_client,
+    create_alibaba_client,
 )
+from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .provider_registry import ProviderConfig, ProviderRegistry, substitute_env_vars
 from .provider_health import (
     ProviderHealthTracker,
@@ -67,6 +70,7 @@ __all__ = [
     "GeminiConfig",
     "OllamaConfig",
     "OpenAIConfig",
+    "OpenAIResponsesConfig",
     "LLMClient",
     
     # Fallback client (automatic provider failover)
@@ -101,6 +105,8 @@ __all__ = [
     "create_openai_client",
     "create_azure_openai_client",
     "create_openai_compatible_client",
+    "create_openai_responses_client",
+    "create_alibaba_client",
     
     # LangChain adapter (optional - requires langchain-core)
     "CoreLibChatModel",

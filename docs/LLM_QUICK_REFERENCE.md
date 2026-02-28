@@ -14,7 +14,12 @@ No LangChain dependency is required for LLM calls.
 ## Quick Start
 
 ```python
-from core_lib.llm import create_ollama_client, create_gemini_client
+from core_lib.llm import (
+    create_ollama_client,
+    create_gemini_client,
+    create_openai_responses_client,
+    create_alibaba_client,
+)
 
 # Local Ollama (single turn)
 client = create_ollama_client(model="llama3.2", temperature=0.7)
@@ -25,6 +30,17 @@ print(resp["content"])  # plain text
 client = create_gemini_client(api_key="your-key", model="gemini-1.5-flash")
 resp = client.chat("Explain quantum computing")
 print(resp["content"])  # plain text
+
+# OpenAI Responses API — recommended for new OpenAI projects
+client = create_openai_responses_client(api_key="sk-...", model="gpt-4.1")
+resp = client.chat("Write a haiku about the sea")
+print(resp["content"])
+print(resp["response_id"])  # save for stateful follow-up
+
+# Alibaba Cloud (Qwen) via Responses API
+client = create_alibaba_client(model="qwen-plus")  # reads DASHSCOPE_API_KEY
+resp = client.chat("What can you do?")
+print(resp["content"])
 
 # Google Vertex AI (single turn via ADC)
 client = create_gemini_client(
@@ -39,12 +55,15 @@ print(resp["content"])
 ## Key Features
 
 ✅ Unified interface across providers  
-✅ Environment configuration (sensible defaults, .from_env helpers)  
+✅ Environment configuration (sensible defaults, `.from_env` helpers)  
 ✅ Native tool/function-calling structures  
-✅ Structured outputs with Pydantic schemas (response_schema)  
+✅ Structured outputs with Pydantic schemas (`response_schema`)  
 ✅ Single-turn and multi-turn support  
-✅ Thinking mode for Gemini 2.5 models  
-✅ Optional Google Search grounding (Gemini)  
+✅ **OpenAI Responses API** (`client.responses.create`) — recommended for OpenAI & Alibaba  
+✅ **Alibaba Cloud (Qwen)** — `create_alibaba_client` via Responses API  
+✅ **Stateful multi-turn** via `previous_response_id` (Responses API)  
+✅ Thinking mode for Gemini 2.5 and Qwen3/3.5 models  
+✅ Optional Google Search grounding (Gemini) / web search (Responses API)  
 ✅ **Model-specific rate limiting** (5-100 RPM per model)  
 ✅ **Automatic retry with exponential backoff** (network errors, rate limits)  
 ✅ **Circuit breaker pattern** with graceful degradation  
@@ -57,7 +76,8 @@ print(resp["content"])
     "content": str | dict,    # text for normal calls, dict for structured outputs
     "structured": bool,       # True if structured_output was requested
     "tool_calls": list,       # provider-reported function calls (if any)
-    "usage": dict,            # usage metadata (if available)
+    "usage": dict,            # usage metadata (prompt_tokens, completion_tokens, …)
+    "response_id": str,       # Responses API only — pass to next call for stateful multi-turn
     "error": str | None       # present on failure
 }
 ```
@@ -84,7 +104,7 @@ client = LLMClient(config)
 
 ### Environment variables
 - Common:
-    - `LLM_PROVIDER` = `gemini` | `ollama`
+    - `LLM_PROVIDER` = `gemini` | `ollama` | `openai` | `openai-responses`
 - Gemini (Developer API):
     - `GEMINI_API_KEY` (or `GOOGLE_GENAI_API_KEY`)
     - `GEMINI_MODEL` (default: `gemini-1.5-flash`)
@@ -97,6 +117,21 @@ client = LLMClient(config)
     - `GOOGLE_CLOUD_LOCATION` (or `GOOGLE_CLOUD_REGION`)
     - `GOOGLE_APPLICATION_CREDENTIALS` (optional, path to service account JSON)
     - `GEMINI_SERVICE_ACCOUNT_FILE` (optional, alias for service account file)
+- OpenAI Responses API (`openai-responses`):
+    - `OPENAI_API_KEY` (or `DASHSCOPE_API_KEY` for Alibaba)
+    - `OPENAI_RESPONSES_MODEL` (default: `gpt-4.1`) — overrides `OPENAI_MODEL`
+    - `OPENAI_BASE_URL` (set to Alibaba endpoint to use Qwen models)
+    - `OPENAI_TEMPERATURE` (default: `0.7`)
+    - `OPENAI_MAX_TOKENS`
+    - `OPENAI_THINKING_ENABLED` = `true|false`
+    - `OPENAI_REASONING_EFFORT` = `low|medium|high` (default: `medium`)
+- OpenAI Chat Completions (`openai`):
+    - `OPENAI_API_KEY`
+    - `OPENAI_MODEL` (default: `gpt-5.2-preview`)
+    - `OPENAI_BASE_URL` (set to Alibaba endpoint for Qwen via Chat Completions)
+    - `OPENAI_TEMPERATURE` (default: `0.7`)
+    - `OPENAI_MAX_TOKENS`
+    - `OPENAI_ORG` / `OPENAI_ORGANIZATION`, `OPENAI_PROJECT`
 - Ollama:
     - `OLLAMA_MODEL` (default: `qwen3:1.7b`)
     - `OLLAMA_TEMPERATURE` (default: `0.1`)
@@ -147,6 +182,33 @@ resp = client.chat("What are the latest Mars mission updates?", use_search_groun
 print(resp["content"])
 ```
 Notes: This flag is forwarded to all providers. Providers that don't support grounding will ignore it.
+For the Responses API, `use_search_grounding=True` adds the `web_search_preview` built-in tool.
+
+### Stateful multi-turn (Responses API)
+```python
+from core_lib.llm import create_openai_responses_client
+
+client = create_openai_responses_client(api_key="sk-...")
+
+# First turn
+resp = client.chat("My name is Alice.")
+prev_id = resp["response_id"]
+
+# Second turn — server recalls context automatically
+client.config.previous_response_id = prev_id
+resp2 = client.chat("What is my name?")
+print(resp2["content"])  # "Alice"
+```
+
+### Alibaba Cloud (Qwen) via Responses API
+```python
+from core_lib.llm import create_alibaba_client
+
+# DASHSCOPE_API_KEY read from env automatically
+client = create_alibaba_client(model="qwen3-max", thinking_enabled=True)
+resp = client.chat("Solve: if 3x + 7 = 22, what is x?")
+print(resp["content"])
+```
 
 ### System message and multi-turn
 ```python
@@ -161,6 +223,16 @@ resp = client.chat(messages)
 
 ## Provider behavior
 
+- OpenAI Responses API (openai-responses) — **recommended for new OpenAI/Alibaba projects**:
+    - Uses `client.responses.create()` — the current recommended OpenAI interface
+    - Input via `input` (string or message array); system message injected as first item (not `instructions`)
+    - Structured output via `text.format` (json_schema)
+    - Tool calls returned as `function_call` items in the `output` array; normalised to standard `tool_calls` list
+    - Web search grounding via `web_search_preview` built-in tool
+    - Thinking: OpenAI reasoning models → `reasoning={"effort": "..."}`, Alibaba/Qwen → `extra_body={"enable_thinking": True}`
+    - Stateful multi-turn: set `previous_response_id` in config; `response_id` returned in every response
+    - **Alibaba/Qwen**: use `create_alibaba_client()` or `OpenAIResponsesConfig.for_alibaba()` — auto-sets the DashScope Responses endpoint and Alibaba-specific parameters
+
 - Gemini (google-genai):
     - Single turn: uses `models.generate_content()`
     - Multi-turn: uses `chats.create(...).send_message()`
@@ -170,6 +242,12 @@ resp = client.chat(messages)
     - Search grounding: when `use_search_grounding=True`, enables Google Search tool and tool_config per official docs
     - **Rate limiting**: Model-specific RPM limits (Gemini 2.5 Pro: 5 RPM, Flash: 10 RPM, Flash-Lite: 15 RPM, Gemma 3: 30 RPM, Embedding: 100 RPM)
     - **Retry logic**: Automatic retry on rate limits (429), server errors (500/503 including "model is overloaded"), network failures with exponential backoff (3 retries, 1-30s delays with jitter)
+
+- OpenAI Chat Completions (openai):
+    - Uses `client.chat.completions.create()`
+    - Structured output via `response_format` (json_schema)
+    - Thinking mode not forwarded automatically (use Responses API instead for Alibaba thinking)
+    - Azure OpenAI supported via `azure_endpoint` config field
 
 - Ollama (ollama):
     - Uses `ollama.chat()` with OpenAI-style messages
@@ -181,17 +259,19 @@ resp = client.chat(messages)
 
 ## Provider Comparison
 
-| Feature | Ollama | Gemini |
-|---------|--------|--------|
-| Cost | Free (local) | Paid API |
-| Privacy | Local | Cloud |
-| Setup | Run Ollama server | API key |
-| Models | Open-source | Google models |
-| Tools | Model-dependent | Native support |
-| Structured Output | JSON + Pydantic validate | response_schema + parsed |
-| Thinking | N/A | 2.5-series (configurable) |
-| **Rate Limiting** | **None** | **Model-specific (5-100 RPM)** |
-| **Retry Logic** | **None** | **Auto-retry with backoff** |
+| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | Alibaba (Qwen) |
+|---------|--------|--------|---------------|-----------------|----------------|
+| Cost | Free (local) | Paid API | Paid API | Paid API | Paid API |
+| Privacy | Local | Cloud | Cloud | Cloud | Cloud |
+| Setup | Run Ollama server | API key | API key | API key | DashScope API key |
+| API method | `ollama.chat` | `generate_content` | `chat.completions` | `responses.create` | `responses.create` |
+| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `text.format` |
+| Tool / Function Calling | Model-dependent | Native | Native | Native | Native |
+| Thinking / reasoning | N/A | 2.5-series | Not forwarded | OpenAI: `reasoning` | Qwen3: `enable_thinking` |
+| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | ✅ `web_search_preview` |
+| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ✅ `previous_response_id` |
+| **Rate Limiting** | **None** | **Model-specific (5-100 RPM)** | **None** | **None** | **None** |
+| **Retry Logic** | **None** | **Auto-retry with backoff** | **None** | **None** | **None** |
 
 ## Best Practices
 

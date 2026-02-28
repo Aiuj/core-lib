@@ -4,6 +4,7 @@ import os
 import warnings
 from typing import Optional, Dict, Any, Union, Type, TYPE_CHECKING
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
+from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .llm_client import LLMClient
 
 if TYPE_CHECKING:
@@ -105,6 +106,13 @@ class LLMFactory:
             config = OllamaConfig.from_env()
         elif provider_lc in ("openai", "azure-openai"):
             config = OpenAIConfig.from_env()
+        elif provider_lc in ("openai-responses", "openai_responses"):
+            config = OpenAIResponsesConfig.from_env()
+        elif provider_lc in ("alibaba", "alibaba-cloud", "dashscope", "qwen"):
+            config = OpenAIConfig.from_env()
+            # Default to DashScope Chat Completions endpoint if no base_url in env
+            if not config.base_url:
+                config.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         
@@ -353,6 +361,129 @@ class LLMFactory:
         return LLMClient(config)
     
     @classmethod
+    def openai_responses(
+        cls,
+        api_key: Optional[str] = None,
+        model: str = "gpt-4.1",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        thinking_enabled: bool = False,
+        base_url: Optional[str] = None,
+        organization: Optional[str] = None,
+        project: Optional[str] = None,
+        previous_response_id: Optional[str] = None,
+        reasoning_effort: str = "medium",
+        **kwargs,
+    ) -> LLMClient:
+        """Create a client using the OpenAI Responses API (``client.responses.create``).
+
+        This is the recommended API for all new OpenAI (and compatible) projects.
+        It supports stateful multi-turn via ``previous_response_id``, built-in
+        tools (web search, code interpreter), and cleaner structured output.
+
+        For Alibaba/Qwen models use :meth:`alibaba` or pass the DashScope
+        ``base_url`` here directly.
+
+        Args:
+            api_key:              API key. Reads ``OPENAI_API_KEY`` from env when
+                                  not provided.
+            model:                Model name, e.g. ``gpt-4.1``, ``gpt-5``.
+            temperature:          Sampling temperature.
+            max_tokens:           Maximum output tokens (``max_output_tokens``).
+            thinking_enabled:     Enable reasoning mode (sets
+                                  ``reasoning={"effort": reasoning_effort}``).
+            base_url:             Override base URL for compatible endpoints.
+            organization:         OpenAI organisation ID.
+            project:              OpenAI project ID.
+            previous_response_id: ID from the previous response for stateful
+                                  multi-turn conversation.
+            reasoning_effort:     ``"low"`` | ``"medium"`` | ``"high"`` when
+                                  ``thinking_enabled`` is True.
+        """
+        if api_key is None:
+            config = OpenAIResponsesConfig.from_env()
+            config.model = model
+            config.temperature = temperature
+            config.max_tokens = max_tokens
+            config.thinking_enabled = thinking_enabled
+            config.reasoning_effort = reasoning_effort
+            if organization is not None:
+                config.organization = organization
+            if project is not None:
+                config.project = project
+            if base_url is not None:
+                config.base_url = base_url
+            if previous_response_id is not None:
+                config.previous_response_id = previous_response_id
+        else:
+            config = OpenAIResponsesConfig(
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                thinking_enabled=thinking_enabled,
+                base_url=base_url,
+                organization=organization,
+                project=project,
+                previous_response_id=previous_response_id,
+                reasoning_effort=reasoning_effort,
+            )
+        return LLMClient(config)
+
+    @classmethod
+    def alibaba(
+        cls,
+        api_key: Optional[str] = None,
+        model: str = "qwen-plus",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        thinking_enabled: bool = False,
+        thinking_budget: Optional[int] = None,
+        region: str = "international",
+        **kwargs,
+    ) -> LLMClient:
+        """Create a client for Alibaba Cloud (Qwen) via the Chat Completions API.
+
+        Uses the DashScope ``compatible-mode/v1`` endpoint which is the
+        recommended, well-supported Alibaba API.  Thinking/chain-of-thought is
+        controlled via ``extra_body["enable_thinking"]`` automatically when
+        ``thinking_enabled=True``.
+
+        Args:
+            api_key:          DashScope API key (``sk-...``). Reads
+                              ``DASHSCOPE_API_KEY`` or ``OPENAI_API_KEY`` from
+                              env when not provided.
+            model:            Qwen model name, e.g. ``qwen-plus``, ``qwen3-max``,
+                              ``qwen3.5-flash``.
+            temperature:      Sampling temperature.
+            max_tokens:       Maximum output tokens.
+            thinking_enabled: Enable Qwen thinking/chain-of-thought mode.
+            thinking_budget:  Token budget for the internal thinking step
+                              (e.g. ``4000``). Only used when ``thinking_enabled``
+                              is True.
+            region:           ``"international"`` (Singapore/Virginia, default)
+                              or ``"china"`` (Beijing). Sets the base URL
+                              automatically; ignored if you pass ``base_url``.
+        """
+        resolved_key = api_key or os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        if region == "china":
+            base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        else:
+            base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        # Allow caller to override base_url via kwargs
+        base_url = kwargs.pop("base_url", base_url)
+        config = OpenAIConfig(
+            api_key=resolved_key,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking_enabled=thinking_enabled,
+            thinking_budget=thinking_budget,
+            base_url=base_url,
+        )
+        return LLMClient(config)
+    
+    @classmethod
     def _detect_provider_from_env(cls) -> str:
         """Auto-detect the provider from environment variables.
         
@@ -489,3 +620,13 @@ def create_azure_openai_client(**kwargs) -> LLMClient:
 def create_openai_compatible_client(**kwargs) -> LLMClient:
     """Create an OpenAI-compatible LLM client."""
     return LLMFactory.openai_compatible(**kwargs)
+
+
+def create_openai_responses_client(**kwargs) -> LLMClient:
+    """Create a client using the OpenAI Responses API (``client.responses.create``)."""
+    return LLMFactory.openai_responses(**kwargs)
+
+
+def create_alibaba_client(**kwargs) -> LLMClient:
+    """Create an Alibaba Cloud (Qwen) client via the DashScope Chat Completions endpoint."""
+    return LLMFactory.alibaba(**kwargs)

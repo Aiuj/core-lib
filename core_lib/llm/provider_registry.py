@@ -181,6 +181,15 @@ class ProviderConfig:
             self.provider = "gemini"
         elif self.provider in ("azure", "azure_openai"):
             self.provider = "azure-openai"
+        elif self.provider in ("alibaba", "alibaba-cloud", "dashscope", "qwen"):
+            # Route to standard Chat Completions (compatible-mode) — the well-supported
+            # Alibaba path. The /compatible-mode/v1 endpoint is what Alibaba docs
+            # recommend for OpenAI-compatible usage.
+            self.provider = "openai"
+            if not self.host:
+                self.host = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        elif self.provider in ("openai_responses",):
+            self.provider = "openai-responses"
         
         # Set default models if not specified
         if not self.model:
@@ -190,6 +199,7 @@ class ProviderConfig:
                 "openai": "gpt-4o-mini",
                 "azure-openai": "gpt-4o-mini",
                 "ollama": "llama3.2",
+                "openai-responses": "gpt-4.1",
             }
             self.model = defaults.get(self.provider, "")
     
@@ -365,12 +375,23 @@ class ProviderConfig:
         
         elif self.provider in ("openai", "azure-openai"):
             from .providers.openai_provider import OpenAIConfig
+            api_key = (
+                self.api_key
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("DASHSCOPE_API_KEY")
+                or ""
+            )
+            # thinking_budget lives in thinking_config["budget"] (parsed by from_dict)
+            thinking_budget: Optional[int] = None
+            if self.thinking_config and "budget" in self.thinking_config:
+                thinking_budget = int(self.thinking_config["budget"])
             return OpenAIConfig(
-                api_key=self.api_key or "",
+                api_key=api_key,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
+                thinking_budget=thinking_budget,
                 base_url=self.host,
                 organization=self.organization,
                 project=self.project,
@@ -392,6 +413,32 @@ class ProviderConfig:
                 )}
                 ,
                 wake_on_lan=self.wake_on_lan,
+            )
+        
+        elif self.provider == "openai-responses":
+            from .providers.openai_responses_provider import OpenAIResponsesConfig
+            api_key = (
+                self.api_key
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("DASHSCOPE_API_KEY")
+                or ""
+            )
+            reasoning_effort = self.extra.get("reasoning_effort", "medium")
+            # thinking_budget lives in thinking_config["budget"] (parsed by from_dict)
+            thinking_budget: Optional[int] = None
+            if self.thinking_config and "budget" in self.thinking_config:
+                thinking_budget = int(self.thinking_config["budget"])
+            return OpenAIResponsesConfig(
+                api_key=api_key,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                thinking_budget=thinking_budget,
+                base_url=self.host,
+                organization=self.organization,
+                project=self.project,
+                reasoning_effort=reasoning_effort,
             )
         
         else:
@@ -443,9 +490,19 @@ class ProviderConfig:
             return has_project and has_location and has_service_account
             
         elif self.provider == "openai":
-            return bool(self.api_key)
+            return (
+                bool(self.api_key)
+                or bool(os.getenv("OPENAI_API_KEY"))
+                or bool(os.getenv("DASHSCOPE_API_KEY"))
+            )
         elif self.provider == "azure-openai":
             return bool(self.api_key) and bool(self.azure_endpoint)
+        elif self.provider == "openai-responses":
+            return (
+                bool(self.api_key)
+                or bool(os.getenv("OPENAI_API_KEY"))
+                or bool(os.getenv("DASHSCOPE_API_KEY"))
+            )
         elif self.provider == "ollama":
             # Ollama doesn't require API key
             return True
@@ -832,6 +889,13 @@ class ProviderRegistry:
         
         # Apply environment variable substitution if enabled
         if substitute_env:
+            # Attempt to load .env silently before substituting so vars set there
+            # are available even if load_dotenv() hasn't been called yet at startup.
+            try:
+                from dotenv import load_dotenv as _load_dotenv
+                _load_dotenv(override=False)
+            except ImportError:
+                pass
             data = substitute_env_vars(data)
         
         # Handle different config structures

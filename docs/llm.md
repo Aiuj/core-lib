@@ -1,6 +1,6 @@
 # LLM Module Documentation
 
-The LLM module provides a unified interface for working with different Large Language Model providers, currently supporting Google Gemini, OpenAI, Azure OpenAI, and local Ollama APIs.
+The LLM module provides a unified interface for working with different Large Language Model providers, supporting Google Gemini, OpenAI (Chat Completions and Responses API), Azure OpenAI, Alibaba Cloud (Qwen via DashScope), and local Ollama APIs.
 
 ## Features
 
@@ -9,8 +9,10 @@ The LLM module provides a unified interface for working with different Large Lan
 - **Configuration Management**: Environment-based configuration with sensible defaults  
 - **Tool Support**: Pass tools in OpenAI JSON format for function calling
 - **Structured Output**: Get structured JSON responses using Pydantic models
-- **Thinking Mode**: Enable step-by-step reasoning for supported models
+- **Thinking Mode**: Enable step-by-step reasoning for supported models (Gemini 2.5, Qwen3/3.5, OpenAI reasoning)
 - **Conversation History**: Support for multi-turn conversations
+- **OpenAI Responses API**: `client.responses.create()` — the recommended interface for OpenAI and Alibaba/Qwen models, with stateful multi-turn and built-in tools
+- **Alibaba Cloud (Qwen)**: First-class support via `create_alibaba_client()` using the DashScope Responses endpoint
 - **Grounding with Search (Gemini)**: Optional Google Search grounding for fresher, corroborated answers on supported models
 
 ## Quick Start
@@ -42,6 +44,12 @@ client = create_llm_client(
     temperature=0.2
 )
 
+# OpenAI Responses API (recommended for new OpenAI / Alibaba projects)
+client = create_llm_client(provider="openai-responses", model="gpt-4.1")
+
+# Alibaba Cloud / Qwen — reads DASHSCOPE_API_KEY automatically
+client = create_llm_client(provider="alibaba", model="qwen-plus")
+
 # Or use Ollama with custom settings
 client = create_llm_client(
     provider="ollama",
@@ -60,8 +68,16 @@ client = LLMFactory.openai(model="gpt-4", temperature=0.3)
 client = LLMFactory.gemini(model="gemini-1.5-pro")
 client = LLMFactory.ollama(model="llama3.2")
 
+# OpenAI Responses API (recommended for new OpenAI projects)
+client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
+
+# Alibaba Cloud / Qwen via Responses API
+client = LLMFactory.alibaba(model="qwen-plus")                      # international
+client = LLMFactory.alibaba(model="qwen3-max", region="china")       # Beijing region
+client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True) # chain-of-thought
+
 # Or use the main factory method
-client = LLMFactory.create(provider="openai", model="gpt-4")
+client = LLMFactory.create(provider="openai-responses", model="gpt-4.1")
 ```
 
 ### Environment Configuration
@@ -105,15 +121,33 @@ client = create_llm_client()
 
 The factory automatically detects the provider based on available environment variables:
 
-1. If `LLM_PROVIDER` is set, it uses that provider explicitly
+1. If `LLM_PROVIDER` is set, it uses that provider explicitly. Valid values:
+   - `gemini`, `openai`, `openai-responses`, `azure`, `ollama`, `alibaba`
 2. Otherwise, it checks for provider-specific API keys in this order:
    - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
-   - `OPENAI_API_KEY` → OpenAI  
+   - `OPENAI_API_KEY` → OpenAI Chat Completions
    - `AZURE_OPENAI_API_KEY` → Azure OpenAI
    - `OLLAMA_BASE_URL` or `OLLAMA_HOST` → Ollama
    - Default fallback → Ollama
 
-### OpenAI Configuration
+> **Tip**: For Alibaba Cloud / Qwen, set `LLM_PROVIDER=openai-responses` (or `alibaba`) and `DASHSCOPE_API_KEY` to use the DashScope Responses endpoint.
+
+### OpenAI Responses API Configuration (`openai-responses` / `alibaba`)
+
+Available environment variables:
+
+- `OPENAI_API_KEY` or `DASHSCOPE_API_KEY`: API key (required; `DASHSCOPE_API_KEY` takes precedence for Alibaba)
+- `OPENAI_RESPONSES_MODEL`: Model name (default: "gpt-4.1"; use Qwen model names for Alibaba)
+- `OPENAI_BASE_URL`: Custom endpoint — set to DashScope international URL for Alibaba
+- `OPENAI_TEMPERATURE`: Sampling temperature (default: "0.7")
+- `OPENAI_MAX_TOKENS`: Maximum output tokens
+- `OPENAI_THINKING_ENABLED`: Enable chain-of-thought / thinking mode ("true"/"false")
+- `OPENAI_THINKING_BUDGET`: Token budget for the Qwen thinking step — integer, e.g. "4000" (Alibaba only)
+- `OPENAI_REASONING_EFFORT`: Reasoning effort for OpenAI reasoning models ("low"/"medium"/"high"; default: "medium")
+- `OPENAI_ORGANIZATION`: OpenAI organization ID
+- `OPENAI_PROJECT`: OpenAI project ID
+
+### OpenAI Chat Completions Configuration (`openai`)
 
 Available environment variables:
 
@@ -324,6 +358,15 @@ client = LLMFactory.gemini(api_key="key", model="gemini-1.5-pro")
 client = LLMFactory.ollama(model="llama3.2", base_url="http://localhost:11434")
 client = LLMFactory.azure_openai(deployment="gpt-4", azure_endpoint="https://...")
 client = LLMFactory.openai_compatible(base_url="http://localhost:8000")
+
+# OpenAI Responses API
+client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
+client = LLMFactory.openai_responses(model="o3", thinking_enabled=True)
+
+# Alibaba Cloud / Qwen (shorthand for openai_responses with DashScope config)
+client = LLMFactory.alibaba(model="qwen-plus")                         # international
+client = LLMFactory.alibaba(model="qwen3-max", region="china")         # Beijing region
+client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True)  # chain-of-thought
 ```
 
 ### Convenience Functions
@@ -331,7 +374,12 @@ client = LLMFactory.openai_compatible(base_url="http://localhost:8000")
 For simpler usage, several convenience functions are available:
 
 ```python
-from core_lib.llm import create_llm_client, create_client_from_env
+from core_lib.llm import (
+    create_llm_client,
+    create_client_from_env,
+    create_openai_responses_client,
+    create_alibaba_client,
+)
 
 # Main convenience function - recommended for most use cases
 client = create_llm_client()  # Auto-detect
@@ -340,6 +388,14 @@ client = create_llm_client(provider="openai", model="gpt-4")
 # Environment-based creation
 client = create_client_from_env()  # Auto-detect provider
 client = create_client_from_env(provider="gemini")
+
+# OpenAI Responses API
+client = create_openai_responses_client(api_key="sk-...", model="gpt-4.1")
+client = create_openai_responses_client(model="o3", reasoning_effort="high")
+
+# Alibaba Cloud / Qwen (reads DASHSCOPE_API_KEY or OPENAI_API_KEY)
+client = create_alibaba_client(model="qwen-plus")
+client = create_alibaba_client(model="qwen3-max", thinking_enabled=True, region="china")
 ```
 
 ## Migration from utils.py
@@ -375,9 +431,13 @@ All chat methods return a dictionary with the following structure:
     "structured": False,  # True if structured output was requested
     "tool_calls": [],     # List of tool calls made by the model
     "usage": {},          # Usage statistics (varies by provider)
-    "error": None         # Error message if something went wrong
+    "error": None,        # Error message if something went wrong
+    # OpenAI Responses API only:
+    "response_id": "resp_abc123",  # ID for stateful multi-turn (previous_response_id)
 }
 ```
+
+> **Note**: `response_id` is only present when using `OpenAIResponsesProvider`. Pass it back as `previous_response_id` in `OpenAIResponsesConfig` to continue a stateful conversation.
 
 ## API Reference
 
@@ -391,17 +451,32 @@ Main client class for interacting with LLMs.
 - `chat(messages, tools=None, structured_output=None, system_message=None, use_search_grounding=False)`: Send chat message
 - `get_model_info()`: Get information about the current model
 
-#### `GeminiConfig` / `OllamaConfig`
+#### `GeminiConfig` / `OllamaConfig` / `OpenAIConfig` / `AzureOpenAIConfig`
 
 Configuration classes for each provider.
 
 **Methods:**
 - `from_env()`: Create configuration from environment variables
 
+#### `OpenAIResponsesConfig`
+
+Configuration for the OpenAI Responses API and Alibaba Cloud (DashScope) Responses endpoint.
+
+**Extra fields:**
+- `previous_response_id`: ID from a prior response — enables stateful multi-turn without resending history
+- `reasoning_effort`: `"low"` | `"medium"` | `"high"` — for OpenAI reasoning models (o-series)
+- `is_alibaba`: Auto-detected from `base_url` (contains "alibaba", "dashscope", or "aliyun"); triggers Alibaba-specific parameters (thinking mode via `extra_body`, no `instructions` param)
+
+**Class methods:**
+- `from_env()`: Read `OPENAI_API_KEY`/`DASHSCOPE_API_KEY`, `OPENAI_RESPONSES_MODEL`, `OPENAI_REASONING_EFFORT`, etc.
+- `for_alibaba(api_key, model, region="international")`: Pre-configured DashScope endpoint for the given region
+
 ### Utility Functions
 
 - `create_ollama_client(**kwargs)`: Create Ollama client with parameters
-- `create_gemini_client(**kwargs)`: Create Gemini client with parameters  
+- `create_gemini_client(**kwargs)`: Create Gemini client with parameters
+- `create_openai_responses_client(**kwargs)`: Create OpenAI Responses API client
+- `create_alibaba_client(**kwargs)`: Create Alibaba Cloud / Qwen client via DashScope Responses endpoint
 - `create_client_from_env(provider)`: Create client from environment variables
 
 ## Error Handling

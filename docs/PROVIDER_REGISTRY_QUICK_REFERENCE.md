@@ -24,11 +24,17 @@ providers:
     model: ${GEMINI_MODEL:-gemini-2.0-flash}
     priority: 1
     tier: standard
+
+  - provider: alibaba           # Alibaba Cloud / Qwen (auto-sets DashScope endpoint)
+    api_key: ${DASHSCOPE_API_KEY}
+    model: qwen-plus
+    priority: 2
+    tier: standard
     
   - provider: ollama
     host: ${OLLAMA_HOST:-http://localhost:11434}
     model: llama3.2
-    priority: 2
+    priority: 3
     tier: low
 ```
 
@@ -90,10 +96,10 @@ registry.add(ProviderConfig(provider="gemini", api_key="...", model="..."))
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `provider` | str | Yes | `gemini`, `openai`, `azure-openai`, `ollama` |
+| `provider` | str | Yes | `gemini`, `openai`, `openai-responses`, `alibaba`, `azure-openai`, `ollama` |
 | `model` | str | No | Model name (has sensible defaults) |
 | `api_key` | str | Cloud | API key for authentication |
-| `host` | str | Ollama | Base URL for the service |
+| `host` | str | No | Base URL / endpoint override (required for custom and China-region endpoints) |
 | `temperature` | float | No | Sampling temperature (default: 0.7) |
 | `max_tokens` | int | No | Max generation tokens |
 | `priority` | int | No | Lower = higher priority (default: 100) |
@@ -111,6 +117,13 @@ registry.add(ProviderConfig(provider="gemini", api_key="...", model="..."))
 **OpenAI:**
 - `organization`: OpenAI organization ID
 - `project`: OpenAI project ID
+
+**OpenAI Responses API (`openai-responses`) and Alibaba Cloud (`alibaba`):**
+- `reasoning_effort`: `"low"` / `"medium"` / `"high"` — for OpenAI reasoning models
+- `thinking` / `thinking_enabled`: `true` — enables Qwen chain-of-thought on Alibaba
+- `thinking_budget`: integer token budget for the Qwen thinking step (e.g. `4000`); maps to `extra_body["thinking_budget"]`. Can also be set by passing the budget as the value of `thinking: 4000` (integer shorthand)
+- `host`: Override endpoint URL; set to China DashScope URL for Beijing region
+- `alibaba` is a convenience alias that auto-sets the international DashScope endpoint and reads `DASHSCOPE_API_KEY`
 
 **Ollama:**
 - Extra options in `extra` dict: `timeout`, `num_ctx`, `num_predict`, etc.
@@ -198,6 +211,23 @@ client = provider.to_client()          # LLMClient instance
 ```
 
 ## Example Configurations
+
+### Alibaba Cloud (Qwen) with Gemini fallback
+```yaml
+# llm_providers.yaml
+providers:
+  - provider: alibaba              # auto-sets DashScope international endpoint
+    api_key: ${DASHSCOPE_API_KEY}
+    model: ${ALIBABA_MODEL:-qwen-plus}
+    priority: 1
+    tier: standard
+
+  - provider: gemini
+    api_key: ${GEMINI_API_KEY}
+    model: ${GEMINI_MODEL:-gemini-2.0-flash}
+    priority: 2
+    tier: standard
+```
 
 ### Development
 ```json

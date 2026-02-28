@@ -15,6 +15,7 @@ from .providers.base import BaseProvider
 from .providers.google_genai_provider import GoogleGenAIProvider
 from .providers.ollama_provider import OllamaProvider
 from .providers.openai_provider import OpenAIProvider
+from .providers.openai_responses_provider import OpenAIResponsesProvider, OpenAIResponsesConfig
 
 
 class LLMClient:
@@ -36,6 +37,8 @@ class LLMClient:
             return GoogleGenAIProvider(self.config)
         if isinstance(self.config, OllamaConfig):
             return OllamaProvider(self.config)
+        if isinstance(self.config, OpenAIResponsesConfig):
+            return OpenAIResponsesProvider(self.config)
         if isinstance(self.config, OpenAIConfig):
             return OpenAIProvider(self.config)
         raise ValueError(f"Unsupported LLM provider: {self.config.provider}")
