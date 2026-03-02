@@ -501,9 +501,24 @@ class GoogleGenAIProvider(BaseProvider):
             include_thoughts = bool(include_thoughts_raw) if include_thoughts_raw is not None else None
 
             if supports_thinking:
-                disable_requested = False
-                if enabled is False:
-                    disable_requested = True
+                # IMPORTANT:
+                # Do NOT implicitly disable thinking just because the effective
+                # boolean default is False. Some models (e.g. gemini-3.1-pro-preview)
+                # require thinking mode and reject thinking_budget=0.
+                #
+                # We only send an explicit disable (thinking_budget=0) when the
+                # caller/config *explicitly* requests it via:
+                # - thinking_enabled_override=False
+                # - thinking_config.enabled=False
+                # - thinking_config.level in disable levels
+                # - thinking_config.budget == 0
+                explicit_disable = False
+                if thinking_enabled_override is False:
+                    explicit_disable = True
+                elif thinking_enabled_override is None and cfg_thinking.get("enabled") is False:
+                    explicit_disable = True
+
+                disable_requested = explicit_disable
                 if level in disable_levels:
                     disable_requested = True
                 if budget == 0:
