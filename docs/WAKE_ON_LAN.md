@@ -1,145 +1,54 @@
 # Wake-on-LAN
 
-This guide explains how `core-lib` Wake-on-LAN (WoL) works for **Infinity
-embeddings** and **Ollama LLM** providers, and how to test it.
-
-The same `WakeOnLanStrategy` class is used by both stacks — configuration
-shape and behaviour are identical regardless of whether the sleeping host
-runs an Infinity embedding server or an Ollama model server.
+Use Wake-on-LAN (WoL) in `core-lib` to wake sleeping Infinity/Ollama hosts when a request times out.
+This guide focuses on practical setup, validation, and troubleshooting.
 
 ## What it does
 
-When an Infinity embedding host times out or is temporarily unreachable, the client can:
+`core-lib` uses the same `WakeOnLanStrategy` for:
+- Infinity embeddings providers
+- Ollama LLM providers
 
-1. Use a short initial timeout for likely-sleeping hosts
-2. Send a WoL magic packet to configured target(s)
-3. Either **wait** for the host to wake (classic mode), or **immediately route to a secondary server** for a configurable warmup window (non-blocking mode)
-4. Retry with an optional post-wake timeout
-5. Fall back to other configured Infinity URLs if needed
+On timeout/refusal, the client can:
+1. Send a magic packet
+2. Either wait for wake (**blocking mode**) or route immediately to secondary providers (**non-blocking warmup mode**)
+3. Retry/return to primary after warmup
 
-WoL is applied once per URL in-process to avoid repeated wake storms.
+WoL is applied once per URL in-process to prevent repeated wake storms.
 
-## Non-blocking warmup mode (recommended)
+## Recommended mode: non-blocking warmup
 
-The classic mode blocks the first request for `wait_seconds` while the server powers on.  
-For interactive workloads (chat, search, …) where latency matters you can instead configure `warmup_seconds` to get **zero-latency failover**:
+For interactive workloads, use `warmup_seconds` and set `wait_seconds: 0`.
+This avoids blocking user requests while the primary host wakes.
 
-```
-request arrives
-  └─ main server times out → WoL magic packet sent (fire-and-forget)
-       └─ route to secondary server immediately ◀── user gets an answer now
-            └─ after warmup_seconds the main server is ready
-                 └─ next request goes back to main
-```
-
-Set `warmup_seconds` at the strategy level. Target properties can be placed
-directly under `wake_on_lan` (shorthand) or nested under `targets` — both are equivalent:
-
-```yaml
-# Shorthand — target fields directly under wake_on_lan (simpler for single server)
-# enabled defaults to true when the wake_on_lan block is present
-wake_on_lan:
-  warmup_seconds: 30           # route to secondary for 30 s after WoL fires
-  mac_address: FC:34:97:9E:C8:AF
-  broadcast_ip: 82.66.214.52
-  port: 7777
-  wait_seconds: 0              # don't block — we are routing to secondary instead
-```
-
-The `targets` list form is equivalent and useful when you need to send packets
-to multiple machines or want to be explicit:
-
-```yaml
-# targets list — identical result for a single server
-wake_on_lan:
-  warmup_seconds: 30
-  targets:
-    - mac_address: FC:34:97:9E:C8:AF
-      broadcast_ip: 82.66.214.52
-      port: 7777
-      wait_seconds: 0
-```
-
-And configure a secondary server in the URL list:
+### Embeddings YAML example
 
 ```yaml
 embedding_providers:
   - provider: infinity
     priority: 1
-    base_url: http://emb-high:7997      # powerful main server (may sleep)
+    base_url: http://emb-high:7997         # primary (may sleep)
     model: BAAI/bge-large-en-v1.5
     wake_on_lan:
-      warmup_seconds: 30
-      wait_seconds: 0
+      warmup_seconds: 30                   # route to secondary for 30s
+      wait_seconds: 0                      # non-blocking
       mac_address: FC:34:97:9E:C8:AF
       broadcast_ip: 82.66.214.52
       port: 7777
 
   - provider: infinity
     priority: 2
-    base_url: http://emb-low:7997       # always-on secondary (smaller / cheaper)
+    base_url: http://emb-low:7997          # always-on secondary
     model: BAAI/bge-small-en-v1.5
 ```
 
-With this setup:
-- Requests normally go to `emb-high` (main, powerful).
-- When `emb-high` first times out a WoL packet is sent **and** the request is served by `emb-low` (secondary) within milliseconds.
-- For the next 30 s all requests are routed to `emb-low` transparently.
-- After 30 s the client tries `emb-high` again; once it responds it becomes the preferred server.
+Behavior:
+- Primary healthy: requests use `emb-high`
+- Primary timeout: WoL packet sent, request immediately served by `emb-low`
+- During warmup window: requests continue on `emb-low`
+- After warmup: primary is tried again and resumes if healthy
 
-## Classic blocking configuration
-
-Supported config (classic mode — blocks until host is up):
-
-```yaml
-# Shorthand form — classic blocking mode
-wake_on_lan:
-  mac_address: FC:34:97:9E:C8:AF
-  broadcast_ip: 82.66.214.52
-  port: 7777
-  wait_seconds: 20
-  retry_timeout_seconds: 8
-```
-
-Notes:
-- **`enabled`** defaults to `true` whenever a non-empty `wake_on_lan` block is
-  present — you can omit it entirely.  Set `enabled: false` explicitly to
-  disable WoL while keeping the config (e.g. for local development).
-- **Shorthand vs `targets` list** — target fields (`mac_address`, `broadcast_ip`, `port`,
-  `wait_seconds`, `retry_timeout_seconds`, `max_attempts`) can be placed **directly under
-  `wake_on_lan`** (shorthand, single server) or nested inside a `targets` list (needed for
-  multiple physical machines).  Both forms are equivalent for a single target.
-- **`host`** is optional when `wake_on_lan` is nested inside a single provider entry — the
-  strategy is already scoped to one URL so there is nothing to disambiguate. Omit it.
-  Only set `host` when sharing one config across multiple base URLs (e.g. via a global
-  `INFINITY_WAKE_ON_LAN` env var) and each URL maps to a different physical machine.
-- **`broadcast_ip`** is the UDP destination for the magic packet (default **`255.255.255.255`**):
-  - A **unicast IP** (e.g. your router's WAN IP) — works from containers and remote servers.
-    `SO_BROADCAST` is not set. **Recommended for remote/container deployments.**
-  - A **directed-broadcast** (e.g. `192.168.1.255`) — LAN only, requires sender on same subnet.
-  - `255.255.255.255` — limited broadcast, LAN only, blocked by routers and container bridges.
-- Default WoL UDP port is `9` if not specified. Must match your router's port-forward rule.
-- If `targets` is omitted, a single-target shorthand is supported at the top level.
-- **`max_attempts`** (optional, default **1**) — how many times to send the magic packet
-  before giving up.  Increase to `2` on unreliable networks, but keep it low to avoid
-  flooding the network.
-- **`initial_timeout_seconds`** (optional, default **2 s** when `enabled: true`) — short
-  connect timeout used on the first probe to detect sleeping hosts quickly.  If the host
-  responds within this window it is considered awake and no WoL packet is sent.  Override
-  only if your network needs a longer probe window (e.g. `5` for high-latency links).
-- **`warmup_seconds`** (strategy-level, optional) — enables non-blocking mode.  Instead of
-  sleeping until the host wakes up, the client routes requests to secondary providers for
-  this many seconds and then retries the main host.  Set `wait_seconds: 0` on the target
-  when using this mode.  See the [Non-blocking warmup mode](#non-blocking-warmup-mode-recommended)
-  section above for a full example.
-
-## LLM / Ollama usage (non-blocking warmup mode)
-
-Configure `wake_on_lan` on the Ollama provider entry in your LLM provider
-list.  When a request times out or is refused, a WoL packet is fired and
-`FallbackLLMClient` immediately routes the request to the next configured
-provider for the duration of `warmup_seconds`, then returns to the main
-server transparently.
+### Ollama fallback example
 
 ```python
 from core_lib.llm import FallbackLLMClient
@@ -148,221 +57,199 @@ client = FallbackLLMClient.from_config([
     {
         "provider": "ollama",
         "model": "qwen3:8b",
-        "host": "http://powerspec:11434",   # powerful sleeping server
+        "host": "http://powerspec:11434",   # primary (may sleep)
         "priority": 1,
         "wake_on_lan": {
-            "warmup_seconds": 30,            # route to secondary for 30 s
+            "warmup_seconds": 30,
+            "wait_seconds": 0,
             "mac_address": "FC:34:97:9E:C8:AF",
-            "broadcast_ip": "82.66.214.52",  # router WAN IP
+            "broadcast_ip": "82.66.214.52",
             "port": 7777,
-            "wait_seconds": 0,               # fire-and-forget
         },
     },
     {
         "provider": "ollama",
         "model": "qwen3:1.7b",
-        "host": "http://always-on:11434",   # always-on fallback
+        "host": "http://always-on:11434",
         "priority": 2,
     },
 ])
-
-# Use normally — WoL and secondary routing are transparent
-response = client.chat("Summarise this document")
 ```
 
-Behaviour summary:
-- **primary healthy**: requests go to `powerspec` (fast, big GPU).
-- **primary times out**: WoL packet sent instantly; **this** request is served
-  by `always-on` (small, always running) with no extra wait.
-- **for the next 30 s**: all requests go to `always-on`.
-- **after 30 s**: `powerspec` is tried again; if it responds it becomes primary
-  again and its health-tracker entry is cleared automatically.
+## Blocking mode (simple alternative)
 
-> **Note** — in this mode the primary Ollama provider is intentionally **not**
-> marked as unhealthy by `FallbackLLMClient` (the warmup window handles
-> recovery, so the provider remains eligible to become primary again once the
-> window expires).
-
-## Embeddings usage (YAML provider routing)
-
-WoL is typically supplied through provider YAML for embeddings:
+Use this when you prefer waiting for the primary host:
 
 ```yaml
-embedding_providers:
-  - provider: infinity
-    base_url: http://emb-low:7997
-    model: BAAI/bge-small-en-v1.5
-    wake_on_lan:
-      mac_address: FC:34:97:9E:C8:AF
-      broadcast_ip: 82.66.214.52   # router WAN IP
-      port: 7777
-      wait_seconds: 0
-      retry_timeout_seconds: 8
-    priority: 2
-
-  - provider: infinity
-    base_url: http://emb-high:7997
-    model: BAAI/bge-small-en-v1.5
-    priority: 1
+wake_on_lan:
+  mac_address: FC:34:97:9E:C8:AF
+  broadcast_ip: 82.66.214.52
+  port: 7777
+  wait_seconds: 20
+  retry_timeout_seconds: 8
 ```
 
-Then create your embedding client normally:
+## Key config notes
 
-```python
-from core_lib.embeddings import create_embedding_client
+- `enabled` defaults to `true` when `wake_on_lan` is present.
+- `warmup_seconds` enables non-blocking mode; pair with `wait_seconds: 0`.
+- `initial_timeout_seconds` defaults to `2` when WoL is enabled.
+- `port` defaults to `9` if omitted.
+- `max_attempts` defaults to `1`.
+- `broadcast_ip` guidance:
+  - Router WAN IP (unicast): best for remote/container deployments
+  - Directed broadcast (e.g. `192.168.1.255`): LAN only
+  - `255.255.255.255`: LAN only, often blocked by routers/bridges
+- Use `targets` only when waking multiple machines; single-target shorthand is enough for most setups.
 
-client = create_embedding_client(intelligence_level=5, usage="search")
-```
-
-## Diagnostic script
-
-`diagnose-wol` is installed as an entry-point when the package is installed.
-It loads the `.env` from your application and runs several diagnostic modes.
-Use it to verify config, test reachability, and exercise the full wake/retry
-path without writing any test code.
+## Quick validation
 
 ```bash
-# Print resolved config (default when no flags given)
+# Show resolved WoL config
 diagnose-wol --show-config
 
-# Check if each host is reachable (uses WoL initial timeout for sleeping hosts)
+# Check host reachability
 diagnose-wol --health
 
-# Simulate WoL decisions without sending packets or real HTTP
+# Simulate behavior without real network/HTTP
 diagnose-wol --dry-run
 
-# Send a magic packet to a configured host manually
+# Send a magic packet
 diagnose-wol --send-wol --host 82.66.214.52
 
-# Fire a real /embeddings request and observe retry/WoL behaviour live
-diagnose-wol --probe
-
-# Override URL and supply MAC ad-hoc (no config required)
-diagnose-wol --probe \
-    --url http://2.66.214.52:7997 \
-    --host 2.66.214.52 \
-    --mac FC:34:97:9E:C8:AF
-
-# Point at a non-default .env file
-diagnose-wol --show-config --env-file /path/to/.env
-
-# Verbose output (shows debug logs from core-lib)
+# Exercise full request path
 diagnose-wol --probe --verbose
 ```
 
-When working inside the `core-lib` repo itself (before installing), run via `uv`:
+Inside this repo (without installing package entry points):
 
 ```bash
 uv run python core_lib/scripts/diagnose_wol.py --show-config
 ```
 
-### Diagnosing common problems
+## End-to-end runbook (VPS + Podman + LLM)
 
-| Symptom | Mode to run | What to look for |
-|---------|-------------|------------------|
-| Not sure if WoL is wired up | `--show-config` | Targets section, `enabled: true` |
-| Host times out immediately | `--dry-run` | Check `initial_timeout_seconds` is short |
-| Host never wakes | `--send-wol` | Look for "Magic packet sent"; check permissions |
-| Retry after wake still fails | `--probe --verbose` | Check `retry_timeout_seconds` is long enough |
-| Wrong host matched | `--dry-run` | Verify `host` matches hostname in URL exactly |
-| Broadcast unreachable | `--send-wol` | Hint printed – may need `sudo` or a unicast `broadcast_ip` |
-| Packet sent but host doesn't wake (remote/container) | `--send-wol --ip <WAN-IP>` | Set `broadcast_ip` to your router WAN IP instead of `255.255.255.255` |
+Use this sequence to validate the complete remote wake flow for an app running in a Podman container.
 
-### Verifying the magic packet arrives at the target
+### 0) Preconditions
 
-Before trusting the router port-forward rule or network path, confirm the
-packet actually reaches the target machine while it is **still running**
-(i.e. before it goes to sleep, or from a second terminal session):
+- Target server WoL is enabled in BIOS/UEFI and OS NIC settings.
+- Router forwards external UDP port (example: `7777`) to target LAN host UDP WoL port (`9` or custom).
+- `wake_on_lan.broadcast_ip` is set to router WAN/public IP (not `255.255.255.255`) for remote/container use.
+- App container has correct `mac_address`, `broadcast_ip`, `port`.
 
-**Option 1 — `tcpdump` (most detail, requires root/sudo)**
+### 1) Verify WoL config from inside the app container
 
 ```bash
-# Listen on the NIC that faces the sender; replace eth0 with your interface name
+# On VPS host
+sudo podman ps
+sudo podman exec -it doc-qa diagnose-wol --show-config
+
+# If diagnose-wol entry point is not installed in container
+sudo podman exec -it <app_container> python -m core_lib.scripts.diagnose_wol --show-config
+```
+
+Expected:
+- WoL target appears with correct MAC/IP/port.
+- `enabled` is true (or implied by block presence).
+
+### 2) Validate magic packet is sent from container path
+
+```bash
+# sudo podman exec -it <app_container> diagnose-wol --send-wol --host <router_wan_ip>
+sudo podman exec -it doc-qa diagnose-wol --send-wol --host 82.66.214.52 --verbose
+```
+
+Expected:
+- Command reports magic packet sent.
+- No DNS/permission/socket errors.
+
+### 3) Confirm packet arrives on target host (while target is awake)
+
+Run one of these on target machine before sending packet:
+
+```bash
+# Preferred (detailed)
 sudo tcpdump -i any udp port 9 or port 7777 -vv -X
-```
 
-Then send the packet from the sender side (`diagnose-wol --send-wol`).
-You should see something like:
-
-```
-12:34:56.789012 IP 82.66.214.52.12345 > 192.168.1.204.9: UDP, length 102
-        0x0000:  ffff ffff ffff         # 6 × 0xFF header
-        0x0006:  fc34 979e c8af ...     # MAC repeated 16 ×
-```
-
-The payload is 102 bytes: 6 bytes of `0xFF` followed by the target MAC
-address repeated 16 times.
-
-**Option 2 — `nc` (netcat, no root needed)**
-
-```bash
-# -u = UDP, -l = listen, -p = port
+# Alternative (quick)
 nc -u -l -p 9
-# or on some distros:
-nc -u -l 9
 ```
 
-A magic packet will appear as binary garbage in the terminal — that is
-expected. Any output at all means the packet arrived.
+Then repeat step 2 from container.
 
-> **Tip** — if nothing arrives, work backwards:
-> 1. Check the port-forward rule on your router (external UDP → internal host UDP 9).
-> 2. Try sending directly to the LAN IP instead of the WAN IP to isolate whether
->    the issue is the router rule or the packet generation itself.
-> 3. On Linux, `sudo ufw allow 9/udp` (or equivalent) to ensure the port is not
->    blocked by the host firewall.
+Expected:
+- `tcpdump` shows UDP packet with WoL signature (6 bytes `FF` + MAC repeated 16 times).
+- If nothing arrives, issue is network path/router/firewall, not app logic.
 
-**Option 3 — `suspend` (put the server to sleep)**
+### 4) Test real wake from sleep/off state
+
+1. Put target server to sleep:
 
 ```bash
-# Go to sleep, send the packet and check that computer wakes up
 sudo systemctl suspend
 ```
 
-## Unit test scripts
+2. Trigger WoL from container (`--send-wol`) or trigger an LLM request that should cause WoL.
+3. Watch target boot/wake and then verify LLM endpoint is reachable.
 
-Use `uv run` as standard in this repo.
+Example post-wake check:
 
-### 1) Embeddings + Infinity WoL behaviour tests
+```bash
+curl http://<target_lan_or_service_ip>:11434/api/tags
+```
+
+### 5) Validate LLM failover/warmup behavior through app
+
+For non-blocking mode (`warmup_seconds` + `wait_seconds: 0`):
+
+1. Keep primary LLM host sleeping/unreachable.
+2. Send a real app LLM request.
+3. Follow app container logs:
+
+```bash
+sudo podman logs -f <app_container>
+```
+
+Expected sequence:
+- timeout/refusal on primary
+- WoL send event
+- request served by secondary provider
+- after warmup window, primary retried and restored when healthy
+
+### 6) Isolate each layer if it still fails
+
+- **Layer A (config):** `diagnose-wol --show-config`
+- **Layer B (send path):** `diagnose-wol --send-wol --verbose`
+- **Layer C (network delivery):** `tcpdump`/`nc` on target
+- **Layer D (service readiness):** `curl` target LLM API after wake
+- **Layer E (application routing):** app logs during live LLM request
+
+## Troubleshooting
+
+| Symptom | Check |
+|---------|-------|
+| WoL seems ignored | `diagnose-wol --show-config` and confirm `wake_on_lan` is loaded |
+| Host never wakes | `--send-wol`; validate MAC, UDP port, router forwarding, firewall |
+| Retry still fails after wake | Increase `retry_timeout_seconds` |
+| Requests pause too long | Use non-blocking mode: `warmup_seconds` + `wait_seconds: 0` |
+| Works on LAN, fails in container/remote | Set `broadcast_ip` to router WAN IP (not `255.255.255.255`) |
+| Packet "sent" but never seen on target | Run `tcpdump` on target while sending; verify router UDP forward and host firewall |
+| Packet arrives but machine does not wake | Recheck BIOS/UEFI WoL + NIC power settings; verify MAC is for active NIC |
+| Wakes correctly but first LLM request still fails | Increase `warmup_seconds` and/or request timeout to allow model/service cold start |
+
+## Useful tests
 
 ```bash
 uv run pytest -q tests/test_infinity_wake_on_lan.py
-```
-
-Covers:
-- initial timeout override for sleeping hosts
-- one-time wake behavior
-- retry-after-wake path
-- normal failover path for non-target hosts
-- non-blocking warmup: `is_in_warmup()`, secondary routing, return-to-main
-
-### 2) Ollama LLM WoL behaviour tests
-
-```bash
 uv run pytest -q tests/test_ollama_wake_on_lan.py
-```
-
-Covers:
-- `OllamaProvider.is_in_warmup()` before/during/after window
-- non-blocking re-raise (no second attempt on same host)
-- `FallbackLLMClient` skips warmup providers and does not mark them unhealthy
-
-### 2) YAML wiring tests for embeddings/reranker provider configs
-
-```bash
 uv run pytest -q tests/test_vector_provider_yaml_config.py -k wake_on_lan
-```
-
-### 3) Full test suite (optional)
-
-```bash
-uv run pytest -q
 ```
 
 ## Related docs
 
-- [docs/EMBEDDINGS_QUICK_REFERENCE.md](EMBEDDINGS_QUICK_REFERENCE.md)
-- [docs/INFINITY_FAILOVER.md](INFINITY_FAILOVER.md)
 - [docs/INFINITY_PROVIDER.md](INFINITY_PROVIDER.md)
+- [docs/INFINITY_FAILOVER.md](INFINITY_FAILOVER.md)
 - [docs/FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md)
+- [docs/EMBEDDINGS_QUICK_REFERENCE.md](EMBEDDINGS_QUICK_REFERENCE.md)
 - [docs/LLM_QUICK_REFERENCE.md](LLM_QUICK_REFERENCE.md)
