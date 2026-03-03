@@ -125,8 +125,19 @@ def clean_and_parse_json_response(response_str, force_list=False):
 
 
 def _strip_markdown_code_block(text: str) -> str:
-    """Strip markdown code block wrappers (```json ... ``` or ``` ... ```) from text."""
+    """Strip markdown code block wrappers and thinking tags from text.
+
+    Handles:
+    - ````json ... ``` `` and ``` ... ``` wrappers
+    - ``<think>...</think>`` blocks emitted by thinking-capable models (e.g. Qwen3,
+      DeepSeek-R1) when thinking mode is not fully suppressed.  The think block is
+      stripped so that only the actual JSON response remains for extraction.
+    """
     stripped = text.strip()
+
+    # Strip <think>...</think> blocks (may appear at the start or anywhere in the text)
+    stripped = re.sub(r"<think>.*?</think>", "", stripped, flags=re.DOTALL).strip()
+
     if stripped.startswith("```json") and stripped.endswith("```"):
         return stripped[7:-3].strip()
     if stripped.startswith("```") and stripped.endswith("```"):

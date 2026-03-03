@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
 import time
+import re
 
 from pydantic import BaseModel
 
@@ -135,6 +136,30 @@ class OllamaProvider(BaseProvider):
             "nodename nor servname",
         )
         return any(token in error_str for token in indicators)
+
+    def _is_model_not_found_error(self, error: Exception) -> bool:
+        """Return True when Ollama reports a missing model (typically HTTP 404)."""
+        status_code = getattr(error, "status_code", None)
+        if status_code is None:
+            response = getattr(error, "response", None)
+            status_code = getattr(response, "status_code", None)
+
+        error_type = type(error).__name__.lower()
+        error_str = str(error).lower()
+
+        has_missing_model_text = "model" in error_str and "not found" in error_str
+        if status_code == 404 and has_missing_model_text:
+            return True
+
+        return "responseerror" in error_type and has_missing_model_text
+
+    def _extract_missing_model_name(self, error: Exception) -> str:
+        """Best-effort extraction of missing model name from Ollama error text."""
+        message = str(error)
+        match = re.search(r"model\s+['\"]([^'\"]+)['\"]\s+not\s+found", message, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return self.config.model
 
     def _chat_once(self, payload: Dict[str, Any], timeout: Optional[float]) -> Dict[str, Any]:
         """Execute one Ollama chat call with optional timeout override."""
@@ -406,6 +431,12 @@ class OllamaProvider(BaseProvider):
                     "ollama.chat connectivity failure (handled): %s",
                     e,
                 )
+            elif self._is_model_not_found_error(e):
+                missing_model = self._extract_missing_model_name(e)
+                logger.warning(
+                    "ollama model not available (handled): %s",
+                    missing_model,
+                )
             else:
                 logger.exception("ollama.chat failed")
 
@@ -423,6 +454,7 @@ class OllamaProvider(BaseProvider):
 
             return {
                 "error": str(e),
+                "error_code": "model_not_found" if self._is_model_not_found_error(e) else "provider_error",
                 "content": None,
                 "structured": structured_output is not None,
                 "tool_calls": [],

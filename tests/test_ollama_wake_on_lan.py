@@ -1,8 +1,11 @@
 """Tests for Wake-on-LAN behavior in Ollama provider."""
 
+import logging
 import sys
 import time
 import types
+
+import pytest
 
 from core_lib.api_utils.wake_on_lan import WakeResult
 from core_lib.llm.provider_registry import ProviderConfig
@@ -183,3 +186,36 @@ def test_ollama_is_in_warmup_false_after_window_expires(monkeypatch):
     provider._wake_on_lan._waking_timestamps[url] = time.time() - 6
 
     assert provider.is_in_warmup() is False
+
+
+def test_ollama_model_not_found_is_handled_without_exception_log(monkeypatch, caplog):
+    class FakeResponseError(Exception):
+        def __init__(self, text: str, status_code: int):
+            super().__init__(text)
+            self.status_code = status_code
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            self.host = host
+
+        def chat(self, **payload):
+            raise FakeResponseError("model 'qwen3.5:8b' not found (status code: 404)", 404)
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="qwen3.5:8b",
+            base_url="http://localhost:11434",
+            timeout=30,
+        )
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+    assert result["error_code"] == "model_not_found"
+    assert "model not available (handled)" in caplog.text
+    assert "ollama.chat failed" not in caplog.text
+    assert "Traceback" not in caplog.text
