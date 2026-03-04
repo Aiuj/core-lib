@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .base import BaseProvider
 from ..llm_config import LLMConfig
+from ..json_parser import augment_prompt_for_json
 from dataclasses import dataclass
 
 from core_lib import get_module_logger
@@ -271,6 +272,24 @@ class OllamaProvider(BaseProvider):
                     payload["format"] = structured_output.model_json_schema()
                 except Exception:
                     payload["format"] = "json"
+
+                # Augment the last user message with a compact JSON template so
+                # the model knows *what* to produce.  The Ollama `format` param
+                # constrains syntax but many models still need the expected
+                # structure described in the prompt to reliably fill it in.
+                # See https://docs.ollama.com/capabilities/structured-outputs
+                augmented_messages = list(payload["messages"])
+                for i in range(len(augmented_messages) - 1, -1, -1):
+                    if augmented_messages[i].get("role") == "user":
+                        augmented_messages[i] = {
+                            **augmented_messages[i],
+                            "content": augment_prompt_for_json(
+                                augmented_messages[i].get("content", ""),
+                                structured_output,
+                            ),
+                        }
+                        break
+                payload["messages"] = augmented_messages
 
             # Thinking support per https://ollama.com/blog/thinking
             # Ollama Python/HTTP uses top-level `think: bool`.
