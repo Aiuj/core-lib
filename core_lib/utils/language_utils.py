@@ -89,10 +89,15 @@ class LanguageUtils:
                     if first_sentence_end is None or pos < first_sentence_end:
                         first_sentence_end = pos + len(ending.rstrip())  # Include punctuation but not space
             
-            # Use first sentence if it's within the limit and we found one
+            # Use first sentence if it's within the limit, meaningful, and we found one.
+            # Guard against degenerate "sentences" like "1." from numbered section headers
+            # (e.g. "1. Technical Requirements...") – these are too short to be useful for
+            # language detection and would be rejected by the minimum-length check downstream.
             if first_sentence_end is not None and first_sentence_end <= max_length:
-                cropped_text = text[:first_sentence_end].strip()
-                return cropped_text
+                candidate = text[:first_sentence_end].strip()
+                if len(candidate) >= 15:
+                    return candidate
+                # else fall through to word-boundary cropping
         
         # Crop to max_length
         cropped_text = text[:max_length].strip()
