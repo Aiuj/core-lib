@@ -394,7 +394,11 @@ class InfinityAPIClient:
                 logger.debug(f"Health check failed for {base_url}: {e}")
                 continue
         
-        logger.warning("Health check failed for all Infinity servers")
+        # Use DEBUG here — this is a probe used by FallbackEmbeddingClient/FallbackRerankerClient
+        # to select a live server.  When one server is intentionally off (e.g. a sleeping WoL
+        # machine), a WARNING fires on every probe even though the system is healthy overall.
+        # The FallbackClient itself logs a WARNING when ALL providers fail.
+        logger.debug("Health check failed for all Infinity servers (no URL responded)")
         return False
     
     def get_url_status(self) -> List[Dict[str, Any]]:
