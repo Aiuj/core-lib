@@ -353,9 +353,9 @@ class ProviderConfig:
                 thinking_enabled=self.thinking_enabled,
                 thinking_config=self.thinking_config,
                 base_url=self.host or "https://generativelanguage.googleapis.com",
-                project=None,
-                location=None,
-                service_account_file=None,
+                project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
+                location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
+                service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
             )
 
         elif self.provider == "vertex":

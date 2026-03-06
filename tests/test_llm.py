@@ -12,6 +12,7 @@ from core_lib.llm import (
     create_ollama_client,
     create_gemini_client,
 )
+from core_lib.llm.provider_registry import ProviderConfig
 
 
 class WeatherResponse(BaseModel):
@@ -54,6 +55,21 @@ class TestLLMConfig:
         assert config.model == "llama3.1"
         assert config.temperature == 0.8
         assert config.base_url == "http://custom:11434"
+
+    def test_provider_config_gemini_preserves_vertex_settings(self):
+        config = ProviderConfig.from_dict(
+            {
+                "provider": "gemini",
+                "model": "gemini-2.5-flash",
+                "project": "vertex-project",
+                "location": "europe-west9",
+                "service_account_file": "C:/keys/service-account.json",
+            }
+        ).to_llm_config()
+
+        assert config.project == "vertex-project"
+        assert config.location == "europe-west9"
+        assert config.service_account_file == "C:/keys/service-account.json"
 
 
 class TestLLMClient:
