@@ -56,8 +56,9 @@ FAILURE_TTL_MAP = {
     "timeout": 60,          # 1 minute for timeouts (was 300)
     "server_error": 60,     # 1 minute for server errors (was 300)
     "connection_error": 60, # 1 minute for connection errors
-    "auth_error": 3600,     # 1 hour for auth errors (unlikely to self-resolve)
-    "unknown": 60,          # 1 minute for unknown errors (was 180)
+    "auth_error": 3600,          # 1 hour for auth errors (unlikely to self-resolve)
+    "configuration_error": 86400,  # 24 hours for config errors (wrong model/region — won't self-resolve)
+    "unknown": 60,                 # 1 minute for unknown errors (was 180)
 }
 
 
@@ -433,7 +434,11 @@ def classify_error(error: Exception) -> str:
     # Auth errors
     if any(x in error_str for x in ["auth", "unauthorized", "forbidden", "401", "403", "api key"]):
         return "auth_error"
-    
+
+    # Configuration / resource-not-found errors (404) — permanent, won't self-resolve
+    if "404" in error_str or "not_found" in error_str or "not found" in error_str:
+        return "configuration_error"
+
     # Server errors
     if any(x in error_str for x in ["500", "502", "503", "504", "server error", "internal"]):
         return "server_error"
