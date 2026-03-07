@@ -697,6 +697,11 @@ class GoogleGenAIProvider(BaseProvider):
                     # 499 CANCELLED: the server aborted the streaming call (transient)
                     is_server_overload = True
                     error_reason = "server_error"
+                elif isinstance(e, genai_errors.ClientError) and "404" in str(e):
+                    # 404 NOT_FOUND: wrong model name or no regional access — not a crash,
+                    # log as a warning so the fallback chain can silently move on.
+                    is_server_overload = True
+                    error_reason = "configuration_error"
             except ImportError:
                 pass
 
