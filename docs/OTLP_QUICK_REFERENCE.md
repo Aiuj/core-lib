@@ -10,8 +10,13 @@
 export ENABLE_LOGGER=true
 export OTLP_ENDPOINT=http://localhost:4318/v1/logs
 
-# Optional: Service name defaults to APP_NAME
+# Optional: service name defaults to APP_NAME
 export APP_NAME=my-service
+
+# Optional: channel routing
+# Leave unset for default -> otel-logs-*
+# export OTLP_LOG_CHANNEL=myfaq
+# export OTLP_LOG_CHANNEL=faciliter
 
 # Service version auto-detected from pyproject.toml
 ```
@@ -32,7 +37,7 @@ settings = LoggerSettings(
     otlp_enabled=True,
     otlp_endpoint="http://localhost:4318/v1/logs",
     otlp_service_name="my-app",     # Optional: defaults from APP_NAME or setup_logging(app_name=...)
-    otlp_log_channel="myfaq",       # Optional: collector routing channel
+    otlp_log_channel="myfaq",       # Optional: default / myfaq / faciliter routing
     otlp_log_level="INFO",          # OTLP only receives INFO+ (optional)
 )
 logger = setup_logging(logger_settings=settings)
@@ -45,7 +50,7 @@ export OTLP_ENABLED=true              # Explicit enable (optional with auto-enab
 export OTLP_ENDPOINT=http://localhost:4318/v1/logs
 export OTLP_SERVICE_NAME=my-app       # Optional: otherwise defaults from APP_NAME
 export OTLP_SERVICE_VERSION=1.0.0     # Default: from pyproject.toml
-export OTLP_LOG_CHANNEL=myfaq         # Optional: sends faciliter.log_channel=myfaq
+export OTLP_LOG_CHANNEL=myfaq         # Optional: leave unset, or use myfaq / faciliter
 export OTLP_LOG_LEVEL=INFO            # OTLP level (optional, defaults to LOG_LEVEL)
 ```
 
@@ -72,17 +77,27 @@ If your collector is configured for channel-based routing, this library can targ
 
 The library does this by sending `faciliter.log_channel=<value>` as a resource attribute.
 
+## Channel Choices
+
+Use exactly one of these channel configurations:
+
+| Choice | `OTLP_LOG_CHANNEL` | Result |
+|--------|--------------------|--------|
+| default | unset | logs go to `otel-logs-*` |
+| myfaq | `myfaq` | logs go to `myfaq-logs-*` |
+| faciliter | `faciliter` | logs go to `faciliter-logs-*` |
+
 ## Docker Compose Integration
 
 ```yaml
 my-app:
-  environment:
-    - OTLP_ENABLED=true
-    - OTLP_ENDPOINT=http://otel-collector:4318/v1/logs
-    - OTLP_SERVICE_NAME=my-app
+    environment:
+        - OTLP_ENABLED=true
+        - OTLP_ENDPOINT=http://otel-collector:4318/v1/logs
+        - APP_NAME=my-app
         - OTLP_LOG_CHANNEL=myfaq
-  depends_on:
-    - otel-collector
+    depends_on:
+        - otel-collector
 ```
 
 ## View Logs
@@ -96,6 +111,18 @@ If you use multiple channels, also create index patterns for `myfaq-logs*` and `
 ## Channel Routing
 
 Use `otlp_log_channel` when one collector serves multiple products and routes each product into a dedicated index.
+
+### Default
+
+Do not set any channel value when you want the shared default route.
+
+```python
+LoggerSettings(
+    otlp_enabled=True,
+    otlp_endpoint="http://82.66.214.52:4318/v1/logs",
+    otlp_service_name="my-app",
+)
+```
 
 ### Programmatic
 
@@ -116,6 +143,8 @@ export OTLP_ENABLED=true
 export OTLP_ENDPOINT=http://82.66.214.52:4318/v1/logs
 export OTLP_SERVICE_NAME=my-app
 
+# Leave OTLP_LOG_CHANNEL unset for the default route
+
 # myfaq route -> myfaq-logs-*
 export OTLP_LOG_CHANNEL=myfaq
 
@@ -126,12 +155,15 @@ export OTLP_LOG_CHANNEL=faciliter
 ### Notes
 
 - Leave `OTLP_LOG_CHANNEL` unset to use the collector default route.
+- Supported channel values in the current stack are `myfaq` and `faciliter`.
 - Keep `OTLP_SERVICE_NAME`; the channel supplements it and does not replace it.
 - `TracingSettings` also reads `OTLP_LOG_CHANNEL`, so traces and logs can share the same resource metadata when your app initializes tracing.
 
 **Query API:**
 ```bash
 curl http://localhost:9200/otel-logs/_search?pretty
+curl http://localhost:9200/myfaq-logs/_search?pretty
+curl http://localhost:9200/faciliter-logs/_search?pretty
 ```
 
 ## With Authentication

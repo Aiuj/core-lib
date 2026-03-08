@@ -157,6 +157,17 @@ class TestLoggerSettings:
         assert settings.otlp_service_version == "1.0.0"
         assert settings.otlp_log_channel == "myfaq"
 
+    def test_logger_settings_otlp_service_name_stays_unset_without_explicit_env(self, monkeypatch):
+        """Test OTLP service name remains unset when OTLP_SERVICE_NAME is not provided."""
+        monkeypatch.setenv("APP_NAME", "settings-app-name")
+        monkeypatch.setenv("OTLP_ENABLED", "true")
+        monkeypatch.setenv("OTLP_ENDPOINT", "http://otel-collector:4318/v1/logs")
+        monkeypatch.delenv("OTLP_SERVICE_NAME", raising=False)
+
+        settings = LoggerSettings.from_env(load_dotenv=False)
+
+        assert settings.otlp_service_name is None
+
     def test_logger_settings_validation_empty_otlp_log_channel(self):
         """Test validation rejects an empty OTLP log channel."""
         with pytest.raises(SettingsError, match="OTLP log channel cannot be empty"):
@@ -389,3 +400,28 @@ class TestStandardSettingsWithLogger:
         
         # NullConfig returns None for any attribute
         assert logger_safe.ovh_ldp_enabled is None
+
+    @patch('core_lib.tracing.handlers.otlp_handler.OTLPHandler')
+    def test_standard_settings_setup_logging_uses_settings_app_name_when_otlp_service_name_unset(self, mock_otlp_handler, monkeypatch):
+        """Test StandardSettings path uses resolved settings.app_name when OTLP_SERVICE_NAME is unset."""
+        from core_lib.config import StandardSettings
+        from core_lib.tracing.logger import setup_logging
+
+        mock_handler_instance = MagicMock()
+        mock_otlp_handler.return_value = mock_handler_instance
+
+        monkeypatch.delenv("APP_NAME", raising=False)
+        monkeypatch.delenv("OTLP_SERVICE_NAME", raising=False)
+        monkeypatch.setenv("OTLP_ENABLED", "true")
+        monkeypatch.setenv("OTLP_ENDPOINT", "http://otel-collector:4318/v1/logs")
+
+        settings = StandardSettings.from_env(load_dotenv=False, app_name="deployed-app")
+
+        setup_logging(
+            app_settings=settings,
+            logger_settings=settings.logger_safe,
+            force=True,
+        )
+
+        call_kwargs = mock_otlp_handler.call_args[1]
+        assert call_kwargs["service_name"] == "deployed-app"

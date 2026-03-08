@@ -139,10 +139,15 @@ class LoggerSettings(BaseSettings):
         - OTLP_ENDPOINT is defined AND
         - OTLP_ENABLED is not explicitly set to false
         
-        Auto-sets service name/version:
-                - otlp_service_name defaults to APP_NAME env or "core-lib"
-                    and setup_logging(app_name=...) is used for programmatic defaults when unset
+        Auto-sets service version:
         - otlp_service_version defaults to version from pyproject.toml
+
+        OTLP service name fallback is resolved later during setup_logging:
+        - explicit OTLP_SERVICE_NAME env var
+        - app_name passed to setup_logging()
+        - app_settings.app_name passed to setup_logging()
+        - APP_NAME env var seen by setup_logging()
+        - core_lib
         """
         cls._load_dotenv_if_requested(load_dotenv, dotenv_paths)
         
@@ -189,8 +194,7 @@ class LoggerSettings(BaseSettings):
         # Use explicit setting if provided, otherwise use auto-detection
         otlp_enabled = otlp_enabled_explicit if otlp_enabled_explicit is not None else auto_enable_otlp
         
-        # Get service name and version defaults
-        default_service_name = EnvParser.get_env("APP_NAME", default="core-lib")
+        # Get service version default
         default_service_version = cls._read_pyproject_version()
         
         settings_dict = {
@@ -219,7 +223,9 @@ class LoggerSettings(BaseSettings):
             "otlp_headers": otlp_headers,
             "otlp_timeout": EnvParser.get_env("OTLP_TIMEOUT", default=10, env_type=int),
             "otlp_insecure": EnvParser.get_env("OTLP_INSECURE", default=False, env_type=bool),
-            "otlp_service_name": EnvParser.get_env("OTLP_SERVICE_NAME", default=default_service_name),
+            # Keep this unset unless explicitly provided so setup_logging can
+            # resolve the effective service name from the resolved app settings.
+            "otlp_service_name": EnvParser.get_env("OTLP_SERVICE_NAME"),
             "otlp_service_version": EnvParser.get_env("OTLP_SERVICE_VERSION", default=default_service_version),
             "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
             "otlp_log_level": EnvParser.get_env("OTLP_LOG_LEVEL"),  # Optional: independent OTLP log level

@@ -2,7 +2,13 @@
 
 ## Overview
 
-core-lib includes native support for sending logs to OpenTelemetry collectors via the OTLP (OpenTelemetry Protocol) over HTTP. This enables integration with observability platforms like OpenSearch, Elasticsearch, Grafana, Datadog, and cloud-native monitoring solutions.
+core-lib includes native support for sending logs to OpenTelemetry collectors via OTLP (OpenTelemetry Protocol) over HTTP. This enables integration with observability platforms like OpenSearch, Elasticsearch, Grafana, Datadog, and cloud-native monitoring solutions.
+
+When your collector is configured for channel-based routing, core-lib can also select the destination log stream by setting the optional resource attribute `faciliter.log_channel`:
+
+- default route: leave the channel unset, logs go to `otel-logs-*`
+- `myfaq`: logs go to `myfaq-logs-*`
+- `faciliter`: logs go to `faciliter-logs-*`
 
 ## Architecture
 
@@ -49,7 +55,8 @@ logger_settings = LoggerSettings(
     log_level="INFO",
     otlp_enabled=True,
     otlp_endpoint="http://localhost:4318/v1/logs",
-    otlp_service_name="my-service",
+  otlp_service_name="my-service",
+  otlp_log_channel="faciliter",
 )
 
 # Initialize logging
@@ -66,8 +73,12 @@ logger.error("Error occurred", extra={"error_code": "E001"})
 # Enable OTLP
 export OTLP_ENABLED=true
 export OTLP_ENDPOINT=http://localhost:4318/v1/logs
-export OTLP_SERVICE_NAME=my-service
+export APP_NAME=my-service
 export OTLP_SERVICE_VERSION=1.0.0
+
+# Optional: channel routing
+# Leave unset for the default otel-logs-* route
+export OTLP_LOG_CHANNEL=myfaq
 
 # Optional: Authentication
 export OTLP_HEADERS='{"Authorization": "Bearer token123"}'
@@ -116,8 +127,9 @@ logger.info("Integrated configuration")
 | `otlp_headers` | dict | `{}` | HTTP headers (e.g., authentication) |
 | `otlp_timeout` | int | `10` | Request timeout in seconds |
 | `otlp_insecure` | bool | `False` | Skip SSL certificate verification |
-| `otlp_service_name` | str | `core-lib` | Service name for resource attributes |
+| `otlp_service_name` | str | `APP_NAME` / `setup_logging(app_name=...)` / `core-lib` | Service name for resource attributes |
 | `otlp_service_version` | str | `None` | Optional service version |
+| `otlp_log_channel` | str | `None` | Optional collector routing channel (`myfaq` or `faciliter`) |
 
 ### Environment Variables
 
@@ -128,55 +140,120 @@ logger.info("Integrated configuration")
 | `OTLP_HEADERS` | `{"X-Key": "value"}` | JSON string of headers |
 | `OTLP_TIMEOUT` | `15` | Request timeout (seconds) |
 | `OTLP_INSECURE` | `true` | Skip SSL verification |
-| `OTLP_SERVICE_NAME` | `my-app` | Service identifier |
+| `APP_NAME` | `my-app` | Default service identifier |
+| `OTLP_SERVICE_NAME` | `my-app` | Optional service identifier override |
 | `OTLP_SERVICE_VERSION` | `1.0.0` | Service version |
+| `OTLP_LOG_CHANNEL` | `myfaq` | Optional channel selector for collector routing |
 
 ## OpenTelemetry Collector Setup
 
-### Using Your Provided Configuration
+### Using a Channel-Aware Collector
 
-Your `otel-collector-config.yml` is already properly configured:
+When the collector is configured with channel-aware routing, it reads `faciliter.log_channel` from OTLP resource attributes and selects the target OpenSearch index accordingly:
 
 ```yaml
 receivers:
   otlp:
     protocols:
       http:
-        endpoint: 0.0.0.0:4318  # ← core-lib sends logs here
+        endpoint: 0.0.0.0:4318
+
+connectors:
+  routing:
+    default_pipelines: [logs/default]
+    table:
+      - statement: attributes["faciliter.log_channel"] == "myfaq"
+        pipelines: [logs/myfaq]
+      - statement: attributes["faciliter.log_channel"] == "faciliter"
+        pipelines: [logs/faciliter]
 
 exporters:
-  opensearch:
+  opensearch/default:
     http:
       endpoint: http://opensearch:9200
       auth:
         authenticator: basicauth/opensearch
-    logs_index: "otel-logs"  # ← Logs stored in this index
+    logs_index: otel-logs
+  opensearch/myfaq:
+    http:
+      endpoint: http://opensearch:9200
+      auth:
+        authenticator: basicauth/opensearch
+    logs_index: myfaq-logs
+  opensearch/faciliter:
+    http:
+      endpoint: http://opensearch:9200
+      auth:
+        authenticator: basicauth/opensearch
+    logs_index: faciliter-logs
 
 service:
   pipelines:
-    logs:
+    logs/in:
       receivers: [otlp]
       processors: [batch]
-      exporters: [opensearch]  # ← Logs go to OpenSearch
+      exporters: [routing]
+    logs/default:
+      receivers: [routing]
+      exporters: [opensearch/default]
+    logs/myfaq:
+      receivers: [routing]
+      exporters: [opensearch/myfaq]
+    logs/faciliter:
+      receivers: [routing]
+      exporters: [opensearch/faciliter]
 ```
+
+If `OTLP_LOG_CHANNEL` is unset, the log goes through the default route into `otel-logs-*`.
 
 ### Point core-lib to Your Collector
 
+All three routing choices use the same OTLP endpoint. The only difference is whether `otlp_log_channel` is omitted or set.
+
 ```python
-# If collector is on localhost
+# Default route -> otel-logs-*
 logger_settings = LoggerSettings(
     otlp_enabled=True,
     otlp_endpoint="http://localhost:4318/v1/logs",
     otlp_service_name="my-app",
 )
 
-# If collector is in Docker network
+# myfaq route -> myfaq-logs-*
+logger_settings = LoggerSettings(
+    otlp_enabled=True,
+    otlp_endpoint="http://localhost:4318/v1/logs",
+    otlp_service_name="my-app",
+    otlp_log_channel="myfaq",
+)
+
+# faciliter route -> faciliter-logs-*
+logger_settings = LoggerSettings(
+    otlp_enabled=True,
+    otlp_endpoint="http://localhost:4318/v1/logs",
+    otlp_service_name="my-app",
+    otlp_log_channel="faciliter",
+)
+
+# If the collector is inside your compose network
 logger_settings = LoggerSettings(
     otlp_enabled=True,
     otlp_endpoint="http://otel-collector:4318/v1/logs",
     otlp_service_name="my-app",
+    otlp_log_channel="myfaq",
 )
 ```
+
+### Channel Selection
+
+Use one of these values:
+
+| Channel Setting | Resulting Index Pattern |
+|----------------|-------------------------|
+| unset / omitted | `otel-logs-*` |
+| `myfaq` | `myfaq-logs-*` |
+| `faciliter` | `faciliter-logs-*` |
+
+`OTLP_LOG_CHANNEL` is optional. If you do not set it, the collector uses the default route.
 
 ### Docker Compose Integration
 
@@ -191,8 +268,10 @@ services:
     environment:
       - OTLP_ENABLED=true
       - OTLP_ENDPOINT=http://otel-collector:4318/v1/logs
-      - OTLP_SERVICE_NAME=my-application
+      - APP_NAME=my-application
       - OTLP_SERVICE_VERSION=1.0.0
+      # Leave unset for default routing, or set to myfaq / faciliter
+      - OTLP_LOG_CHANNEL=myfaq
     depends_on:
       - otel-collector
 ```
@@ -208,7 +287,8 @@ core-lib sends logs in OTLP format:
       "resource": {
         "attributes": [
           {"key": "service.name", "value": {"stringValue": "my-service"}},
-          {"key": "service.version", "value": {"stringValue": "1.0.0"}}
+          {"key": "service.version", "value": {"stringValue": "1.0.0"}},
+          {"key": "faciliter.log_channel", "value": {"stringValue": "myfaq"}}
         ]
       },
       "scopeLogs": [
@@ -242,14 +322,14 @@ core-lib sends logs in OTLP format:
 Access at `http://localhost:5601` (from your docker-compose)
 
 1. Go to **Discover**
-2. Create index pattern: `otel-logs*`
+2. Create index patterns as needed: `otel-logs*`, `myfaq-logs*`, `faciliter-logs*`
 3. Select `@timestamp` as time field
 4. View logs with filters and queries
 
 ### 2. Query Examples
 
 ```bash
-# View recent logs
+# View recent default-route logs
 curl -X GET "localhost:9200/otel-logs/_search?pretty" -H 'Content-Type: application/json' -d'
 {
   "query": {"match_all": {}},
@@ -258,8 +338,17 @@ curl -X GET "localhost:9200/otel-logs/_search?pretty" -H 'Content-Type: applicat
 }
 '
 
-# Search by service name
-curl -X GET "localhost:9200/otel-logs/_search?pretty" -H 'Content-Type: application/json' -d'
+# View recent myfaq logs
+curl -X GET "localhost:9200/myfaq-logs/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "query": {"match_all": {}},
+  "sort": [{"@timestamp": "desc"}],
+  "size": 10
+}
+'
+
+# Search by service name in faciliter logs
+curl -X GET "localhost:9200/faciliter-logs/_search?pretty" -H 'Content-Type: application/json' -d'
 {
   "query": {
     "term": {"resource.attributes.service.name": "my-service"}
@@ -559,7 +648,7 @@ Using uvicorn ensures:
 4. **Verify OpenSearch index:**
    ```bash
    curl http://localhost:9200/_cat/indices?v
-   # Should show otel-logs index
+  # Should show otel-logs and, when used, myfaq-logs / faciliter-logs
    ```
 
 ### Connection Errors
@@ -675,4 +764,4 @@ See `examples/example_otlp_logging.py` for:
 - [OpenTelemetry Specification](https://opentelemetry.io/docs/specs/otlp/)
 - [OTLP Log Data Model](https://opentelemetry.io/docs/specs/otel/logs/data-model/)
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
-- [Your otel-collector-config.yml](../otel-collector-config.yml)
+- Your stack otel-collector configuration
