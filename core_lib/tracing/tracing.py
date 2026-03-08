@@ -99,6 +99,7 @@ class TracingManager:
                     enabled=settings.enabled,
                     service_name=service_name,
                     service_version=settings.service_version,
+                    otlp_log_channel=settings.otlp_log_channel,
                     langfuse_public_key=settings.langfuse_public_key,
                     langfuse_secret_key=settings.langfuse_secret_key,
                     langfuse_host=settings.langfuse_host,
@@ -141,12 +142,14 @@ class TracingManager:
         
         # Configure OpenTelemetry
         service_name = self.settings.service_name or "unknown"
-        resource = Resource.create(
-            {
-                "service.name": service_name,
-                "service.version": self.settings.service_version,
-            }
-        )
+        resource_attributes = {
+            "service.name": service_name,
+            "service.version": self.settings.service_version,
+        }
+        if self.settings.otlp_log_channel:
+            resource_attributes["faciliter.log_channel"] = self.settings.otlp_log_channel
+
+        resource = Resource.create(resource_attributes)
         
         provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(provider)

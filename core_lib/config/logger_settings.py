@@ -30,8 +30,11 @@ Environment Variables:
     OTLP_HEADERS: JSON string of HTTP headers for authentication
     OTLP_TIMEOUT: Request timeout in seconds (default: 10)
     OTLP_INSECURE: Skip SSL certificate verification (true/false, default: false)
-    OTLP_SERVICE_NAME: Service name for resource attributes (default: APP_NAME or core-lib)
+    OTLP_SERVICE_NAME: Service name for resource attributes. Defaults to APP_NAME,
+                       then to the app_name passed to setup_logging(), then core-lib.
     OTLP_SERVICE_VERSION: Service version for resource attributes (default: from pyproject.toml)
+    OTLP_LOG_CHANNEL: Optional log routing channel. When set, core-lib sends
+                      faciliter.log_channel=<value> as an OTLP resource attribute.
     OTLP_LOG_LEVEL: Log level for OTLP handler only (DEBUG, INFO, WARNING, ERROR, CRITICAL)
                     If not set, inherits from LOG_LEVEL
 """
@@ -89,8 +92,9 @@ class LoggerSettings(BaseSettings):
     otlp_headers: Dict[str, str] = field(default_factory=dict)
     otlp_timeout: int = 10
     otlp_insecure: bool = False  # Skip SSL verification
-    otlp_service_name: str = "core-lib"
+    otlp_service_name: Optional[str] = None
     otlp_service_version: Optional[str] = None
+    otlp_log_channel: Optional[str] = None
     otlp_log_level: Optional[str] = None  # Independent log level for OTLP handler (if None, inherits from log_level)
     
     @staticmethod
@@ -136,7 +140,8 @@ class LoggerSettings(BaseSettings):
         - OTLP_ENABLED is not explicitly set to false
         
         Auto-sets service name/version:
-        - otlp_service_name defaults to APP_NAME env or "core-lib"
+                - otlp_service_name defaults to APP_NAME env or "core-lib"
+                    and setup_logging(app_name=...) is used for programmatic defaults when unset
         - otlp_service_version defaults to version from pyproject.toml
         """
         cls._load_dotenv_if_requested(load_dotenv, dotenv_paths)
@@ -216,6 +221,7 @@ class LoggerSettings(BaseSettings):
             "otlp_insecure": EnvParser.get_env("OTLP_INSECURE", default=False, env_type=bool),
             "otlp_service_name": EnvParser.get_env("OTLP_SERVICE_NAME", default=default_service_name),
             "otlp_service_version": EnvParser.get_env("OTLP_SERVICE_VERSION", default=default_service_version),
+            "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
             "otlp_log_level": EnvParser.get_env("OTLP_LOG_LEVEL"),  # Optional: independent OTLP log level
         }
         
@@ -258,6 +264,9 @@ class LoggerSettings(BaseSettings):
                 raise SettingsError(
                     f"Invalid OTLP log level '{self.otlp_log_level}'. Must be one of: {', '.join(valid_log_levels)}"
                 )
+
+        if self.otlp_log_channel is not None and not self.otlp_log_channel.strip():
+            raise SettingsError("OTLP log channel cannot be empty when provided")
     
     def as_dict(self) -> dict:
         """Convert to dictionary representation."""
@@ -277,4 +286,13 @@ class LoggerSettings(BaseSettings):
             "ovh_ldp_additional_fields": self.ovh_ldp_additional_fields,
             "ovh_ldp_timeout": self.ovh_ldp_timeout,
             "ovh_ldp_compress": self.ovh_ldp_compress,
+            "otlp_enabled": self.otlp_enabled,
+            "otlp_endpoint": self.otlp_endpoint,
+            "otlp_headers": self.otlp_headers,
+            "otlp_timeout": self.otlp_timeout,
+            "otlp_insecure": self.otlp_insecure,
+            "otlp_service_name": self.otlp_service_name,
+            "otlp_service_version": self.otlp_service_version,
+            "otlp_log_channel": self.otlp_log_channel,
+            "otlp_log_level": self.otlp_log_level,
         }

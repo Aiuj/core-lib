@@ -102,9 +102,39 @@ settings = LoggerSettings(
     otlp_enabled=True,
     otlp_log_level="INFO",       # OTLP only gets INFO+ (save costs)
     otlp_endpoint="http://localhost:4318/v1/logs",
+  otlp_log_channel="myfaq",    # Optional: collector routing channel
 )
 
 setup_logging(app_name="my-app", logger_settings=settings)
+```
+
+### OTLP Log Channels:
+
+If your collector routes logs by the resource attribute `faciliter.log_channel`, set `otlp_log_channel` in code or `OTLP_LOG_CHANNEL` in the environment.
+
+`otlp_service_name` is optional. If you leave it unset, core-lib defaults it from `APP_NAME` or from the `app_name` you pass to `setup_logging(...)`.
+
+```python
+settings = LoggerSettings(
+  otlp_enabled=True,
+  otlp_endpoint="http://82.66.214.52:4318/v1/logs",
+  otlp_service_name="my-service",
+  otlp_log_channel="faciliter",
+)
+```
+
+```bash
+export OTLP_ENABLED=true
+export OTLP_ENDPOINT=http://82.66.214.52:4318/v1/logs
+export OTLP_SERVICE_NAME=my-service
+
+# Default route -> otel-logs-* (leave channel unset)
+
+# myfaq route -> myfaq-logs-*
+export OTLP_LOG_CHANNEL=myfaq
+
+# faciliter route -> faciliter-logs-*
+export OTLP_LOG_CHANNEL=faciliter
 ```
 
 ### Contextual Logging (Request Metadata):

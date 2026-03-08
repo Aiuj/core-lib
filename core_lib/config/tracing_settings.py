@@ -20,6 +20,7 @@ class TracingSettings(BaseSettings):
     enabled: bool = True
     service_name: Optional[str] = None
     service_version: str = "0.1.0"
+    otlp_log_channel: Optional[str] = None
     
     # Langfuse settings
     langfuse_public_key: Optional[str] = None
@@ -45,6 +46,7 @@ class TracingSettings(BaseSettings):
             "enabled": langfuse_enabled,
             "service_name": EnvParser.get_env("APP_NAME", "SERVICE_NAME"),
             "service_version": EnvParser.get_env("APP_VERSION", "SERVICE_VERSION", default="0.1.0"),
+            "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
             "langfuse_public_key": EnvParser.get_env("LANGFUSE_PUBLIC_KEY"),
             "langfuse_secret_key": EnvParser.get_env("LANGFUSE_SECRET_KEY"),
             "langfuse_host": EnvParser.get_env("LANGFUSE_HOST", default="http://localhost:3000"),
@@ -59,6 +61,8 @@ class TracingSettings(BaseSettings):
             raise SettingsError("Tracing enabled but langfuse_public_key not provided")
         if self.enabled and not self.langfuse_secret_key:
             raise SettingsError("Tracing enabled but langfuse_secret_key not provided")
+        if self.otlp_log_channel is not None and not self.otlp_log_channel.strip():
+            raise SettingsError("OTLP log channel cannot be empty when provided")
     
     def as_dict(self) -> dict:
         """Convert to dictionary representation."""
@@ -66,6 +70,7 @@ class TracingSettings(BaseSettings):
             "enabled": self.enabled,
             "service_name": self.service_name,
             "service_version": self.service_version,
+            "otlp_log_channel": self.otlp_log_channel,
             "langfuse_public_key": self.langfuse_public_key,
             "langfuse_secret_key": self.langfuse_secret_key,
             "langfuse_host": self.langfuse_host,

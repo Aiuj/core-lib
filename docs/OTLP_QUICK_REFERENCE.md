@@ -31,7 +31,8 @@ settings = LoggerSettings(
     log_level="DEBUG",              # Console shows DEBUG+
     otlp_enabled=True,
     otlp_endpoint="http://localhost:4318/v1/logs",
-    otlp_service_name="my-app",     # Default: APP_NAME or "core-lib"
+    otlp_service_name="my-app",     # Optional: defaults from APP_NAME or setup_logging(app_name=...)
+    otlp_log_channel="myfaq",       # Optional: collector routing channel
     otlp_log_level="INFO",          # OTLP only receives INFO+ (optional)
 )
 logger = setup_logging(logger_settings=settings)
@@ -42,8 +43,9 @@ logger = setup_logging(logger_settings=settings)
 export LOG_LEVEL=DEBUG                # Console level
 export OTLP_ENABLED=true              # Explicit enable (optional with auto-enable)
 export OTLP_ENDPOINT=http://localhost:4318/v1/logs
-export OTLP_SERVICE_NAME=my-app       # Default: APP_NAME or "core-lib"
+export OTLP_SERVICE_NAME=my-app       # Optional: otherwise defaults from APP_NAME
 export OTLP_SERVICE_VERSION=1.0.0     # Default: from pyproject.toml
+export OTLP_LOG_CHANNEL=myfaq         # Optional: sends faciliter.log_channel=myfaq
 export OTLP_LOG_LEVEL=INFO            # OTLP level (optional, defaults to LOG_LEVEL)
 ```
 
@@ -56,15 +58,19 @@ export OTLP_LOG_LEVEL=INFO            # OTLP level (optional, defaults to LOG_LE
 | `otlp_headers` | `{}` | Auth headers |
 | `otlp_timeout` | `10` | Timeout (seconds) |
 | `otlp_insecure` | `False` | Skip SSL check |
-| `otlp_service_name` | `core-lib` | Service name |
+| `otlp_service_name` | `APP_NAME` / `setup_logging(app_name=...)` / `core-lib` | Service name |
 | `otlp_service_version` | `None` | Version tag |
+| `otlp_log_channel` | `None` | Adds `faciliter.log_channel` for collector routing |
 | `otlp_log_level` | Inherits from `log_level` | Independent log level for OTLP handler |
 
 ## Your Collector Setup
 
-Your `otel-collector-config.yml` already configured:
-- Receives: `0.0.0.0:4318` (OTLP/HTTP)
-- Exports: OpenSearch at `otel-logs` index
+If your collector is configured for channel-based routing, this library can target these routes:
+- unset channel: `otel-logs-*`
+- `myfaq`: `myfaq-logs-*`
+- `faciliter`: `faciliter-logs-*`
+
+The library does this by sending `faciliter.log_channel=<value>` as a resource attribute.
 
 ## Docker Compose Integration
 
@@ -74,6 +80,7 @@ my-app:
     - OTLP_ENABLED=true
     - OTLP_ENDPOINT=http://otel-collector:4318/v1/logs
     - OTLP_SERVICE_NAME=my-app
+        - OTLP_LOG_CHANNEL=myfaq
   depends_on:
     - otel-collector
 ```
@@ -83,6 +90,44 @@ my-app:
 **OpenSearch Dashboards:** http://localhost:5601
 - Index pattern: `otel-logs*`
 - Time field: `@timestamp`
+
+If you use multiple channels, also create index patterns for `myfaq-logs*` and `faciliter-logs*`.
+
+## Channel Routing
+
+Use `otlp_log_channel` when one collector serves multiple products and routes each product into a dedicated index.
+
+### Programmatic
+
+```python
+LoggerSettings(
+    otlp_enabled=True,
+    otlp_endpoint="http://82.66.214.52:4318/v1/logs",
+    otlp_service_name="my-app",
+    otlp_log_channel="faciliter",
+)
+```
+
+### Environment Variables
+
+```bash
+# Default route -> otel-logs-*
+export OTLP_ENABLED=true
+export OTLP_ENDPOINT=http://82.66.214.52:4318/v1/logs
+export OTLP_SERVICE_NAME=my-app
+
+# myfaq route -> myfaq-logs-*
+export OTLP_LOG_CHANNEL=myfaq
+
+# faciliter route -> faciliter-logs-*
+export OTLP_LOG_CHANNEL=faciliter
+```
+
+### Notes
+
+- Leave `OTLP_LOG_CHANNEL` unset to use the collector default route.
+- Keep `OTLP_SERVICE_NAME`; the channel supplements it and does not replace it.
+- `TracingSettings` also reads `OTLP_LOG_CHANNEL`, so traces and logs can share the same resource metadata when your app initializes tracing.
 
 **Query API:**
 ```bash

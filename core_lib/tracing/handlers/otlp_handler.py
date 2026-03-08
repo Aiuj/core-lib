@@ -56,6 +56,7 @@ class OTLPHandler(logging.Handler):
         insecure: bool = False,
         service_name: str = "core-lib",
         service_version: Optional[str] = None,
+        log_channel: Optional[str] = None,
     ):
         """Initialize the OTLP handler.
         
@@ -66,6 +67,7 @@ class OTLPHandler(logging.Handler):
             insecure: Skip SSL verification if True (default: False)
             service_name: Service name for resource attributes (default: core-lib)
             service_version: Optional service version for resource attributes
+            log_channel: Optional log routing channel sent as faciliter.log_channel
         """
         super().__init__()
         self.endpoint = endpoint
@@ -74,6 +76,7 @@ class OTLPHandler(logging.Handler):
         self.insecure = insecure
         self.service_name = service_name
         self.service_version = service_version
+        self.log_channel = log_channel
         
         # Ensure Content-Type is set for OTLP/HTTP
         if "Content-Type" not in self.headers:
@@ -172,6 +175,10 @@ class OTLPHandler(logging.Handler):
             resource_attrs.append(
                 {"key": "service.version", "value": {"stringValue": self.service_version}}
             )
+        if self.log_channel:
+            resource_attrs.append(
+                {"key": "faciliter.log_channel", "value": {"stringValue": self.log_channel}}
+            )
         
         return {
             "resourceLogs": [
@@ -197,6 +204,7 @@ class OTLPHandler(logging.Handler):
                 insecure=self.insecure,
                 service_name=self.service_name,
                 service_version=self.service_version,
+                log_channel=self.log_channel,
             )
             # respect_handler_level=False allows all queued records through
             # Level filtering already happened at the main handler level
@@ -244,6 +252,7 @@ class _OTLPWorkerHandler(logging.Handler):
         insecure: bool,
         service_name: str,
         service_version: Optional[str],
+        log_channel: Optional[str],
     ):
         super().__init__()
         self.endpoint = endpoint
@@ -252,6 +261,7 @@ class _OTLPWorkerHandler(logging.Handler):
         self.insecure = insecure
         self.service_name = service_name
         self.service_version = service_version
+        self.log_channel = log_channel
         self._batch: list = []
         self._last_send = None  # Will be set when first log arrives (not at init)
         self._batch_size = 100  # Send after 100 records
@@ -397,6 +407,10 @@ class _OTLPWorkerHandler(logging.Handler):
             if self.service_version:
                 resource_attrs.append(
                     {"key": "service.version", "value": {"stringValue": self.service_version}}
+                )
+            if self.log_channel:
+                resource_attrs.append(
+                    {"key": "faciliter.log_channel", "value": {"stringValue": self.log_channel}}
                 )
             
             payload = {

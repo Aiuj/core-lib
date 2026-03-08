@@ -31,6 +31,7 @@ def example_basic_otlp():
         otlp_endpoint="http://localhost:4318/v1/logs",  # Default OTLP/HTTP endpoint
         otlp_service_name="my-application",
         otlp_service_version="1.0.0",
+      otlp_log_channel="myfaq",
     )
     
     # Initialize logging
@@ -50,6 +51,7 @@ def example_basic_otlp():
     time.sleep(2)
     
     print("[OK] Logs sent to OTLP collector at http://localhost:4318/v1/logs")
+    print("[OK] Resource attribute faciliter.log_channel=myfaq included for collector routing")
 
 
 def example_otlp_with_authentication():
@@ -165,6 +167,7 @@ def example_otlp_from_env():
     os.environ["OTLP_LOG_LEVEL"] = "WARNING"  # Only WARNING+ to OTLP
     os.environ["OTLP_SERVICE_NAME"] = "env-configured-service"
     os.environ["OTLP_SERVICE_VERSION"] = "2.0.0"
+    os.environ["OTLP_LOG_CHANNEL"] = "faciliter"
     os.environ["OTLP_HEADERS"] = '{"X-API-Key": "my-api-key"}'
     
     # Load from environment

@@ -134,7 +134,8 @@ class TestLoggerSettings:
         assert settings.otlp_endpoint == "http://localhost:4318/v1/logs"
         assert settings.otlp_timeout == 10
         assert settings.otlp_insecure is False
-        assert settings.otlp_service_name == "core-lib"
+        assert settings.otlp_service_name is None
+        assert settings.otlp_log_channel is None
     
     def test_logger_settings_otlp_from_env(self, monkeypatch):
         """Test loading OTLP settings from environment variables."""
@@ -144,6 +145,7 @@ class TestLoggerSettings:
         monkeypatch.setenv("OTLP_TIMEOUT", "15")
         monkeypatch.setenv("OTLP_SERVICE_NAME", "my-service")
         monkeypatch.setenv("OTLP_SERVICE_VERSION", "1.0.0")
+        monkeypatch.setenv("OTLP_LOG_CHANNEL", "myfaq")
         
         settings = LoggerSettings.from_env(load_dotenv=False)
         
@@ -153,6 +155,12 @@ class TestLoggerSettings:
         assert settings.otlp_timeout == 15
         assert settings.otlp_service_name == "my-service"
         assert settings.otlp_service_version == "1.0.0"
+        assert settings.otlp_log_channel == "myfaq"
+
+    def test_logger_settings_validation_empty_otlp_log_channel(self):
+        """Test validation rejects an empty OTLP log channel."""
+        with pytest.raises(SettingsError, match="OTLP log channel cannot be empty"):
+            LoggerSettings(otlp_log_channel="   ")
 
 
 class TestLoggerIntegration:
@@ -241,6 +249,7 @@ class TestLoggerIntegration:
             otlp_enabled=True,
             otlp_endpoint="http://localhost:4318/v1/logs",
             otlp_service_name="test-service",
+            otlp_log_channel="faciliter",
         )
         
         logger = setup_logging(
@@ -254,6 +263,7 @@ class TestLoggerIntegration:
         call_kwargs = mock_otlp_handler.call_args[1]
         assert call_kwargs["endpoint"] == "http://localhost:4318/v1/logs"
         assert call_kwargs["service_name"] == "test-service"
+        assert call_kwargs["log_channel"] == "faciliter"
         
         # Verify handler was started
         mock_handler_instance.start.assert_called_once()
@@ -276,6 +286,68 @@ class TestLoggerIntegration:
         
         # Should not raise any errors
         assert logger is not None
+
+    @patch('core_lib.tracing.handlers.otlp_handler.OTLPHandler')
+    def test_setup_logging_defaults_otlp_service_name_from_app_name(self, mock_otlp_handler):
+        """Test OTLP service name falls back to setup_logging app_name when unset."""
+        from core_lib.tracing.logger import setup_logging
+
+        mock_handler_instance = MagicMock()
+        mock_otlp_handler.return_value = mock_handler_instance
+
+        logger_settings = LoggerSettings(
+            log_level="INFO",
+            otlp_enabled=True,
+            otlp_endpoint="http://localhost:4318/v1/logs",
+        )
+
+        setup_logging(
+            app_name="test_app",
+            logger_settings=logger_settings,
+            force=True,
+        )
+
+        call_kwargs = mock_otlp_handler.call_args[1]
+        assert call_kwargs["service_name"] == "test_app"
+
+
+class TestOTLPHandler:
+    """Tests for OTLP handler resource attributes."""
+
+    @patch('core_lib.tracing.handlers.otlp_handler.requests.post')
+    def test_otlp_handler_sends_log_channel_resource_attribute(self, mock_post):
+        """Test OTLP handler includes faciliter.log_channel in resource attributes."""
+        from core_lib.tracing.handlers.otlp_handler import _OTLPWorkerHandler
+
+        mock_post.return_value = MagicMock(status_code=200, text="ok")
+
+        handler = _OTLPWorkerHandler(
+            endpoint="http://localhost:4318/v1/logs",
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+            insecure=False,
+            service_name="test-service",
+            service_version="1.0.0",
+            log_channel="myfaq",
+        )
+
+        record = MagicMock(
+            levelno=20,
+            created=1_700_000_000.0,
+            name="test.logger",
+            pathname="test.py",
+            lineno=42,
+            funcName="test_func",
+        )
+        record.getMessage.return_value = "hello"
+
+        handler.emit(record)
+        handler.flush()
+
+        assert mock_post.called
+        payload = mock_post.call_args.kwargs["json"]
+        resource_attrs = payload["resourceLogs"][0]["resource"]["attributes"]
+        assert {"key": "faciliter.log_channel", "value": {"stringValue": "myfaq"}} in resource_attrs
 
 
 class TestStandardSettingsWithLogger:

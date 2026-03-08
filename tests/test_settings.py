@@ -515,7 +515,7 @@ class TestTracingSettings(unittest.TestCase):
         self.original_env = {}
         tracing_vars = [
             "LANGFUSE_TRACING_ENABLED", "TRACING_ENABLED", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-            "LANGFUSE_HOST", "APP_NAME", "APP_VERSION"
+            "LANGFUSE_HOST", "APP_NAME", "APP_VERSION", "OTLP_LOG_CHANNEL"
         ]
         for var in tracing_vars:
             self.original_env[var] = os.environ.get(var)
@@ -538,6 +538,15 @@ class TestTracingSettings(unittest.TestCase):
         self.assertEqual(settings.service_version, "0.1.0")
         self.assertEqual(settings.langfuse_host, "http://localhost:3000")
         self.assertIsNone(settings.service_name)
+        self.assertIsNone(settings.otlp_log_channel)
+
+    def test_tracing_settings_otlp_log_channel_from_env(self):
+        """Test tracing settings load the OTLP log channel."""
+        os.environ["OTLP_LOG_CHANNEL"] = "faciliter"
+
+        settings = TracingSettings.from_env(load_dotenv=False)
+
+        self.assertEqual(settings.otlp_log_channel, "faciliter")
     
     def test_tracing_validation_enabled_missing_keys(self):
         """Test validation when tracing enabled but keys missing."""

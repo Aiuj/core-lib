@@ -248,8 +248,9 @@ def setup_logging(
                 "headers": getattr(logger_settings, "otlp_headers", {}),
                 "timeout": getattr(logger_settings, "otlp_timeout", 10),
                 "insecure": getattr(logger_settings, "otlp_insecure", False),
-                "service_name": getattr(logger_settings, "otlp_service_name", app_name),
+                "service_name": getattr(logger_settings, "otlp_service_name", None) or app_name,
                 "service_version": getattr(logger_settings, "otlp_service_version", None),
+                "log_channel": getattr(logger_settings, "otlp_log_channel", None),
                 "log_level": getattr(logger_settings, "otlp_log_level", None),
             }
 
@@ -340,6 +341,7 @@ def setup_logging(
                     insecure=otlp_config["insecure"],
                     service_name=otlp_config["service_name"],
                     service_version=otlp_config["service_version"],
+                    log_channel=otlp_config["log_channel"],
                 )
                 # Use OTLP-specific log level if provided, otherwise use global level
                 otlp_level_str = otlp_config.get("log_level") or level
