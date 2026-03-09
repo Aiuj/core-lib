@@ -54,6 +54,7 @@ class BaseEmbeddingClient:
         query_prefix: str | None = None,
         passage_prefix: str | None = None,
         auto_detect_prefixes: bool | None = None,
+        _log_init: bool = True,
     ):
         # Use provided values, otherwise fall back to settings defaults
         self.model = model if model is not None else embeddings_settings.model
@@ -80,13 +81,14 @@ class BaseEmbeddingClient:
         # Initialize prefix settings
         self._init_prefixes(query_prefix, passage_prefix, auto_detect_prefixes)
         
-        logger.debug(
-            f"Initialized embedding client: model={self.model}, "
-            f"native_dim={self.model_native_dim}, target_dim={self.embedding_dim}, "
-            f"norm_method={self.norm_method}, use_l2_norm={self.use_l2_norm}, "
-            f"cache_enabled={self.cache_duration_seconds > 0}, "
-            f"query_prefix='{self.query_prefix}', passage_prefix='{self.passage_prefix}'"
-        )
+        if _log_init:
+            logger.debug(
+                f"Initialized embedding client: model={self.model}, "
+                f"native_dim={self.model_native_dim}, target_dim={self.embedding_dim}, "
+                f"norm_method={self.norm_method}, use_l2_norm={self.use_l2_norm}, "
+                f"cache_enabled={self.cache_duration_seconds > 0}, "
+                f"query_prefix='{self.query_prefix}', passage_prefix='{self.passage_prefix}'"
+            )
 
     def _init_prefixes(
         self,

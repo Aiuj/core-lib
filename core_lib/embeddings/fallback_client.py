@@ -100,6 +100,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             use_l2_norm=use_l2_norm,
             cache_duration_seconds=cache_duration_seconds,
             norm_method=norm_method,
+            _log_init=False,
         )
         
         self.providers = providers
