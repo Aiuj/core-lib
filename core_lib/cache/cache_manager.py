@@ -189,6 +189,13 @@ def set_cache(
     global _cache_instance
     if _cache_instance is not None and _cache_instance is not False:
         return True
+
+    # Honour the ENABLE_CACHE=false flag — treat it as an explicit disable.
+    enable_cache_env = os.getenv("ENABLE_CACHE", "").strip().lower()
+    if enable_cache_env == "false":
+        _cache_instance = False
+        return False
+
     try:
         # If provider is auto, allow environment override
         env_pref = _env_provider_preference()
