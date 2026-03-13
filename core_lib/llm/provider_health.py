@@ -424,11 +424,13 @@ def classify_error(error: Exception) -> str:
     if "499" in error_str or "cancelled" in error_str:
         return "server_error"
 
-    # Connection errors
-    if any(x in error_str for x in ["connection", "connect", "unreachable", "network"]):
+    # Connection errors (including DNS resolution failures: socket.gaierror / [Errno -2])
+    if any(x in error_str for x in ["connection", "connect", "unreachable", "network",
+                                     "name or service not known", "nodename nor servname",
+                                     "temporary failure in name resolution"]):
         return "connection_error"
-    
-    if any(x in error_type for x in ["connection", "network", "socket"]):
+
+    if any(x in error_type for x in ["connection", "network", "socket", "gaierror"]):
         return "connection_error"
     
     # Auth errors
