@@ -6,7 +6,7 @@ Update these dictionaries when providers change their pricing.
 Pricing is per 1,000 tokens unless otherwise noted.
 All prices in USD.
 
-Last updated: October 31, 2025
+Last updated: March 14, 2026
 """
 
 # LLM Pricing per 1K tokens (USD)
@@ -27,15 +27,23 @@ LLM_PRICING = {
     "o4-mini": {"input": 0.004, "output": 0.016},
     
     # Google Gemini models
-    # Source: https://ai.google.dev/gemini-api/docs/pricing
-    # Gemini 2.5 models (per 1M tokens in API docs, converted to per 1K)
-    "gemini-3-pro-preview": {"input": 0.002, "output": 0.012},  # $2/$12.00 per 1M tokens (<= 200k prompts)
-    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},  # $1.25/$10.00 per 1M tokens (<= 200k prompts)
-    "gemini-3-flash-preview": {"input": 0.0005, "output": 0.003},  # $0.5/$1.00 per 1M tokens (<= 200k prompts)
-    "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},  # $0.30/$2.50 per 1M tokens
-    "gemini-2.5-flash-preview": {"input": 0.0003, "output": 0.0025},
-    "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},  # $0.10/$0.40 per 1M tokens
-    "gemini-2.5-flash-lite-preview": {"input": 0.0001, "output": 0.0004},
+    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated March 14, 2026)
+    # Prices per 1M tokens in API docs, converted to per 1K here.
+    # Preview variants (e.g. gemini-3.1-pro-preview) are resolved automatically
+    # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
+    # Gemini 3.1 models
+    "gemini-3.1-pro": {"input": 0.002, "output": 0.012},        # $2.00/$12.00 per 1M (<= 200k prompts)
+    "gemini-3.1-flash-lite": {"input": 0.00025, "output": 0.0015},  # $0.25/$1.50 per 1M
+    # Gemini 3 models
+    "gemini-3-pro": {"input": 0.002, "output": 0.012},           # deprecated/shut down 2026-03-09
+    "gemini-3-flash": {"input": 0.0005, "output": 0.003},        # $0.50/$3.00 per 1M
+    # Gemini 2.5 models
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},        # $1.25/$10.00 per 1M (<= 200k prompts)
+    "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},     # $0.30/$2.50 per 1M
+    "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},  # $0.10/$0.40 per 1M
+    # Gemini 2.0 models
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},     # $0.10/$0.40 per 1M
+    "gemini-2.0-flash-lite": {"input": 0.000075, "output": 0.0003},  # $0.075/$0.30 per 1M
     # Gemma models (open models, free)
     "gemma-3": {"input": 0.0, "output": 0.0},
     "gemma-3n": {"input": 0.0, "output": 0.0},
@@ -125,25 +133,68 @@ OCR_PRICING = {
 # Helper function to get pricing info
 def get_llm_pricing(model: str) -> dict:
     """Get pricing for an LLM model.
-    
+
+    Matching is fuzzy so that preview suffixes, date stamps, and tool-variant
+    qualifiers are stripped progressively:
+
+    1. Exact match (e.g. ``gemini-3.1-flash-lite``)
+    2. Strip trailing date stamp (e.g. ``-09-2025``) then exact match
+    3. Truncate to the first ``-preview`` segment then exact match
+       (e.g. ``gemini-3.1-pro-preview-customtools`` → ``gemini-3.1-pro-preview``)
+    4. Remove ``-preview`` and everything after, then exact match
+       (e.g. ``gemini-3.1-pro-preview`` → ``gemini-3.1-pro``)
+    5. Prefix match: the known model key is a prefix of the requested name
+
     Args:
         model: Model name (case-insensitive)
-        
+
     Returns:
         Dictionary with 'input' and 'output' prices per 1K tokens,
         or None if model not found
     """
+    import re
+
     model_key = model.lower()
-    
-    # Try exact match first
+
+    # 1. Exact match
     if model_key in LLM_PRICING:
         return LLM_PRICING[model_key]
-    
-    # Try partial match for model families
+
+    # 2. Strip trailing date stamp suffix, e.g. "-09-2025" or "-12-2025"
+    without_date = re.sub(r'-\d{2}-\d{4}$', '', model_key)
+    if without_date != model_key:
+        if without_date in LLM_PRICING:
+            return LLM_PRICING[without_date]
+        model_key = without_date  # use date-stripped form for further steps
+
+    # 3. Truncate to the first "-preview" occurrence (drops qualifiers like "-customtools")
+    preview_base_match = re.match(r'^(.*?-preview)', model_key)
+    if preview_base_match:
+        preview_base = preview_base_match.group(1)
+        if preview_base != model_key and preview_base in LLM_PRICING:
+            return LLM_PRICING[preview_base]
+
+    # 4. Drop "-preview" and everything after to find the stable model entry
+    without_preview = re.sub(r'-preview.*$', '', model_key)
+    if without_preview != model_key and without_preview in LLM_PRICING:
+        return LLM_PRICING[without_preview]
+
+    # 5. Forward prefix: known model key is a prefix of the requested name
+    #    e.g. "gemini-2.5-flash" matches "gemini-2.5-flash-thinking-exp"
     for known_model, pricing in LLM_PRICING.items():
-        if known_model in model_key or model_key.startswith(known_model.split("-")[0]):
+        if model_key.startswith(known_model):
             return pricing
-    
+
+    # 6. Reverse prefix: requested name is a prefix of a known model key
+    #    e.g. "gemini-3.1-pro" matches "gemini-3.1-pro-preview"
+    #    Use the longest matching known key to pick the most specific entry.
+    best_match = None
+    for known_model, pricing in LLM_PRICING.items():
+        if known_model.startswith(model_key) and (best_match is None or len(known_model) < len(best_match)):
+            best_match = known_model
+    if best_match is not None:
+        return LLM_PRICING[best_match]
+
     return None
 
 
