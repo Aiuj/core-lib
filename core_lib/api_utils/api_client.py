@@ -293,6 +293,9 @@ class APIClient:
     def _extract_error_message(self, response: httpx.Response) -> str:
         """
         Extract error message from response.
+
+        Handles both regular and streaming responses safely — if the response
+        body has not been read yet, falls back to the status code only.
         
         Args:
             response: Response object
@@ -304,13 +307,17 @@ class APIClient:
             error_data = response.json()
             # Try common error message fields
             if isinstance(error_data, dict):
-                return (error_data.get('message') or 
-                       error_data.get('error') or 
-                       error_data.get('detail') or 
-                       str(error_data))
+                return (error_data.get('message') or
+                        error_data.get('error') or
+                        error_data.get('detail') or
+                        str(error_data))
             return str(error_data)
         except Exception:
-            return response.text or f"HTTP {response.status_code}"
+            try:
+                return response.text or f"HTTP {response.status_code}"
+            except Exception:
+                # Streaming response that was never read — return status only
+                return f"HTTP {response.status_code}"
     
     def get(
         self,
@@ -625,6 +632,12 @@ class APIClient:
                 return True, None
                 
         except httpx.HTTPStatusError as e:
+            # The response may be a streaming response that hasn't been read yet;
+            # call read() so _extract_error_message can access response.text/json.
+            try:
+                e.response.read()
+            except Exception:
+                pass
             error_msg = f"[{self.service_name}] HTTP {e.response.status_code}: {self._extract_error_message(e.response)}"
             logger.error(f"API error: {error_msg}")
             return False, error_msg
