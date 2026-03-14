@@ -214,8 +214,8 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
             via ``ProviderRegistry.from_env()``.
 
     Returns:
-        A list of :class:`ProviderHealthResult` — one per unique
-        (provider, model) pair, sorted by priority ascending.
+        A list of :class:`ProviderHealthResult` — one per configured provider
+        entry, sorted by priority ascending.
     """
     if providers is None:
         try:
@@ -225,10 +225,10 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
             logger.warning("LLM health check: failed to load provider registry: %s", exc)
             return []
 
-    unique = _iter_unique_models(providers)
+    configured = list(providers)
     results: List[ProviderHealthResult] = []
 
-    for provider in unique:
+    for provider in configured:
         start = time.monotonic()
         error = _probe_provider(provider)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
