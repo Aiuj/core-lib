@@ -367,6 +367,12 @@ class EmbeddingFactory:
 
 
 # Convenience functions following the LLM module pattern
+
+# Cache for embedding clients keyed by (provider, model, embedding_dim, use_l2_norm, norm_method)
+# so that repeated calls with the same parameters reuse the same instance.
+_embedding_client_cache: dict = {}
+
+
 def create_embedding_client(
     provider: Optional[str] = None,
     model: Optional[str] = None,
@@ -378,6 +384,10 @@ def create_embedding_client(
     **kwargs
 ) -> BaseEmbeddingClient:
     """Create an embedding client with auto-detection or specified provider.
+    
+    Results are cached by (provider, model, embedding_dim, use_l2_norm,
+    norm_method, intelligence_level, usage) so that identical calls return the
+    same client instance.
     
     Automatically uses FallbackEmbeddingClient when comma-separated URLs are detected
     in environment variables for high availability.
@@ -393,6 +403,9 @@ def create_embedding_client(
     Returns:
         Configured embedding client instance (FallbackEmbeddingClient if multiple URLs detected)
     """
+    cache_key = (provider, model, embedding_dim, use_l2_norm, norm_method, intelligence_level, usage)
+    if not kwargs and cache_key in _embedding_client_cache:
+        return _embedding_client_cache[cache_key]
     # Use fresh settings snapshot when provider is not explicitly forced
     runtime_settings = load_runtime_settings_if_needed(
         provider,
@@ -428,6 +441,8 @@ def create_embedding_client(
         ),
     )
     if client_from_chain is not None:
+        if not kwargs:
+            _embedding_client_cache[cache_key] = client_from_chain
         return client_from_chain
 
     # Detect if we should use fallback client (comma-separated URLs)
@@ -446,10 +461,13 @@ def create_embedding_client(
     if url_to_check:
         from .fallback_client import FallbackEmbeddingClient
         logger.debug(f"Detected comma-separated URLs for provider '{provider_name}', using FallbackEmbeddingClient for HA")
-        return FallbackEmbeddingClient.from_env(provider=provider_name)
+        client = FallbackEmbeddingClient.from_env(provider=provider_name)
+        if not kwargs:
+            _embedding_client_cache[cache_key] = client
+        return client
     
     # Otherwise use single provider
-    return EmbeddingFactory.create(
+    client = EmbeddingFactory.create(
         provider=provider,
         model=model,
         embedding_dim=embedding_dim,
@@ -457,6 +475,9 @@ def create_embedding_client(
         norm_method=norm_method,
         **kwargs
     )
+    if not kwargs:
+        _embedding_client_cache[cache_key] = client
+    return client
 
 
 def create_client_from_env() -> BaseEmbeddingClient:
