@@ -48,6 +48,12 @@ from .fallback_client import (
     FallbackResult,
     create_fallback_llm_client,
 )
+from .startup_preflight import (
+    StartupValidationSummary,
+    run_llm_startup_preflight,
+    ProviderHealthResult,
+    check_llm_providers_health,
+)
 from .json_parser import clean_and_parse_json_response
 
 # LangChain adapter - optional import (requires langchain-core)
@@ -77,6 +83,10 @@ __all__ = [
     "FallbackLLMClient",
     "FallbackResult",
     "create_fallback_llm_client",
+    "StartupValidationSummary",
+    "run_llm_startup_preflight",
+    "ProviderHealthResult",
+    "check_llm_providers_health",
     
     # Provider registry (multi-provider configuration)
     "ProviderConfig",
