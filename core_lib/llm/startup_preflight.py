@@ -148,6 +148,32 @@ def _probe_provider(provider) -> str | None:
                     pass
 
 
+def _resolve_provider_endpoint_and_region(provider) -> tuple[Optional[str], Optional[str]]:
+    """Resolve provider URL/region using effective config (includes env defaults)."""
+    url = getattr(provider, "host", None) or None
+    region = getattr(provider, "location", None) or None
+
+    # ProviderConfig.to_llm_config applies provider/env defaults that may not be
+    # present on the raw ProviderConfig object.
+    try:
+        resolved = provider.to_llm_config()
+    except Exception:
+        resolved = None
+
+    if resolved is not None:
+        if not url:
+            url = (
+                getattr(resolved, "base_url", None)
+                or getattr(resolved, "azure_endpoint", None)
+                or getattr(resolved, "host", None)
+                or None
+            )
+        if not region:
+            region = getattr(resolved, "location", None) or None
+
+    return url, region
+
+
 async def run_llm_startup_preflight() -> StartupValidationSummary:
     """Run startup checks for configured providers.
 
@@ -248,6 +274,7 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
         start = time.monotonic()
         error = _probe_provider(provider)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        resolved_url, resolved_region = _resolve_provider_endpoint_and_region(provider)
 
         results.append(
             ProviderHealthResult(
@@ -258,8 +285,8 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
                 healthy=error is None,
                 error=error,
                 latency_ms=elapsed_ms,
-                url=getattr(provider, "host", None) or None,
-                location=getattr(provider, "location", None) or None,
+                url=resolved_url,
+                location=resolved_region,
             )
         )
 
