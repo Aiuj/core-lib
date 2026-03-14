@@ -219,3 +219,183 @@ def test_ollama_model_not_found_is_handled_without_exception_log(monkeypatch, ca
     assert "model not available (handled)" in caplog.text
     assert "ollama.chat failed" not in caplog.text
     assert "Traceback" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Cloud API key authentication
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_cloud_api_key_sent_as_bearer_header(monkeypatch):
+    """When api_key is set, the Authorization header must carry a Bearer token."""
+    captured_kwargs: dict = {}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            captured_kwargs.update({"host": host, **kwargs})
+
+        def chat(self, **payload):
+            return {
+                "message": {"content": "hello from the cloud"},
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+            }
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="qwen3.5:2b",
+            base_url="https://api.ollama.com",
+            api_key="ollama-sk-test-1234",
+            timeout=30,
+        )
+    )
+
+    result = provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert result["content"] == "hello from the cloud"
+    assert captured_kwargs.get("host") == "https://api.ollama.com"
+    headers = captured_kwargs.get("headers", {})
+    assert headers.get("Authorization") == "Bearer ollama-sk-test-1234"
+
+
+def test_ollama_no_api_key_omits_auth_header(monkeypatch):
+    """When api_key is not set, no Authorization header should be added."""
+    captured_kwargs: dict = {}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            captured_kwargs.update({"host": host, **kwargs})
+
+        def chat(self, **payload):
+            return {
+                "message": {"content": "local response"},
+                "usage": {"prompt_tokens": 3, "completion_tokens": 3, "total_tokens": 6},
+            }
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="qwen3:1.7b",
+            base_url="http://localhost:11434",
+            timeout=30,
+        )
+    )
+
+    provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert "headers" not in captured_kwargs
+
+
+def test_provider_registry_passes_api_key_to_ollama_config(monkeypatch):
+    """ProviderConfig.to_llm_config() must propagate api_key into OllamaConfig."""
+    from core_lib.llm.provider_registry import ProviderConfig
+
+    cfg = ProviderConfig.from_dict(
+        {
+            "provider": "ollama",
+            "model": "qwen3.5:2b",
+            "host": "https://api.ollama.com",
+            "api_key": "sk-cloud-key",
+        }
+    )
+
+    llm_cfg = cfg.to_llm_config()
+
+    assert isinstance(llm_cfg, OllamaConfig)
+    assert llm_cfg.api_key == "sk-cloud-key"
+    assert llm_cfg.base_url == "https://api.ollama.com"
+
+
+def test_ollama_config_from_env_reads_api_key(monkeypatch):
+    """OllamaConfig.from_env() must pick up OLLAMA_API_KEY."""
+    monkeypatch.setenv("OLLAMA_API_KEY", "env-api-key-xyz")
+    monkeypatch.setenv("OLLAMA_HOST", "https://api.ollama.com")
+
+    cfg = OllamaConfig.from_env()
+
+    assert cfg.api_key == "env-api-key-xyz"
+    assert "ollama.com" in cfg.base_url
+
+
+# ---------------------------------------------------------------------------
+# Thinking suppression for non-hinted models (e.g. ministral-3)
+# ---------------------------------------------------------------------------
+
+
+def test_think_false_sent_for_non_hinted_model_with_thinking_disabled(monkeypatch):
+    """think:false must be sent even when the model is not in _THINKING_MODEL_HINTS.
+
+    Regression test: ministral-3 is not in the hint list but supports thinking.
+    If the user configures thinking: {enabled: false, level: off} and we omit
+    think:false from the payload, Ollama may enable thinking by default, causing
+    unexpectedly high token usage during health checks.
+    """
+    captured_payload: dict = {}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            pass
+
+        def chat(self, **payload):
+            captured_payload.update(payload)
+            return {
+                "message": {"content": "OK"},
+                "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+            }
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="ministral-3",
+            base_url="http://127.0.0.1:11434",
+            timeout=30,
+            thinking_config={"enabled": False, "level": "off"},
+        )
+    )
+
+    # Verify the model is not in the thinking hints list
+    assert not provider._supports_thinking()
+
+    provider.chat(messages=[{"role": "user", "content": "Reply with OK."}])
+
+    # think:false must be explicitly sent so Ollama suppresses thinking
+    assert captured_payload.get("think") is False
+
+
+def test_think_true_not_sent_for_non_hinted_model(monkeypatch):
+    """think:true must NOT be sent for models not in _THINKING_MODEL_HINTS."""
+    captured_payload: dict = {}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            pass
+
+        def chat(self, **payload):
+            captured_payload.update(payload)
+            return {
+                "message": {"content": "OK"},
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+            }
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="ministral-3",
+            base_url="http://127.0.0.1:11434",
+            timeout=30,
+            thinking_enabled=True,
+        )
+    )
+
+    provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+    # Should NOT propagate think:true for an unknown model
+    assert "think" not in captured_payload

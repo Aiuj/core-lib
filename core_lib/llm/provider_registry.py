@@ -408,6 +408,7 @@ class ProviderConfig:
                 thinking_enabled=self.thinking_enabled,
                 thinking_config=self.thinking_config,
                 base_url=self.host or "http://localhost:11434",
+                api_key=self.api_key or os.getenv("OLLAMA_API_KEY") or None,
                 **{k: v for k, v in self.extra.items() if k in (
                     "timeout", "num_ctx", "num_predict", "repeat_penalty", "top_k", "top_p"
                 )}

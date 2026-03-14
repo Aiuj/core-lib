@@ -26,6 +26,7 @@ logger = get_module_logger()
 @dataclass
 class OllamaConfig(LLMConfig):
     base_url: str = "http://localhost:11434"
+    api_key: Optional[str] = None
     timeout: int = 60
     num_ctx: Optional[int] = None
     num_predict: Optional[int] = None
@@ -42,6 +43,7 @@ class OllamaConfig(LLMConfig):
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
         base_url: str = "http://localhost:11434",
+        api_key: Optional[str] = None,
         timeout: int = 60,
         num_ctx: Optional[int] = None,
         num_predict: Optional[int] = None,
@@ -53,6 +55,7 @@ class OllamaConfig(LLMConfig):
     ):
         super().__init__("ollama", model, temperature, max_tokens, thinking_enabled)
         self.base_url = base_url
+        self.api_key = api_key or None
         self.timeout = timeout
         self.num_ctx = num_ctx
         self.num_predict = num_predict
@@ -89,7 +92,8 @@ class OllamaConfig(LLMConfig):
             max_tokens=int(max_tokens_env) if max_tokens_env is not None else None,
             thinking_enabled=os.getenv("OLLAMA_THINKING_ENABLED", "false").lower() == "true",
             thinking_config=thinking_config,
-            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            base_url=os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_HOST", "http://localhost:11434")),
+            api_key=os.getenv("OLLAMA_API_KEY") or None,
             timeout=int(os.getenv("OLLAMA_TIMEOUT", "60")),
             num_ctx=int(num_ctx_env) if num_ctx_env is not None else None,
             num_predict=int(num_predict_env) if num_predict_env is not None else None,
@@ -164,23 +168,19 @@ class OllamaProvider(BaseProvider):
 
     def _chat_once(self, payload: Dict[str, Any], timeout: Optional[float]) -> Dict[str, Any]:
         """Execute one Ollama chat call with optional timeout override."""
-        if getattr(self.config, "base_url", None):
-            from ollama import Client  # type: ignore
+        from ollama import Client  # type: ignore
 
-            client_kwargs: Dict[str, Any] = {"host": self.config.base_url}
-            if timeout is not None:
-                client_kwargs["timeout"] = timeout
-
-            client = Client(**client_kwargs)
-            return client.chat(**payload)
-
-        # Fallback path when no host is configured
+        host = getattr(self.config, "base_url", None) or "http://localhost:11434"
+        client_kwargs: Dict[str, Any] = {"host": host}
         if timeout is not None:
-            from ollama import Client  # type: ignore
-            client = Client(timeout=timeout)
-            return client.chat(**payload)
+            client_kwargs["timeout"] = timeout
 
-        return self._ollama.chat(**payload)
+        api_key = getattr(self.config, "api_key", None)
+        if api_key:
+            client_kwargs["headers"] = {"Authorization": f"Bearer {api_key}"}
+
+        client = Client(**client_kwargs)
+        return client.chat(**payload)
 
     def _build_options(self) -> Dict[str, Any]:
         # Map config to ollama options when available
@@ -293,12 +293,15 @@ class OllamaProvider(BaseProvider):
 
             # Thinking support per https://ollama.com/blog/thinking
             # Ollama Python/HTTP uses top-level `think: bool`.
+            # When think_flag is True, only set it if the model is known to support
+            # thinking (to avoid sending unsupported params to non-thinking models).
+            # When think_flag is False, always send it explicitly so that models
+            # capable of thinking (but not in our hints list) are told to disable it.
             think_flag = self._resolve_think_flag(thinking_enabled)
-            if think_flag is not None and self._supports_thinking():
-                try:
-                    payload["think"] = bool(think_flag)
-                except Exception:
-                    pass
+            if think_flag is True and self._supports_thinking():
+                payload["think"] = True
+            elif think_flag is False:
+                payload["think"] = False
 
             # Execute API call with latency measurement
             start = time.perf_counter()

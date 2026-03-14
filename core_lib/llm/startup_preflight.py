@@ -46,6 +46,8 @@ class ProviderHealthResult:
     healthy: bool
     error: Optional[str]
     latency_ms: Optional[float]
+    url: Optional[str] = None
+    location: Optional[str] = None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -114,8 +116,22 @@ def _probe_provider(provider) -> str | None:
     """
     client = None
     try:
-        client = provider.to_client()
-        response = client.chat([{"role": "user", "content": "Reply with OK."}])
+        # Cap output tokens for health probes so thinking-capable models don't
+        # burn excessive tokens.  We only override when the provider has no
+        # explicit max_tokens configured (to respect intentional limits).
+        probe_config = provider
+        try:
+            import dataclasses as _dc
+            if not getattr(provider, "max_tokens", None):
+                probe_config = _dc.replace(provider, max_tokens=32)
+        except Exception:
+            pass  # dataclasses.replace failed (e.g. not a dataclass); use original
+
+        client = probe_config.to_client()
+        response = client.chat(
+            [{"role": "user", "content": "Reply with OK."}],
+            thinking_enabled=False,
+        )
         if isinstance(response, dict) and response.get("error"):
             return str(response["error"])
         return None
@@ -242,6 +258,8 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
                 healthy=error is None,
                 error=error,
                 latency_ms=elapsed_ms,
+                url=getattr(provider, "host", None) or None,
+                location=getattr(provider, "location", None) or None,
             )
         )
 
