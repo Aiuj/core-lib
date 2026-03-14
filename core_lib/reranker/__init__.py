@@ -72,6 +72,10 @@ from .factory import (
     create_reranker_from_env_with_fallback,
     get_reranker_client,
 )
+from .health_probe import (
+    RerankerProviderHealthResult,
+    check_reranker_providers_health,
+)
 
 __all__ = [
     # Base classes and models
@@ -90,6 +94,8 @@ __all__ = [
     "RerankerFactory",
     "create_reranker_client",
     "create_client_from_env",
+    "RerankerProviderHealthResult",
+    "check_reranker_providers_health",
     "create_infinity_reranker",
     "create_cohere_reranker",
     "create_local_reranker",

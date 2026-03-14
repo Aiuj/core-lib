@@ -59,6 +59,10 @@ from .factory import (
     create_infinity_client,
     get_embedding_client,  # Legacy function
 )
+from .health_probe import (
+    EmbeddingProviderHealthResult,
+    check_embedding_providers_health,
+)
 from .models import EmbeddingResponse
 
 # Conditionally import providers based on availability
@@ -124,6 +128,8 @@ __all__ = [
     "EmbeddingFactory",
     "create_embedding_client",
     "create_client_from_env",
+    "EmbeddingProviderHealthResult",
+    "check_embedding_providers_health",
     "create_openai_client",
     "create_google_genai_client",
     "create_ollama_client",
