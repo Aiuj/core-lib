@@ -5,7 +5,7 @@ from typing import Any, Optional, Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ..tracing.logging_context import LoggingContext
+from ..tracing.logging_context import LoggingContext, generate_process_id
 from .. import parse_from
 
 _logger = logging.getLogger(__name__)
@@ -58,6 +58,9 @@ class FromContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process the request and inject 'from' context.
         
+        Automatically generates a unique ``process_id`` for each request so that
+        all log records emitted while handling this request can be correlated.
+        
         Args:
             request: The incoming request
             call_next: The next middleware/handler in the chain
@@ -67,6 +70,10 @@ class FromContextMiddleware(BaseHTTPMiddleware):
         """
         from_raw = request.query_params.get("from")
         from_dict = parse_from(from_raw)
+        
+        # Generate a unique process_id for this request
+        process_id = generate_process_id()
+        from_dict['process_id'] = process_id
         
         # Extract intelligence_level from query params if present
         intelligence_level_raw = request.query_params.get("intelligence_level")
@@ -97,6 +104,9 @@ class FromContextMiddleware(BaseHTTPMiddleware):
                     _logger.info("%s %s", request.method, str(request.url))
 
                 response = await call_next(request)
+            
+            # Return the process_id in a response header for client correlation
+            response.headers["X-Process-ID"] = process_id
             return response
         except Exception:
             # Ensure exceptions propagate while still enriching any emitted logs
@@ -146,6 +156,10 @@ async def inject_from_logging_context(
     from_raw = request.query_params.get("from")
     from_dict = parse_from(from_raw)
     
+    # Generate a unique process_id for this request
+    process_id = generate_process_id()
+    from_dict['process_id'] = process_id
+    
     # Extract intelligence_level from query params if present
     intelligence_level_raw = request.query_params.get("intelligence_level")
     if intelligence_level_raw is not None:
@@ -173,6 +187,9 @@ async def inject_from_logging_context(
                 _logger.info("%s %s", request.method, str(request.url))
 
             response = await call_next(request)
+        
+        # Return the process_id in a response header for client correlation
+        response.headers["X-Process-ID"] = process_id
         return response
     except Exception:
         # Ensure exceptions propagate while still enriching any emitted logs

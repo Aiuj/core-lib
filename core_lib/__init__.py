@@ -16,7 +16,7 @@ from .jobs import (
     JobWorker, JobHandler
 )
 from .mcp_utils import get_transport_from_args
-from .tracing import setup_tracing, setup_logging, get_logger, get_module_logger, get_last_logging_config, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION, LoggingContext, parse_from
+from .tracing import setup_tracing, setup_logging, get_logger, get_module_logger, get_last_logging_config, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION, LoggingContext, parse_from, generate_process_id
 from .llm import (
     LLMClient, LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig,
     create_llm_client, create_gemini_client, create_ollama_client, 
@@ -98,6 +98,7 @@ __all__ = [
     "FROM_FIELD_DESCRIPTION",
     "INTELLIGENCE_LEVEL_DESCRIPTION",
     "LoggingContext",
+    "generate_process_id",
     
     # LLM
     "LLMClient",

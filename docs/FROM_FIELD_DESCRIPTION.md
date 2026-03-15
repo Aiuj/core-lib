@@ -71,7 +71,8 @@ The `from` parameter can be either:
 
 All fields are optional:
 
-- **session_id**: Unique identifier for the current session/conversation
+- **session_id**: Client-provided identifier grouping multiple API calls in a session/conversation
+- **process_id**: Server-generated unique ID for a single request (auto-injected by middleware — do not supply manually)
 - **app_name**: Name of the calling application
 - **app_version**: Version of the calling application
 - **model_name**: AI model being used (e.g., "gemini-2.5-flash", "gpt-4")
@@ -80,6 +81,8 @@ All fields are optional:
 - **company_name**: Human-readable name of the organization
 - **company_id**: Unique identifier for the organization (UUID format)
 - **intelligence_level**: Integer 0-10 indicating the intelligence/quality level for LLM responses (also accepted as a separate query parameter)
+
+> **Note:** When using `FromContextMiddleware` or `inject_from_logging_context`, a unique `process_id` is automatically generated for each request and returned in the `X-Process-ID` response header. This enables correlating all logs for a single API call.
 
 ## Benefits
 

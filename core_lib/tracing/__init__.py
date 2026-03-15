@@ -5,6 +5,7 @@ from .logger import setup_logging, get_logger, get_module_logger, get_last_loggi
 from .logging_context import (
     LoggingContext,
     LoggingContextFilter,
+    generate_process_id,
     get_current_logging_context,
     set_logging_context,
     clear_logging_context,
@@ -45,6 +46,7 @@ __all__ = [
     "get_last_logging_config",
     "LoggingContext",
     "LoggingContextFilter",
+    "generate_process_id",
     "get_current_logging_context",
     "set_logging_context",
     "clear_logging_context",

@@ -60,7 +60,7 @@ settings = get_settings()
 ### Logging
 ```python
 from core_lib import get_module_logger, setup_logging
-from core_lib.tracing import LoggingContext, parse_from
+from core_lib.tracing import LoggingContext, parse_from, generate_process_id
 
 # Setup once in entrypoint (or via initialize_settings(setup_logging=True))
 setup_logging(app_name="my-app", level="INFO")
@@ -69,8 +69,12 @@ setup_logging(app_name="my-app", level="INFO")
 logger = get_module_logger()
 
 # Add request context (user_id, session_id, company_id)
-with LoggingContext(parse_from(from_param)):
-    logger.info("Processing request")  # Includes context fields
+# For HTTP: FromContextMiddleware auto-generates process_id per request
+# For non-HTTP (MCP tools, workers): generate it manually
+from_dict = parse_from(from_param)
+from_dict["process_id"] = generate_process_id()
+with LoggingContext(from_dict):
+    logger.info("Processing request")  # Includes process.id, session.id, etc.
 ```
 
 ## Developer Workflows

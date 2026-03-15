@@ -285,6 +285,9 @@ The `from` parameter is a JSON string with standard fields:
 }
 ```
 
+> **Note:** `process_id` is **not** part of the `from` parameter. It is automatically generated server-side by the middleware for each request and injected into the logging context. You do not need to supply it.
+```
+
 Example API call:
 ```bash
 curl -X POST "https://api.example.com/v1/answer/question?company_id=comp-789&from=%7B%22session_id%22%3A%22session-123%22%2C%22user_id%22%3A%22user-456%22%7D" \
@@ -298,7 +301,8 @@ curl -X POST "https://api.example.com/v1/answer/question?company_id=comp-789&fro
 
 | from field | OTel attribute | Description |
 |------------|----------------|-------------|
-| `session_id` | `session.id` | Unique session identifier |
+| `process_id` | `process.id` | Server-generated unique ID per request (auto-injected by middleware) |
+| `session_id` | `session.id` | Client-provided session identifier (groups multiple requests) |
 | `user_id` | `user.id` | User UUID/ID |
 | `user_name` | `user.name` | User email/username |
 | `company_id` | `organization.id` | Company/tenant UUID |
@@ -375,44 +379,53 @@ with LoggingContext({"session_id": "session-123"}):
 With contextual metadata, you can filter logs in Grafana/Datadog/New Relic:
 
 ```
+# Find all logs for a single API call (process_id is auto-generated per request)
+process.id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+# Find all logs for a session (groups multiple API calls)
+session.id = "session-abc-123"
+
 # Find all logs for a specific user
 user.id = "user-456"
 
 # Find all logs for a company
 organization.id = "comp-789"
 
-# Find all logs for a session (across services!)
-session.id = "session-abc-123"
-
 # Find logs from specific client app version
 client.app.name = "mobile-app" AND client.app.version = "2.1.0"
 ```
 
-### FastAPI Middleware Example
+> **Tip:** Use `process.id` to isolate logs for a single API call. Use `session.id` to see all API calls in a session. The `process_id` is also returned in the `X-Process-ID` response header for client-side correlation.
 
-Automatically add context to ALL endpoints:
+### FastAPI Middleware (Recommended)
+
+Use the built-in middleware which automatically generates a `process_id` for every request:
+
+```python
+from fastapi import FastAPI
+from core_lib.api_utils.fastapi_middleware import FromContextMiddleware
+
+app = FastAPI()
+
+# This automatically:
+# 1. Parses the 'from' query parameter (session_id, user_id, etc.)
+# 2. Generates a unique process_id per request
+# 3. Injects all fields into LoggingContext for every log record
+# 4. Returns X-Process-ID in the response header
+app.add_middleware(FromContextMiddleware)
+```
+
+Or using the functional alternative:
 
 ```python
 from fastapi import FastAPI, Request
-from core_lib.tracing import LoggingContext, parse_from
+from core_lib.api_utils.fastapi_middleware import inject_from_logging_context
 
 app = FastAPI()
 
 @app.middleware("http")
-async def logging_context_middleware(request: Request, call_next):
-    # Extract 'from' from query params
-    from_ = request.query_params.get("from")
-    from_dict = parse_from(from_)
-    
-    # Add request_id if not in from_dict
-    if "session_id" not in from_dict:
-        import uuid
-        from_dict["session_id"] = str(uuid.uuid4())
-    
-    # All logs in this request will have context
-    with LoggingContext(from_dict):
-        response = await call_next(request)
-        return response
+async def add_from_context(request: Request, call_next):
+    return await inject_from_logging_context(request, call_next)
 
 @app.get("/users")
 async def get_users():
@@ -420,19 +433,20 @@ async def get_users():
     return {"users": [...]}
 ```
 
-### MCP Server Example
+### MCP Server / Background Worker Example
 
-MCP servers can use context for request tracking:
+For non-HTTP contexts (MCP tools, background workers), generate `process_id` manually:
 
 ```python
 from mcp.server import Server
-from core_lib.tracing import LoggingContext, parse_from
+from core_lib.tracing import LoggingContext, parse_from, generate_process_id
 
 server = Server("my-app-server")
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict, from_: str | None = None):
     from_dict = parse_from(from_)
+    from_dict["process_id"] = generate_process_id()  # Unique ID for this tool invocation
     
     with LoggingContext(from_dict):
         logger.info(f"Tool called: {name}")

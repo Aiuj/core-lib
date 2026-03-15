@@ -31,11 +31,32 @@ to all log records emitted within the context block.
 import json
 import logging
 import threading
+import uuid
 from typing import Dict, Any, Optional
 from contextvars import ContextVar
 
 # Thread-safe context storage using contextvars (works with asyncio)
 _logging_context: ContextVar[Dict[str, Any]] = ContextVar('logging_context', default={})
+
+
+def generate_process_id() -> str:
+    """Generate a unique process ID for correlating logs within a single operation.
+    
+    A process_id identifies all log records produced while handling one API call,
+    background job, or MCP tool invocation.  Unlike session_id (which is
+    client-provided and spans multiple requests), process_id is server-generated
+    and scoped to exactly one execution.
+    
+    Returns:
+        A UUID4 string, e.g. ``"a1b2c3d4-e5f6-7890-abcd-ef1234567890"``.
+    
+    Example::
+    
+        pid = generate_process_id()
+        with LoggingContext({"process_id": pid, **from_dict}):
+            logger.info("Start")   # includes process.id in every record
+    """
+    return str(uuid.uuid4())
 
 
 def parse_from(from_: str | dict | None) -> dict:
@@ -107,6 +128,9 @@ class LoggingContextFilter(logging.Filter):
             
             # Map from_ fields to OpenTelemetry semantic conventions
             # See: https://opentelemetry.io/docs/specs/semconv/
+            
+            if 'process_id' in context and context['process_id']:
+                record.extra_attrs['process.id'] = context['process_id']
             
             if 'session_id' in context and context['session_id']:
                 record.extra_attrs['session.id'] = context['session_id']
@@ -258,6 +282,7 @@ def install_logging_context_filter(logger: Optional[logging.Logger] = None):
 __all__ = [
     'LoggingContext',
     'LoggingContextFilter',
+    'generate_process_id',
     'get_current_logging_context',
     'set_logging_context',
     'clear_logging_context',

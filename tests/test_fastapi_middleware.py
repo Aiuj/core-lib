@@ -1,11 +1,12 @@
 """Tests for FastAPI middleware utilities."""
 
+import uuid
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from core_lib.api_utils.fastapi_middleware import inject_from_logging_context
-from core_lib.tracing import get_current_logging_context
+from core_lib.api_utils.fastapi_middleware import inject_from_logging_context, FromContextMiddleware
+from core_lib.tracing import get_current_logging_context, generate_process_id
 
 
 @pytest.fixture
@@ -93,6 +94,79 @@ def test_middleware_without_intelligence_level(app):
     
     # Context should be empty or not contain intelligence_level
     assert "intelligence_level" not in data["context"]
+
+
+# --- process_id tests ---
+
+def test_generate_process_id_returns_valid_uuid():
+    """Test that generate_process_id returns a valid UUID4 string."""
+    pid = generate_process_id()
+    # Should be a valid UUID
+    parsed = uuid.UUID(pid)
+    assert str(parsed) == pid
+    assert parsed.version == 4
+
+
+def test_generate_process_id_is_unique():
+    """Test that each call produces a different ID."""
+    ids = {generate_process_id() for _ in range(100)}
+    assert len(ids) == 100
+
+
+def test_middleware_injects_process_id(app):
+    """Test that middleware auto-generates a process_id in context."""
+    client = TestClient(app)
+    response = client.get("/test")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # process_id should be present in logging context
+    assert "process_id" in data["context"]
+    # Should be a valid UUID
+    uuid.UUID(data["context"]["process_id"])
+
+
+def test_middleware_returns_process_id_header(app):
+    """Test that the response contains an X-Process-ID header."""
+    client = TestClient(app)
+    response = client.get("/test")
+
+    assert response.status_code == 200
+    assert "X-Process-ID" in response.headers
+    # Header value should match the context value
+    data = response.json()
+    assert response.headers["X-Process-ID"] == data["context"]["process_id"]
+
+
+def test_middleware_process_id_unique_per_request(app):
+    """Test that each request gets a different process_id."""
+    client = TestClient(app)
+    ids = set()
+    for _ in range(10):
+        response = client.get("/test")
+        ids.add(response.headers["X-Process-ID"])
+    assert len(ids) == 10
+
+
+def test_class_middleware_injects_process_id():
+    """Test FromContextMiddleware class also generates process_id."""
+    app = FastAPI()
+    app.add_middleware(FromContextMiddleware, tracing_client=None)
+
+    @app.get("/test")
+    async def test_endpoint():
+        context = get_current_logging_context()
+        return {"context": context}
+
+    client = TestClient(app)
+    response = client.get("/test")
+
+    assert response.status_code == 200
+    assert "X-Process-ID" in response.headers
+    data = response.json()
+    assert "process_id" in data["context"]
+    uuid.UUID(data["context"]["process_id"])
 
 
 if __name__ == "__main__":

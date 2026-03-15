@@ -139,18 +139,30 @@ export OTLP_LOG_CHANNEL=faciliter
 
 ### Contextual Logging (Request Metadata):
 
-Add request-specific metadata (user ID, session ID, company ID) to all logs:
+Add request-specific metadata (user ID, session ID, company ID) to all logs. The middleware also auto-generates a unique `process_id` per request for precise log correlation:
 
 ```python
-from core_lib.tracing import LoggingContext, FROM_FIELD_DESCRIPTION, parse_from
+from core_lib.api_utils.fastapi_middleware import FromContextMiddleware
+
+# Recommended: use the built-in middleware (auto-generates process_id)
+app.add_middleware(FromContextMiddleware)
+# Every log record now includes: process.id, session.id, user.id, organization.id, etc.
+# The process_id is returned in the X-Process-ID response header.
+```
+
+For manual usage:
+
+```python
+from core_lib.tracing import LoggingContext, FROM_FIELD_DESCRIPTION, parse_from, generate_process_id
 
 @app.post("/endpoint")
 async def endpoint(from_: Optional[str] = Query(None, alias="from", description=FROM_FIELD_DESCRIPTION)):
     from_dict = parse_from(from_)  # Parse JSON metadata
+    from_dict["process_id"] = generate_process_id()  # Unique ID for this call
     
     with LoggingContext(from_dict):
         logger.info("Processing request")
-        # All logs include: session.id, user.id, organization.id, etc.
+        # All logs include: process.id, session.id, user.id, organization.id, etc.
 ```
 
 See **[Centralized Logging Guide](docs/centralized-logging.md)** for FastAPI, MCP, CLI, and web app examples.
