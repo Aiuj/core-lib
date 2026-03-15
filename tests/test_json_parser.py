@@ -1,5 +1,6 @@
 """Tests for JSON parser utilities."""
 
+import json
 import pytest
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -129,6 +130,24 @@ class TestAugmentPromptForJson:
         
         assert "JSON" in result
         assert "result" in result
+
+    def test_augment_prompt_keeps_array_fields_as_lists(self):
+        """Array schema fields should remain arrays in the emitted template."""
+        class SearchQualitySchema(BaseModel):
+            quality_score: float = Field(..., ge=0, le=10)
+            is_sufficient: bool
+            explanation: str
+            missing_information: list[str] = Field(default_factory=list)
+            recommendations: list[str] = Field(default_factory=list)
+
+        result = augment_prompt_for_json("Rate quality", SearchQualitySchema)
+
+        json_start = result.find("{")
+        assert json_start != -1
+        template = json.loads(result[json_start:])
+
+        assert isinstance(template.get("missing_information"), list)
+        assert isinstance(template.get("recommendations"), list)
 
 
 class TestStripMarkdownCodeBlock:

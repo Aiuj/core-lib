@@ -501,6 +501,8 @@ def _build_json_prompt_template(schema: Type[BaseModel]) -> str:
     * Enum / Literal fields → ``"val1|val2|val3"`` so the model picks one.
     * Nullable fields with a default → the default value (often ``null``).
     * Optional nullable fields without a default → ``null``.
+    * Array fields → ``[<example_item>]`` to keep list types intact.
+    * Object fields → ``{}``.
     * Free-text string fields → ``"<field_name>"``.
     * Boolean fields → ``true``.
     * Integer / number fields → ``0``.
@@ -512,33 +514,53 @@ def _build_json_prompt_template(schema: Type[BaseModel]) -> str:
     schema_json = schema.model_json_schema()
     properties = schema_json.get("properties", {})
 
-    example: Dict[str, Any] = {}
-    for field_name, field_schema in properties.items():
+    def _example_for_field(field_name: str, field_schema: Dict[str, Any]) -> Any:
         enum_values = field_schema.get("enum")
         if enum_values is not None:
-            example[field_name] = "|".join(str(v) for v in enum_values)
-            continue
+            return "|".join(str(v) for v in enum_values)
 
         # Resolve anyOf (used for Optional / Union types)
         any_of = field_schema.get("anyOf", [])
-        is_nullable = any(t.get("type") == "null" for t in any_of)
-        non_null_types = [t for t in any_of if t.get("type") != "null"]
-
-        field_type = field_schema.get("type") or (
-            non_null_types[0].get("type") if non_null_types else "string"
-        )
+        is_nullable = any(isinstance(t, dict) and t.get("type") == "null" for t in any_of)
+        non_null_types = [
+            t for t in any_of
+            if isinstance(t, dict) and t.get("type") != "null"
+        ]
 
         # Use explicit default when present
         if "default" in field_schema:
-            example[field_name] = field_schema["default"]
-        elif is_nullable:
-            example[field_name] = None
-        elif field_type == "boolean":
-            example[field_name] = True
-        elif field_type in ("integer", "number"):
-            example[field_name] = 0
-        else:
-            example[field_name] = f"<{field_name}>"
+            return field_schema["default"]
+        if is_nullable:
+            return None
+
+        effective_schema = non_null_types[0] if non_null_types else field_schema
+        field_type = effective_schema.get("type", "string")
+
+        if field_type == "boolean":
+            return True
+        if field_type in ("integer", "number"):
+            return 0
+        if field_type == "array":
+            items_schema = effective_schema.get("items", {})
+            if isinstance(items_schema, dict):
+                item_type = items_schema.get("type", "string")
+                item_enum = items_schema.get("enum")
+                if item_enum is not None:
+                    return ["|".join(str(v) for v in item_enum)]
+                if item_type in ("integer", "number"):
+                    return [0]
+                if item_type == "boolean":
+                    return [True]
+                if item_type == "object":
+                    return [{}]
+            return [f"<{field_name}_item>"]
+        if field_type == "object":
+            return {}
+        return f"<{field_name}>"
+
+    example: Dict[str, Any] = {}
+    for field_name, field_schema in properties.items():
+        example[field_name] = _example_for_field(field_name, field_schema)
 
     return json.dumps(example, ensure_ascii=False)
 
