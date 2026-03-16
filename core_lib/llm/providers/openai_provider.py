@@ -78,6 +78,11 @@ class OpenAIConfig(LLMConfig):
             )
         )
 
+    @property
+    def is_openrouter(self) -> bool:
+        """True when base_url points to the OpenRouter endpoint."""
+        return bool(self.base_url and "openrouter.ai" in self.base_url.lower())
+
     @classmethod
     def from_env(cls) -> "OpenAIConfig":
         import os

@@ -71,6 +71,57 @@ class TestLLMConfig:
         assert config.location == "europe-west9"
         assert config.service_account_file == "C:/keys/service-account.json"
 
+    def test_provider_config_openrouter_default_model_and_base_url(self):
+        cfg = ProviderConfig(provider="openrouter", api_key="sk-or-test")
+        assert cfg.provider == "openrouter"
+        assert cfg.model == "openrouter/auto"
+        llm_cfg = cfg.to_llm_config()
+        assert llm_cfg.base_url == "https://openrouter.ai/api/v1"
+        assert llm_cfg.api_key == "sk-or-test"
+
+    def test_provider_config_openrouter_custom_model(self):
+        cfg = ProviderConfig(provider="openrouter", api_key="sk-or-test", model="anthropic/claude-3.5-sonnet")
+        assert cfg.model == "anthropic/claude-3.5-sonnet"
+        llm_cfg = cfg.to_llm_config()
+        assert llm_cfg.base_url == "https://openrouter.ai/api/v1"
+
+    def test_provider_config_openrouter_aliases(self):
+        for alias in ("open-router", "open_router"):
+            cfg = ProviderConfig(provider=alias, api_key="sk-or-test")
+            assert cfg.provider == "openrouter", f"Expected 'openrouter' for alias '{alias}'"
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "env-or-key"})
+    def test_provider_config_openrouter_env_api_key(self):
+        cfg = ProviderConfig(provider="openrouter")
+        llm_cfg = cfg.to_llm_config()
+        assert llm_cfg.api_key == "env-or-key"
+
+    def test_provider_config_openrouter_custom_host(self):
+        cfg = ProviderConfig(provider="openrouter", api_key="key", host="https://custom.proxy/v1")
+        llm_cfg = cfg.to_llm_config()
+        assert llm_cfg.base_url == "https://custom.proxy/v1"
+
+    def test_openai_config_is_openrouter_property(self):
+        from core_lib.llm.providers.openai_provider import OpenAIConfig
+        cfg = OpenAIConfig(api_key="key", base_url="https://openrouter.ai/api/v1")
+        assert cfg.is_openrouter is True
+        cfg2 = OpenAIConfig(api_key="key", base_url="https://api.openai.com/v1")
+        assert cfg2.is_openrouter is False
+
+    def test_provider_config_openrouter_is_configured_with_key(self):
+        cfg = ProviderConfig(provider="openrouter", api_key="sk-or-test")
+        assert cfg.is_configured() is True
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "env-key"})
+    def test_provider_config_openrouter_is_configured_with_env(self):
+        cfg = ProviderConfig(provider="openrouter")
+        assert cfg.is_configured() is True
+
+    def test_provider_config_openrouter_not_configured_without_key(self):
+        cfg = ProviderConfig(provider="openrouter")
+        # No api_key, no env var set
+        assert cfg.is_configured() is False
+
 
 class TestLLMClient:
     @patch("core_lib.llm.llm_client.OllamaProvider")

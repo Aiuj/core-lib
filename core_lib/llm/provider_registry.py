@@ -190,6 +190,8 @@ class ProviderConfig:
                 self.host = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         elif self.provider in ("openai_responses",):
             self.provider = "openai-responses"
+        elif self.provider in ("open-router", "open_router"):
+            self.provider = "openrouter"
         
         # Set default models if not specified
         if not self.model:
@@ -200,6 +202,7 @@ class ProviderConfig:
                 "azure-openai": "gpt-4o-mini",
                 "ollama": "llama3.2",
                 "openai-responses": "gpt-4.1",
+                "openrouter": "openrouter/auto",
             }
             self.model = defaults.get(self.provider, "")
     
@@ -441,6 +444,23 @@ class ProviderConfig:
                 project=self.project,
                 reasoning_effort=reasoning_effort,
             )
+
+        elif self.provider == "openrouter":
+            from .providers.openai_provider import OpenAIConfig
+            api_key = (
+                self.api_key
+                or os.getenv("OPENROUTER_API_KEY")
+                or ""
+            )
+            return OpenAIConfig(
+                api_key=api_key,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                base_url=self.host or "https://openrouter.ai/api/v1",
+                organization=self.organization,
+                project=self.project,
+            )
         
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -503,6 +523,11 @@ class ProviderConfig:
                 bool(self.api_key)
                 or bool(os.getenv("OPENAI_API_KEY"))
                 or bool(os.getenv("DASHSCOPE_API_KEY"))
+            )
+        elif self.provider == "openrouter":
+            return (
+                bool(self.api_key)
+                or bool(os.getenv("OPENROUTER_API_KEY"))
             )
         elif self.provider == "ollama":
             # Ollama doesn't require API key
