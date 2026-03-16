@@ -50,6 +50,9 @@ client = create_llm_client(provider="openai-responses", model="gpt-4.1")
 # Alibaba Cloud / Qwen — reads DASHSCOPE_API_KEY automatically
 client = create_llm_client(provider="alibaba", model="qwen-plus")
 
+# OpenRouter — access 300+ models with a single API key
+client = create_llm_client(provider="openrouter", model="anthropic/claude-3.5-sonnet")
+
 # Or use Ollama with custom settings
 client = create_llm_client(
     provider="ollama",
@@ -76,8 +79,12 @@ client = LLMFactory.alibaba(model="qwen-plus")                      # internatio
 client = LLMFactory.alibaba(model="qwen3-max", region="china")       # Beijing region
 client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True) # chain-of-thought
 
+# OpenRouter — access 300+ models via a single API key
+client = LLMFactory.openrouter(model="anthropic/claude-3.5-sonnet")
+client = LLMFactory.openrouter()  # defaults to openrouter/auto (best available model)
+
 # Or use the main factory method
-client = LLMFactory.create(provider="openai-responses", model="gpt-4.1")
+client = LLMFactory.create(provider="openrouter", model="google/gemini-2.0-flash")
 ```
 
 ### Environment Configuration
@@ -122,7 +129,7 @@ client = create_llm_client()
 The factory automatically detects the provider based on available environment variables:
 
 1. If `LLM_PROVIDER` is set, it uses that provider explicitly. Valid values:
-   - `gemini`, `openai`, `openai-responses`, `azure`, `ollama`, `alibaba`
+   - `gemini`, `openai`, `openai-responses`, `openrouter`, `azure`, `ollama`, `alibaba`
 2. Otherwise, it checks for provider-specific API keys in this order:
    - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
    - `OPENAI_API_KEY` → OpenAI Chat Completions
@@ -131,6 +138,8 @@ The factory automatically detects the provider based on available environment va
    - Default fallback → Ollama
 
 > **Tip**: For Alibaba Cloud / Qwen, set `LLM_PROVIDER=openai-responses` (or `alibaba`) and `DASHSCOPE_API_KEY` to use the DashScope Responses endpoint.
+
+> **Tip**: For OpenRouter, set `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`. The `OPENROUTER_MODEL` env var sets the default model (default: `openrouter/auto`).
 
 ### OpenAI Responses API Configuration (`openai-responses` / `alibaba`)
 

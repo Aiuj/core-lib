@@ -8,10 +8,13 @@ first user request.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from core_lib import get_module_logger
 
@@ -289,6 +292,275 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
                 location=resolved_region,
             )
         )
+
+    results.sort(key=lambda r: r.priority)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Lightweight connectivity checks (no tokens consumed)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConnectivityResult:
+    """Result of a no-token connectivity probe for a single LLM provider/model."""
+    provider: str
+    model: str
+    tier: str
+    priority: int
+    min_intelligence_level: int
+    max_intelligence_level: int
+    status: str          # "ok", "down", "not_configured", "unknown"
+    details: Optional[str] = None
+    error: Optional[str] = None
+
+
+def _http_get(url: str, headers: dict, timeout: int = 8) -> tuple[int, bytes]:
+    """Simple HTTP GET; returns (status_code, body_bytes). Raises URLError on network failure."""
+    req = Request(url, headers=headers)
+    with urlopen(req, timeout=timeout) as resp:
+        return resp.status, resp.read()
+
+
+def _parse_http_error(exc: HTTPError) -> str:
+    try:
+        body = json.loads(exc.read().decode()).get("error", {}).get("message", "")
+    except Exception:
+        body = exc.reason
+    return f"HTTP {exc.code}: {body or exc.reason}"
+
+
+def _check_ollama(host: str, model: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error — checks /api/tags for model availability."""
+    url = f"{host.rstrip('/')}/api/tags"
+    try:
+        _, body = _http_get(url, {}, timeout=5)
+        data = json.loads(body.decode())
+        models = data.get("models", [])
+        names = [m.get("name", "") for m in models]
+        available = any(n == model or n.startswith(model + ":") or model in n for n in names)
+        if available:
+            return "ok", f"{len(models)} model(s) loaded", None
+        preview = ", ".join(names[:4]) if names else "none"
+        return "down", None, f"Model '{model}' not found. Available: {preview}"
+    except HTTPError as exc:
+        return "down", None, _parse_http_error(exc)
+    except URLError as exc:
+        return "down", None, f"Connection failed: {exc.reason}"
+    except Exception as exc:
+        return "down", None, str(exc)
+
+
+def _check_gemini(model: str, api_key: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error — uses model metadata endpoint, no tokens consumed."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}?key={api_key}"
+    try:
+        _, body = _http_get(url, {}, timeout=8)
+        display_name = json.loads(body.decode()).get("displayName", "")
+        return "ok", display_name or None, None
+    except HTTPError as exc:
+        msg = _parse_http_error(exc)
+        if exc.code == 404:
+            return "down", None, f"Model not found: {msg}"
+        if exc.code in (401, 403):
+            return "down", None, f"Auth failed: {msg}"
+        return "down", None, msg
+    except URLError as exc:
+        return "down", None, f"Connection failed: {exc.reason}"
+    except Exception as exc:
+        return "down", None, str(exc)
+
+
+def _check_openai_compatible(model: str, api_key: str, base_url: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error — GET /models/{model} (single model lookup)."""
+    url = f"{base_url.rstrip('/')}/models/{model}"
+    try:
+        _http_get(url, {"Authorization": f"Bearer {api_key}"}, timeout=8)
+        return "ok", None, None
+    except HTTPError as exc:
+        msg = _parse_http_error(exc)
+        if exc.code == 404:
+            return "down", None, f"Model '{model}' not found: {msg}"
+        if exc.code in (401, 403):
+            return "down", None, f"Auth failed: {msg}"
+        return "down", None, msg
+    except URLError as exc:
+        return "down", None, f"Connection failed: {exc.reason}"
+    except Exception as exc:
+        return "down", None, str(exc)
+
+
+def _check_openrouter(model: str, api_key: str, base_url: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error.
+
+    OpenRouter model IDs contain '/' (e.g. nvidia/nemotron-...) which breaks
+    per-model URL path construction.  Uses GET /models (list) instead.
+    """
+    url = f"{base_url.rstrip('/')}/models"
+    try:
+        _, body = _http_get(url, {"Authorization": f"Bearer {api_key}"}, timeout=10)
+        ids = {m.get("id", "") for m in json.loads(body.decode()).get("data", [])}
+        if model in ids:
+            return "ok", f"{len(ids)} model(s) available", None
+        return "down", None, f"Model '{model}' not found on OpenRouter"
+    except HTTPError as exc:
+        msg = _parse_http_error(exc)
+        if exc.code in (401, 403):
+            return "down", None, f"Auth failed: {msg}"
+        return "down", None, msg
+    except URLError as exc:
+        return "down", None, f"Connection failed: {exc.reason}"
+    except Exception as exc:
+        return "down", None, str(exc)
+
+
+def _check_azure(model: str, api_key: str, endpoint: str, api_version: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error — deployment info endpoint."""
+    url = f"{endpoint.rstrip('/')}/openai/deployments/{model}?api-version={api_version}"
+    try:
+        _http_get(url, {"api-key": api_key}, timeout=8)
+        return "ok", None, None
+    except HTTPError as exc:
+        msg = _parse_http_error(exc)
+        if exc.code == 404:
+            return "down", None, f"Deployment '{model}' not found"
+        if exc.code in (401, 403):
+            return "down", None, f"Auth failed: {msg}"
+        return "down", None, msg
+    except URLError as exc:
+        return "down", None, f"Connection failed: {exc.reason}"
+    except Exception as exc:
+        return "down", None, str(exc)
+
+
+def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
+    """Dispatch a no-token connectivity check based on provider type.
+
+    Returns (status, details, error) where status is one of:
+    "ok", "down", "not_configured", "unknown".
+    """
+    if not provider.is_configured():
+        return "not_configured", None, "Missing required credentials"
+
+    p = provider.provider
+
+    if p == "ollama":
+        return _check_ollama(provider.host or "http://localhost:11434", provider.model)
+
+    if p in ("gemini", "vertex"):
+        api_key = (
+            provider.api_key
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_GENAI_API_KEY")
+            or ""
+        )
+        if not api_key:
+            return "not_configured", None, "No API key"
+        return _check_gemini(provider.model, api_key)
+
+    if p == "openrouter":
+        api_key = provider.api_key or os.getenv("OPENROUTER_API_KEY") or ""
+        if not api_key:
+            return "not_configured", None, "No API key"
+        return _check_openrouter(provider.model, api_key, provider.host)
+
+    if p in ("openai", "openai-responses"):
+        api_key = (
+            provider.api_key
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("DASHSCOPE_API_KEY")
+            or ""
+        )
+        if not api_key:
+            return "not_configured", None, "No API key"
+        return _check_openai_compatible(provider.model, api_key, provider.host or "https://api.openai.com/v1")
+
+    if p == "azure-openai":
+        api_key = provider.api_key or ""
+        endpoint = provider.azure_endpoint or ""
+        if not api_key or not endpoint:
+            return "not_configured", None, "Missing API key or endpoint"
+        api_version = provider.azure_api_version or "2024-08-01-preview"
+        return _check_azure(provider.model, api_key, endpoint, api_version)
+
+    return "unknown", None, f"No connectivity check implemented for provider '{p}'"
+
+
+def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[ConnectivityResult]:
+    """Probe every configured LLM provider without consuming tokens.
+
+    Each check verifies credentials and endpoint reachability only (e.g. model
+    metadata or model-list endpoints), not chat completions.  Probes run in
+    parallel threads with a 15-second total timeout.
+
+    Args:
+        providers: Optional iterable of ``ProviderConfig`` objects.  When
+            *None* (the default) the registry is loaded from the environment
+            via ``ProviderRegistry.from_env()``.
+
+    Returns:
+        A list of :class:`ConnectivityResult` — one per configured provider
+        entry, sorted by priority ascending.
+    """
+    import concurrent.futures
+
+    if providers is None:
+        try:
+            registry = ProviderRegistry.from_env()
+            providers = list(getattr(registry, "all_providers", []) or [])
+        except Exception as exc:
+            logger.warning("LLM connectivity check: failed to load provider registry: %s", exc)
+            return []
+
+    configured = [p for p in providers if getattr(p, "enabled", True)]
+    if not configured:
+        return []
+
+    def _run(provider) -> ConnectivityResult:
+        try:
+            status, details, error = _probe_connectivity(provider)
+        except Exception as exc:
+            status, details, error = "down", None, str(exc)
+        return ConnectivityResult(
+            provider=provider.provider,
+            model=provider.model,
+            tier=getattr(provider, "tier", "standard"),
+            priority=getattr(provider, "priority", 100),
+            min_intelligence_level=getattr(provider, "min_intelligence_level", 0),
+            max_intelligence_level=getattr(provider, "max_intelligence_level", 10),
+            status=status,
+            details=details,
+            error=error,
+        )
+
+    results: List[ConnectivityResult] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(configured), 6)) as executor:
+        futures = {executor.submit(_run, p): p for p in configured}
+        try:
+            for future in concurrent.futures.as_completed(futures, timeout=15):
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    p = futures[future]
+                    results.append(ConnectivityResult(
+                        provider=p.provider, model=p.model,
+                        tier=getattr(p, "tier", "standard"),
+                        priority=getattr(p, "priority", 100),
+                        min_intelligence_level=getattr(p, "min_intelligence_level", 0),
+                        max_intelligence_level=getattr(p, "max_intelligence_level", 10),
+                        status="down", error=str(exc),
+                    ))
+        except concurrent.futures.TimeoutError:
+            for future, p in futures.items():
+                if not future.done():
+                    results.append(ConnectivityResult(
+                        provider=p.provider, model=p.model,
+                        tier=getattr(p, "tier", "standard"),
+                        priority=getattr(p, "priority", 100),
+                        min_intelligence_level=getattr(p, "min_intelligence_level", 0),
+                        max_intelligence_level=getattr(p, "max_intelligence_level", 10),
+                        status="unknown", error="Connectivity check timed out",
+                    ))
 
     results.sort(key=lambda r: r.priority)
     return results

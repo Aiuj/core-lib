@@ -42,10 +42,15 @@ providers:
     model: gpt-4o-mini
     priority: 2
 
+  - provider: openrouter          # Access 300+ models via one API key
+    api_key: ${OPENROUTER_API_KEY}
+    model: anthropic/claude-3.5-sonnet
+    priority: 3
+
   - provider: ollama
     host: ${OLLAMA_HOST:-http://localhost:11434}  # With default
     model: llama3.2
-    priority: 3
+    priority: 4
 ```
 
 ### From Code

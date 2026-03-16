@@ -22,7 +22,7 @@ class LLMFactory:
     """
     
     # Default provider preference order when no provider is specified
-    DEFAULT_PROVIDER_ORDER = ["ollama", "openai", "gemini"]
+    DEFAULT_PROVIDER_ORDER = ["ollama", "gemini", "openrouter"]
     
     @classmethod
     def create(
@@ -113,6 +113,14 @@ class LLMFactory:
             # Default to DashScope Chat Completions endpoint if no base_url in env
             if not config.base_url:
                 config.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        elif provider_lc in ("openrouter", "open-router", "open_router"):
+            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+            model = kwargs.pop("model", os.environ.get("OPENROUTER_MODEL", "openrouter/auto"))
+            config = OpenAIConfig(
+                api_key=api_key,
+                base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+                model=model,
+            )
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         
@@ -482,7 +490,45 @@ class LLMFactory:
             base_url=base_url,
         )
         return LLMClient(config)
-    
+
+    @classmethod
+    def openrouter(
+        cls,
+        api_key: Optional[str] = None,
+        model: str = "openrouter/auto",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        base_url: str = "https://openrouter.ai/api/v1",
+        **kwargs,
+    ) -> LLMClient:
+        """Create a client for the OpenRouter gateway.
+
+        OpenRouter provides access to 300+ hosted models (OpenAI, Anthropic,
+        Google, Meta, Mistral, …) through a single OpenAI-compatible endpoint.
+        Model names use the ``provider/model`` slug format, e.g.
+        ``anthropic/claude-3.5-sonnet`` or ``google/gemini-2.0-flash``.
+        Passing ``openrouter/auto`` (the default) lets OpenRouter select the
+        best available model automatically.
+
+        Args:
+            api_key:     OpenRouter API key.  Reads ``OPENROUTER_API_KEY`` from
+                         the environment when not provided.
+            model:       Model slug (default: ``openrouter/auto``).
+            temperature: Sampling temperature (default: 0.7).
+            max_tokens:  Maximum output tokens.
+            base_url:    Override the gateway URL (default:
+                         ``https://openrouter.ai/api/v1``).
+        """
+        resolved_key = api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        config = OpenAIConfig(
+            api_key=resolved_key,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            base_url=base_url,
+        )
+        return LLMClient(config)
+
     @classmethod
     def _detect_provider_from_env(cls) -> str:
         """Auto-detect the provider from environment variables.
@@ -630,3 +676,8 @@ def create_openai_responses_client(**kwargs) -> LLMClient:
 def create_alibaba_client(**kwargs) -> LLMClient:
     """Create an Alibaba Cloud (Qwen) client via the DashScope Chat Completions endpoint."""
     return LLMFactory.alibaba(**kwargs)
+
+
+def create_openrouter_client(**kwargs) -> LLMClient:
+    """Create a client for the OpenRouter gateway (access 300+ models via one API key)."""
+    return LLMFactory.openrouter(**kwargs)

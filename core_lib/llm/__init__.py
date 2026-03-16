@@ -31,6 +31,7 @@ from .factory import (
     create_openai_compatible_client,
     create_openai_responses_client,
     create_alibaba_client,
+    create_openrouter_client,
 )
 from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .provider_registry import ProviderConfig, ProviderRegistry, substitute_env_vars
@@ -53,6 +54,8 @@ from .startup_preflight import (
     run_llm_startup_preflight,
     ProviderHealthResult,
     check_llm_providers_health,
+    ConnectivityResult,
+    check_llm_connectivity,
 )
 from .json_parser import clean_and_parse_json_response
 
@@ -117,6 +120,7 @@ __all__ = [
     "create_openai_compatible_client",
     "create_openai_responses_client",
     "create_alibaba_client",
+    "create_openrouter_client",
     
     # LangChain adapter (optional - requires langchain-core)
     "CoreLibChatModel",

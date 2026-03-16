@@ -25,16 +25,22 @@ providers:
     priority: 1
     tier: standard
 
+  - provider: openrouter          # OpenRouter — access 300+ models via one API key
+    api_key: ${OPENROUTER_API_KEY}
+    model: anthropic/claude-3.5-sonnet   # or omit for openrouter/auto
+    priority: 2
+    tier: standard
+
   - provider: alibaba           # Alibaba Cloud / Qwen (auto-sets DashScope endpoint)
     api_key: ${DASHSCOPE_API_KEY}
     model: qwen-plus
-    priority: 2
+    priority: 3
     tier: standard
     
   - provider: ollama
     host: ${OLLAMA_HOST:-http://localhost:11434}
     model: llama3.2
-    priority: 3
+    priority: 4
     tier: low
 ```
 
@@ -96,7 +102,7 @@ registry.add(ProviderConfig(provider="gemini", api_key="...", model="..."))
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `provider` | str | Yes | `gemini`, `openai`, `openai-responses`, `alibaba`, `azure-openai`, `ollama` |
+| `provider` | str | Yes | `gemini`, `openai`, `openai-responses`, `openrouter`, `alibaba`, `azure-openai`, `ollama` |
 | `model` | str | No | Model name (has sensible defaults) |
 | `api_key` | str | Cloud | API key for authentication |
 | `host` | str | No | Base URL / endpoint override (required for custom and China-region endpoints) |
@@ -117,6 +123,11 @@ registry.add(ProviderConfig(provider="gemini", api_key="...", model="..."))
 **OpenAI:**
 - `organization`: OpenAI organization ID
 - `project`: OpenAI project ID
+
+**OpenRouter:**
+- `api_key`: OpenRouter API key (falls back to `OPENROUTER_API_KEY` env var)
+- `model`: Any model slug supported by OpenRouter, e.g. `anthropic/claude-3.5-sonnet`, `google/gemini-2.0-flash`, `meta-llama/llama-3.1-70b-instruct`. Defaults to `openrouter/auto` (OpenRouter chooses the best available model)
+- `host`: Override the base URL (default: `https://openrouter.ai/api/v1`)
 
 **OpenAI Responses API (`openai-responses`) and Alibaba Cloud (`alibaba`):**
 - `reasoning_effort`: `"low"` / `"medium"` / `"high"` — for OpenAI reasoning models
@@ -211,6 +222,23 @@ client = provider.to_client()          # LLMClient instance
 ```
 
 ## Example Configurations
+
+### OpenRouter with Gemini fallback
+```yaml
+# llm_providers.yaml
+providers:
+  - provider: openrouter
+    api_key: ${OPENROUTER_API_KEY}
+    model: anthropic/claude-3.5-sonnet
+    priority: 1
+    tier: high
+
+  - provider: gemini
+    api_key: ${GEMINI_API_KEY}
+    model: ${GEMINI_MODEL:-gemini-2.0-flash}
+    priority: 2
+    tier: standard
+```
 
 ### Alibaba Cloud (Qwen) with Gemini fallback
 ```yaml

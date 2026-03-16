@@ -125,6 +125,10 @@ client = LLMClient(config)
     - `OPENAI_MAX_TOKENS`
     - `OPENAI_THINKING_ENABLED` = `true|false`
     - `OPENAI_REASONING_EFFORT` = `low|medium|high` (default: `medium`)
+- OpenRouter (`openrouter`):
+    - `OPENROUTER_API_KEY`
+    - `OPENROUTER_MODEL` (default: `openrouter/auto`)
+    - `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
 - OpenAI Chat Completions (`openai`):
     - `OPENAI_API_KEY`
     - `OPENAI_MODEL` (default: `gpt-5.2-preview`)
@@ -243,6 +247,13 @@ resp = client.chat(messages)
     - **Rate limiting**: Model-specific RPM limits (Gemini 2.5 Pro: 5 RPM, Flash: 10 RPM, Flash-Lite: 15 RPM, Gemma 3: 30 RPM, Embedding: 100 RPM)
     - **Retry logic**: Automatic retry on rate limits (429), server errors (500/503 including "model is overloaded"), network failures with exponential backoff (3 retries, 1-30s delays with jitter)
 
+- OpenRouter (openrouter):
+    - Routes requests via the OpenRouter gateway to any of 300+ hosted models
+    - Uses the standard OpenAI Chat Completions interface (`chat.completions.create`)
+    - `model` is a provider-prefixed slug such as `anthropic/claude-3.5-sonnet`, `google/gemini-2.0-flash`, `meta-llama/llama-3.1-70b-instruct`; use `openrouter/auto` (default) to let OpenRouter pick
+    - Structured output, tool calling, and temperature are forwarded and honoured by models that support them
+    - Authentication: set `OPENROUTER_API_KEY` (get one at https://openrouter.ai)
+
 - OpenAI Chat Completions (openai):
     - Uses `client.chat.completions.create()`
     - Structured output via `response_format` (json_schema)
@@ -259,19 +270,19 @@ resp = client.chat(messages)
 
 ## Provider Comparison
 
-| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | Alibaba (Qwen) |
-|---------|--------|--------|---------------|-----------------|----------------|
-| Cost | Free (local) | Paid API | Paid API | Paid API | Paid API |
-| Privacy | Local | Cloud | Cloud | Cloud | Cloud |
-| Setup | Run Ollama server | API key | API key | API key | DashScope API key |
-| API method | `ollama.chat` | `generate_content` | `chat.completions` | `responses.create` | `responses.create` |
-| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `text.format` |
-| Tool / Function Calling | Model-dependent | Native | Native | Native | Native |
-| Thinking / reasoning | N/A | 2.5-series | Not forwarded | OpenAI: `reasoning` | Qwen3: `enable_thinking` |
-| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | ✅ `web_search_preview` |
-| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ✅ `previous_response_id` |
-| **Rate Limiting** | **None** | **Model-specific (5-100 RPM)** | **None** | **None** | **None** |
-| **Retry Logic** | **None** | **Auto-retry with backoff** | **None** | **None** | **None** |
+| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | OpenRouter | Alibaba (Qwen) |
+|---------|--------|--------|---------------|-----------------|------------|----------------|
+| Cost | Free (local) | Paid API | Paid API | Paid API | Paid API (per model) | Paid API |
+| Privacy | Local | Cloud | Cloud | Cloud | Cloud | Cloud |
+| Setup | Run Ollama server | API key | API key | API key | `OPENROUTER_API_KEY` | DashScope API key |
+| API method | `ollama.chat` | `generate_content` | `chat.completions` | `responses.create` | `chat.completions` | `responses.create` |
+| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `response_format` | `text.format` |
+| Tool / Function Calling | Model-dependent | Native | Native | Native | Model-dependent | Native |
+| Thinking / reasoning | N/A | 2.5-series | Not forwarded | OpenAI: `reasoning` | Model-dependent | Qwen3: `enable_thinking` |
+| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | Model-dependent | ✅ `web_search_preview` |
+| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ❌ | ✅ `previous_response_id` |
+| **Rate Limiting** | **None** | **Model-specific (5-100 RPM)** | **None** | **None** | **None** | **None** |
+| **Retry Logic** | **None** | **Auto-retry with backoff** | **None** | **None** | **None** | **None** |
 
 ## Best Practices
 
