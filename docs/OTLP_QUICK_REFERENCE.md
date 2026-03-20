@@ -50,6 +50,7 @@ export OTLP_ENABLED=true              # Explicit enable (optional with auto-enab
 export OTLP_ENDPOINT=http://localhost:4318/v1/logs
 export OTLP_SERVICE_NAME=my-app       # Optional: otherwise defaults from APP_NAME
 export OTLP_SERVICE_VERSION=1.0.0     # Default: from pyproject.toml
+export OTLP_INSTANCE_ID=server-01     # Optional: stable machine identifier (default: hostname)
 export OTLP_LOG_CHANNEL=myfaq         # Optional: leave unset, or use myfaq / faciliter
 export OTLP_LOG_LEVEL=INFO            # OTLP level (optional, defaults to LOG_LEVEL)
 ```
@@ -65,6 +66,7 @@ export OTLP_LOG_LEVEL=INFO            # OTLP level (optional, defaults to LOG_LE
 | `otlp_insecure` | `False` | Skip SSL check |
 | `otlp_service_name` | `APP_NAME` / `setup_logging(app_name=...)` / `core-lib` | Service name |
 | `otlp_service_version` | `None` | Version tag |
+| `otlp_instance_id` | Hostname | Machine/instance identifier sent as `service.instance.id` |
 | `otlp_log_channel` | `None` | Adds `faciliter.log_channel` for collector routing |
 | `otlp_log_level` | Inherits from `log_level` | Independent log level for OTLP handler |
 
@@ -76,6 +78,14 @@ If your collector is configured for channel-based routing, this library can targ
 - `faciliter`: `faciliter-logs-*`
 
 The library does this by sending `faciliter.log_channel=<value>` as a resource attribute.
+
+## Machine Identification (Multi-Server)
+
+To distinguish multiple VPS instances in observability backends, core-lib adds:
+- `service.instance.id` (from `OTLP_INSTANCE_ID` if set, otherwise hostname)
+- `host.name` (when available)
+
+This is applied consistently to both OTLP logs and traces.
 
 ## Channel Choices
 

@@ -39,6 +39,8 @@ import sys
 import os
 from typing import Optional, Union, Any
 
+from .machine_identity import resolve_machine_identity
+
 try:  # Optional â€“ settings may not be available yet
     from core_lib.config.app_settings import AppSettings  # type: ignore
 except Exception:  # pragma: no cover - defensive
@@ -250,6 +252,7 @@ def setup_logging(
                 "insecure": getattr(logger_settings, "otlp_insecure", False),
                 "service_name": getattr(logger_settings, "otlp_service_name", None) or app_name,
                 "service_version": getattr(logger_settings, "otlp_service_version", None),
+                "instance_id": getattr(logger_settings, "otlp_instance_id", None),
                 "log_channel": getattr(logger_settings, "otlp_log_channel", None),
                 "log_level": getattr(logger_settings, "otlp_log_level", None),
             }
@@ -334,6 +337,7 @@ def setup_logging(
         if otlp_enabled:
             try:
                 from .handlers.otlp_handler import OTLPHandler
+                resolved_instance_id, resolved_host_name = resolve_machine_identity(otlp_config.get("instance_id"))
                 otlp_handler = OTLPHandler(
                     endpoint=otlp_config["endpoint"],
                     headers=otlp_config["headers"],
@@ -341,6 +345,8 @@ def setup_logging(
                     insecure=otlp_config["insecure"],
                     service_name=otlp_config["service_name"],
                     service_version=otlp_config["service_version"],
+                    service_instance_id=resolved_instance_id,
+                    host_name=resolved_host_name,
                     log_channel=otlp_config["log_channel"],
                 )
                 # Use OTLP-specific log level if provided, otherwise use global level

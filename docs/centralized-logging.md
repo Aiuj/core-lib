@@ -167,6 +167,7 @@ LoggerSettings(
     otlp_endpoint="http://localhost:4318/v1/logs",
     otlp_log_level="INFO",  # Independent level for OTLP
     otlp_service_name="my-app",
+    otlp_instance_id="server-01",  # Optional: machine ID (default: hostname)
 )
 ```
 
@@ -194,7 +195,12 @@ OTLP_ENABLED=true
 OTLP_ENDPOINT=http://localhost:4318/v1/logs
 OTLP_LOG_LEVEL=INFO         # Independent OTLP level (optional)
 OTLP_SERVICE_NAME=my-app
+OTLP_INSTANCE_ID=server-01  # Optional: machine ID (default: hostname)
 ```
+
+Machine identification is attached as OTLP resource attributes:
+- `service.instance.id` (from `OTLP_INSTANCE_ID` or hostname fallback)
+- `host.name` (when available)
 
 ### OVH LDP
 ```bash

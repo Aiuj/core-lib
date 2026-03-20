@@ -135,6 +135,7 @@ class TestLoggerSettings:
         assert settings.otlp_timeout == 10
         assert settings.otlp_insecure is False
         assert settings.otlp_service_name is None
+        assert settings.otlp_instance_id is None
         assert settings.otlp_log_channel is None
     
     def test_logger_settings_otlp_from_env(self, monkeypatch):
@@ -145,6 +146,7 @@ class TestLoggerSettings:
         monkeypatch.setenv("OTLP_TIMEOUT", "15")
         monkeypatch.setenv("OTLP_SERVICE_NAME", "my-service")
         monkeypatch.setenv("OTLP_SERVICE_VERSION", "1.0.0")
+        monkeypatch.setenv("OTLP_INSTANCE_ID", "server-01")
         monkeypatch.setenv("OTLP_LOG_CHANNEL", "myfaq")
         
         settings = LoggerSettings.from_env(load_dotenv=False)
@@ -155,6 +157,7 @@ class TestLoggerSettings:
         assert settings.otlp_timeout == 15
         assert settings.otlp_service_name == "my-service"
         assert settings.otlp_service_version == "1.0.0"
+        assert settings.otlp_instance_id == "server-01"
         assert settings.otlp_log_channel == "myfaq"
 
     def test_logger_settings_otlp_service_name_stays_unset_without_explicit_env(self, monkeypatch):
@@ -172,6 +175,11 @@ class TestLoggerSettings:
         """Test validation rejects an empty OTLP log channel."""
         with pytest.raises(SettingsError, match="OTLP log channel cannot be empty"):
             LoggerSettings(otlp_log_channel="   ")
+
+    def test_logger_settings_validation_empty_otlp_instance_id(self):
+        """Test validation rejects an empty OTLP instance id."""
+        with pytest.raises(SettingsError, match="OTLP instance id cannot be empty"):
+            LoggerSettings(otlp_instance_id="   ")
 
 
 class TestLoggerIntegration:
@@ -260,6 +268,7 @@ class TestLoggerIntegration:
             otlp_enabled=True,
             otlp_endpoint="http://localhost:4318/v1/logs",
             otlp_service_name="test-service",
+            otlp_instance_id="server-42",
             otlp_log_channel="faciliter",
         )
         
@@ -274,6 +283,7 @@ class TestLoggerIntegration:
         call_kwargs = mock_otlp_handler.call_args[1]
         assert call_kwargs["endpoint"] == "http://localhost:4318/v1/logs"
         assert call_kwargs["service_name"] == "test-service"
+        assert call_kwargs["service_instance_id"] == "server-42"
         assert call_kwargs["log_channel"] == "faciliter"
         
         # Verify handler was started
@@ -339,6 +349,8 @@ class TestOTLPHandler:
             insecure=False,
             service_name="test-service",
             service_version="1.0.0",
+            service_instance_id="server-01",
+            host_name="host-01",
             log_channel="myfaq",
         )
 
@@ -359,6 +371,8 @@ class TestOTLPHandler:
         payload = mock_post.call_args.kwargs["json"]
         resource_attrs = payload["resourceLogs"][0]["resource"]["attributes"]
         assert {"key": "faciliter.log_channel", "value": {"stringValue": "myfaq"}} in resource_attrs
+        assert {"key": "service.instance.id", "value": {"stringValue": "server-01"}} in resource_attrs
+        assert {"key": "host.name", "value": {"stringValue": "host-01"}} in resource_attrs
 
 
 class TestStandardSettingsWithLogger:

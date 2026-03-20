@@ -216,7 +216,14 @@ export OTLP_TIMEOUT=10                                      # Request timeout (s
 export OTLP_INSECURE=false                                  # Skip SSL verification
 export OTLP_SERVICE_NAME=my-app                             # Service name (default: APP_NAME or "core-lib")
 export OTLP_SERVICE_VERSION=1.0.0                           # Service version (default: from pyproject.toml)
+export OTLP_INSTANCE_ID=server-01                           # Optional machine identifier (default: hostname)
 ```
+
+**Machine identification (multi-server deployments):**
+- core-lib sends `service.instance.id` in OTLP resource attributes.
+- If `OTLP_INSTANCE_ID` is not set, it falls back to the server hostname.
+- `host.name` is also included when available.
+- No public IP lookup is performed by default (safer and more reliable behind NAT/load balancers).
 
 **Auto-Enable Logic:**
 OTLP automatically enables when:

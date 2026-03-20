@@ -15,6 +15,8 @@ from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 
+from .machine_identity import resolve_machine_identity
+
 if TYPE_CHECKING:
     from core_lib.config.tracing_settings import TracingSettings
 
@@ -99,6 +101,7 @@ class TracingManager:
                     enabled=settings.enabled,
                     service_name=service_name,
                     service_version=settings.service_version,
+                    otlp_instance_id=settings.otlp_instance_id,
                     otlp_log_channel=settings.otlp_log_channel,
                     langfuse_public_key=settings.langfuse_public_key,
                     langfuse_secret_key=settings.langfuse_secret_key,
@@ -142,10 +145,15 @@ class TracingManager:
         
         # Configure OpenTelemetry
         service_name = self.settings.service_name or "unknown"
+        instance_id, host_name = resolve_machine_identity(self.settings.otlp_instance_id)
         resource_attributes = {
             "service.name": service_name,
             "service.version": self.settings.service_version,
         }
+        if instance_id:
+            resource_attributes["service.instance.id"] = instance_id
+        if host_name:
+            resource_attributes["host.name"] = host_name
         if self.settings.otlp_log_channel:
             resource_attributes["faciliter.log_channel"] = self.settings.otlp_log_channel
 

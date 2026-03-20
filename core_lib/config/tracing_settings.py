@@ -20,6 +20,7 @@ class TracingSettings(BaseSettings):
     enabled: bool = True
     service_name: Optional[str] = None
     service_version: str = "0.1.0"
+    otlp_instance_id: Optional[str] = None
     otlp_log_channel: Optional[str] = None
     
     # Langfuse settings
@@ -46,6 +47,7 @@ class TracingSettings(BaseSettings):
             "enabled": langfuse_enabled,
             "service_name": EnvParser.get_env("APP_NAME", "SERVICE_NAME"),
             "service_version": EnvParser.get_env("APP_VERSION", "SERVICE_VERSION", default="0.1.0"),
+            "otlp_instance_id": EnvParser.get_env("OTLP_INSTANCE_ID"),
             "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
             "langfuse_public_key": EnvParser.get_env("LANGFUSE_PUBLIC_KEY"),
             "langfuse_secret_key": EnvParser.get_env("LANGFUSE_SECRET_KEY"),
@@ -61,6 +63,8 @@ class TracingSettings(BaseSettings):
             raise SettingsError("Tracing enabled but langfuse_public_key not provided")
         if self.enabled and not self.langfuse_secret_key:
             raise SettingsError("Tracing enabled but langfuse_secret_key not provided")
+        if self.otlp_instance_id is not None and not self.otlp_instance_id.strip():
+            raise SettingsError("OTLP instance id cannot be empty when provided")
         if self.otlp_log_channel is not None and not self.otlp_log_channel.strip():
             raise SettingsError("OTLP log channel cannot be empty when provided")
     
@@ -70,6 +74,7 @@ class TracingSettings(BaseSettings):
             "enabled": self.enabled,
             "service_name": self.service_name,
             "service_version": self.service_version,
+            "otlp_instance_id": self.otlp_instance_id,
             "otlp_log_channel": self.otlp_log_channel,
             "langfuse_public_key": self.langfuse_public_key,
             "langfuse_secret_key": self.langfuse_secret_key,

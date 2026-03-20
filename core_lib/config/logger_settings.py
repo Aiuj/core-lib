@@ -33,6 +33,8 @@ Environment Variables:
     OTLP_SERVICE_NAME: Service name for resource attributes. Defaults to APP_NAME,
                        then to the app_name passed to setup_logging(), then core-lib.
     OTLP_SERVICE_VERSION: Service version for resource attributes (default: from pyproject.toml)
+    OTLP_INSTANCE_ID: Optional machine/instance identifier for OTLP resource attributes.
+                      Defaults to detected hostname when not set.
     OTLP_LOG_CHANNEL: Optional log routing channel. When set, core-lib sends
                       faciliter.log_channel=<value> as an OTLP resource attribute.
     OTLP_LOG_LEVEL: Log level for OTLP handler only (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -94,6 +96,7 @@ class LoggerSettings(BaseSettings):
     otlp_insecure: bool = False  # Skip SSL verification
     otlp_service_name: Optional[str] = None
     otlp_service_version: Optional[str] = None
+    otlp_instance_id: Optional[str] = None
     otlp_log_channel: Optional[str] = None
     otlp_log_level: Optional[str] = None  # Independent log level for OTLP handler (if None, inherits from log_level)
     
@@ -227,6 +230,7 @@ class LoggerSettings(BaseSettings):
             # resolve the effective service name from the resolved app settings.
             "otlp_service_name": EnvParser.get_env("OTLP_SERVICE_NAME"),
             "otlp_service_version": EnvParser.get_env("OTLP_SERVICE_VERSION", default=default_service_version),
+            "otlp_instance_id": EnvParser.get_env("OTLP_INSTANCE_ID"),
             "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
             "otlp_log_level": EnvParser.get_env("OTLP_LOG_LEVEL"),  # Optional: independent OTLP log level
         }
@@ -273,6 +277,9 @@ class LoggerSettings(BaseSettings):
 
         if self.otlp_log_channel is not None and not self.otlp_log_channel.strip():
             raise SettingsError("OTLP log channel cannot be empty when provided")
+
+        if self.otlp_instance_id is not None and not self.otlp_instance_id.strip():
+            raise SettingsError("OTLP instance id cannot be empty when provided")
     
     def as_dict(self) -> dict:
         """Convert to dictionary representation."""
@@ -299,6 +306,7 @@ class LoggerSettings(BaseSettings):
             "otlp_insecure": self.otlp_insecure,
             "otlp_service_name": self.otlp_service_name,
             "otlp_service_version": self.otlp_service_version,
+            "otlp_instance_id": self.otlp_instance_id,
             "otlp_log_channel": self.otlp_log_channel,
             "otlp_log_level": self.otlp_log_level,
         }

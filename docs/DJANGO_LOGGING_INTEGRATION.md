@@ -24,6 +24,7 @@ LOGGER_SETTINGS = LoggerSettings(
     otlp_enabled=True,
     otlp_endpoint="http://localhost:4318/v1/logs",
     otlp_service_name="my-django-app",
+    otlp_instance_id="django-vps-01",  # Optional: machine ID (default: hostname)
 )
 
 # Initialize logging - this replaces Django's default LOGGING
@@ -212,12 +213,17 @@ OTLP_ENABLED=true
 OTLP_ENDPOINT=http://localhost:4318/v1/logs
 OTLP_SERVICE_NAME=my-django-app
 OTLP_SERVICE_VERSION=1.0.0
+OTLP_INSTANCE_ID=django-vps-01
 OTLP_LOG_LEVEL=INFO  # Independent level for OTLP (optional)
 
 # Optional: File logging
 LOG_FILE_ENABLED=true
 LOG_FILE_PATH=logs/django.log
 ```
+
+Machine identification is exported in OTLP resource attributes:
+- `service.instance.id` (`OTLP_INSTANCE_ID` if set, otherwise hostname)
+- `host.name` (when available)
 
 ## Request Context Integration
 
@@ -414,6 +420,7 @@ def configure_logging():
         otlp_enabled=True,
         otlp_endpoint="http://localhost:4318/v1/logs",
         otlp_service_name="test-service",
+        otlp_instance_id="test-node-01",
     )
     setup_logging(app_name="test-app", logger_settings=settings, force=True)
     yield
@@ -605,6 +612,7 @@ OTLP_ENABLED=true
 OTLP_ENDPOINT=http://localhost:4318/v1/logs
 OTLP_SERVICE_NAME=my-django-app
 OTLP_SERVICE_VERSION=1.0.0
+OTLP_INSTANCE_ID=django-vps-01
 ```
 
 ## Documentation

@@ -160,7 +160,8 @@ class TestTracingManager(unittest.TestCase):
     @patch('core_lib.tracing.tracing.TracerProvider')
     @patch('core_lib.tracing.tracing.Resource')
     @patch('core_lib.tracing.tracing.Langfuse')
-    def test_setup_fresh_initialization(self, mock_langfuse, mock_resource, mock_tracer_provider, mock_trace):
+    @patch('core_lib.tracing.tracing.resolve_machine_identity')
+    def test_setup_fresh_initialization(self, mock_resolve_machine_identity, mock_langfuse, mock_resource, mock_tracer_provider, mock_trace):
         """Test setup with fresh initialization."""
         # Mock that TracerProvider is not set (ProxyTracerProvider)
         proxy_provider = Mock()
@@ -176,6 +177,7 @@ class TestTracingManager(unittest.TestCase):
         
         mock_langfuse_client = Mock()
         mock_langfuse.return_value = mock_langfuse_client
+        mock_resolve_machine_identity.return_value = ("server-01", "host-01")
         
         # Set environment variables
         os.environ["LANGFUSE_PUBLIC_KEY"] = "test_public_key"
@@ -189,6 +191,8 @@ class TestTracingManager(unittest.TestCase):
         mock_resource.create.assert_called_once_with({
             "service.name": "test-service",
             "service.version": "0.1.0",
+            "service.instance.id": "server-01",
+            "host.name": "host-01",
         })
         
         # Verify TracerProvider setup
