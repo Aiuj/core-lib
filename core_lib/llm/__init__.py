@@ -51,6 +51,9 @@ from .fallback_client import (
 )
 from .startup_preflight import (
     StartupValidationSummary,
+    get_cached_llm_provider_registry,
+    reset_cached_llm_provider_registry,
+    warm_llm_provider_registry,
     run_llm_startup_preflight,
     ProviderHealthResult,
     check_llm_providers_health,
@@ -87,6 +90,9 @@ __all__ = [
     "FallbackResult",
     "create_fallback_llm_client",
     "StartupValidationSummary",
+    "get_cached_llm_provider_registry",
+    "reset_cached_llm_provider_registry",
+    "warm_llm_provider_registry",
     "run_llm_startup_preflight",
     "ProviderHealthResult",
     "check_llm_providers_health",

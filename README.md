@@ -602,6 +602,32 @@ print(response["content"])
 
 See **[LLM Documentation](docs/llm.md)** for complete guide.
 
+#### Startup warm-up without token probes
+
+If a service wants to parse and cache its LLM provider configuration at startup
+without sending a live `chat()` probe, use the shared warm-up helper:
+
+```python
+from core_lib.llm import warm_llm_provider_registry
+
+# Load and cache ProviderRegistry from llm_providers.yaml / environment
+# without consuming LLM tokens.
+warm_llm_provider_registry()
+```
+
+For code paths that also need direct access to the cached registry instance:
+
+```python
+from core_lib.llm import get_cached_llm_provider_registry
+
+registry = get_cached_llm_provider_registry()
+provider = registry.get_best_provider_for_level(5)
+```
+
+Use this in service startup hooks (`lifespan`, `main()`, worker bootstrap, etc.)
+when you want warm configuration loading but do **not** want the heavier
+`run_llm_startup_preflight()` live model probes.
+
 ### Excel Manager
 
 Process Excel files and convert them to markdown format:

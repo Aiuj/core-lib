@@ -25,6 +25,12 @@ Then commit, push and tag this new version in github and create a release for th
 
 ## February 2026
 
+### Unreleased - LLM Startup Warm-up Helper (Mar 2026)
+
+- **Zero-Token Startup Warm-up**: Added `warm_llm_provider_registry()` and `get_cached_llm_provider_registry()` to preload and reuse `ProviderRegistry` configuration without running token-consuming live LLM startup probes
+- **Cache Reset Support**: Added `reset_cached_llm_provider_registry()` for tests and explicit reload scenarios
+- **Documentation**: Documented the recommended startup pattern for services that want eager LLM configuration loading without `run_llm_startup_preflight()`
+
 ### v0.3.5 - Vertex AI, Wake-on-LAN & Structured Output (Feb 25, 2026)
 
 - **Vertex AI Support**: Added full Google Vertex AI integration in `GoogleGenAIProvider`

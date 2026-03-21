@@ -23,6 +23,9 @@ from .provider_registry import ProviderRegistry
 logger = get_module_logger()
 
 
+_provider_registry_cache: ProviderRegistry | None = None
+
+
 # Known model aliases that frequently fail in some provider/region combinations.
 _MODEL_HINTS = {
     "gemini-flash-lite-latest": "gemini-2.5-flash-lite",
@@ -175,6 +178,46 @@ def _resolve_provider_endpoint_and_region(provider) -> tuple[Optional[str], Opti
             region = getattr(resolved, "location", None) or None
 
     return url, region
+
+
+def get_cached_llm_provider_registry(
+    *,
+    force_reload: bool = False,
+    env_var: str = "LLM_PROVIDERS",
+    file_env_var: str = "LLM_PROVIDERS_FILE",
+) -> ProviderRegistry:
+    """Load and cache the LLM provider registry.
+
+    This is a lightweight alternative to startup preflight for services that
+    want their provider configuration parsed and cached at startup without
+    sending live token-consuming probe requests.
+    """
+    global _provider_registry_cache
+
+    if force_reload or _provider_registry_cache is None:
+        _provider_registry_cache = ProviderRegistry.from_env(
+            env_var=env_var,
+            file_env_var=file_env_var,
+        )
+
+    return _provider_registry_cache
+
+
+def reset_cached_llm_provider_registry() -> None:
+    """Clear the cached LLM provider registry."""
+    global _provider_registry_cache
+    _provider_registry_cache = None
+
+
+def warm_llm_provider_registry(*, force_reload: bool = False) -> int:
+    """Warm the cached LLM provider registry without running live probes.
+
+    Returns the number of enabled/configured providers available after loading.
+    """
+    registry = get_cached_llm_provider_registry(force_reload=force_reload)
+    provider_count = len(getattr(registry, "providers", []) or [])
+    logger.info("LLM provider registry loaded at startup: providers=%d", provider_count)
+    return provider_count
 
 
 async def run_llm_startup_preflight() -> StartupValidationSummary:
