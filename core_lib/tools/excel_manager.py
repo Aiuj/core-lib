@@ -5,6 +5,7 @@ Module for loading and manipulating Excel files, and rendering their contents as
 from openpyxl import load_workbook
 from tabulate import tabulate
 from core_lib import get_module_logger
+from core_lib.tools.date_utils import ExcelDateFormatter
 import os
 
 # Get module-specific logger
@@ -15,7 +16,7 @@ class ExcelManager:
     Manages loading, rendering, and manipulation of Excel workbooks.
     """
 
-    def __init__(self, excel_path: str = None, excel_bytes: bytes = None):
+    def __init__(self, excel_path: str = None, excel_bytes: bytes = None, locale: str = 'en'):
         """
         Initialize the ExcelManager with either a path to the Excel file or raw bytes.
 
@@ -23,11 +24,14 @@ class ExcelManager:
             excel_path (str, optional): Path to the Excel file.
             excel_bytes (bytes, optional): Raw bytes of an Excel file. If provided, workbook
                 will be loaded from memory and no temporary file is required.
+            locale (str): IETF locale tag used when formatting date cells (e.g. ``'en'``,
+                ``'fr'``).  Defaults to ``'en'``.
         """
         self.excel_path = excel_path
         self.excel_bytes = excel_bytes
         self._bytes_io = None
         self.wb = None
+        self._date_formatter = ExcelDateFormatter(locale=locale)
         logger.debug(f"ExcelManager initialized with path: {excel_path} and bytes: {'present' if excel_bytes else 'none'}")
 
     def load(self):
@@ -86,6 +90,42 @@ class ExcelManager:
         except Exception:
             pass
 
+    # ---------------------------------------------------------------------------
+    # Format-aware date helpers
+    # ---------------------------------------------------------------------------
+
+    def _format_excel_date(self, value, number_format: str = '') -> str:
+        """Format a date/datetime value using the cell's Excel number_format code.
+
+        Delegates to :class:`~core_lib.tools.date_utils.ExcelDateFormatter`
+        which uses Babel's CLDR data for locale-aware month names.  Falls back
+        to ISO 8601 for unrecognised format codes.
+        """
+        return self._date_formatter.format(value, number_format)
+
+    def _read_cells_with_format(self, ws):
+        """Iterate worksheet rows via ``ws.iter_rows()`` and return a list of
+        row-tuples where date/datetime cell values are formatted using the
+        cell's own ``number_format`` code (see :meth:`_format_excel_date`).
+
+        Non-date cell values are returned as-is so that the rest of
+        ``get_sheet_tables`` (empty-row/col detection, ``clean_cell``, etc.)
+        continues to work without modification.
+        """
+        from datetime import datetime as _dt, date as _date
+        rows = []
+        for row in ws.iter_rows():
+            row_vals = []
+            for cell in row:
+                val = cell.value
+                if isinstance(val, (_dt, _date)):
+                    nf = getattr(cell, 'number_format', '') or ''
+                    row_vals.append(self._format_excel_date(val, nf))
+                else:
+                    row_vals.append(val)
+            rows.append(tuple(row_vals))
+        return rows
+
     # Replace None and NaN with empty string
     def clean_cell(self, cell):
         if cell is None:
@@ -93,6 +133,21 @@ class ExcelManager:
         try:
             if isinstance(cell, float) and str(cell) == 'nan':
                 return ''
+        except Exception:
+            pass
+        # Format datetime/date objects as human-readable strings.
+        # openpyxl returns date-formatted cells as Python datetime objects.
+        # Dropping the time component (when it's midnight) produces a clean
+        # "YYYY-MM-DD" string instead of "2026-01-23 00:00:00", which
+        # improves both BM25 matching and embedding quality for tabular data.
+        try:
+            from datetime import datetime as _dt, date as _date
+            if isinstance(cell, _dt):
+                if cell.hour == 0 and cell.minute == 0 and cell.second == 0:
+                    return cell.strftime('%Y-%m-%d')
+                return cell.strftime('%Y-%m-%d %H:%M')
+            if isinstance(cell, _date):
+                return cell.strftime('%Y-%m-%d')
         except Exception:
             pass
         return cell
@@ -111,8 +166,10 @@ class ExcelManager:
         Returns:
             list: Sheet data as a list of lists, with optional headers.
         """
-        # Get all rows as lists, preserving original shape
-        data = list(ws.values)
+        # Get all rows as lists, applying format-aware date conversion so that
+        # cells displayed as "Jan-23" in Excel are NOT silently converted to
+        # "2026-01-23" by the generic datetime→ISO-date fallback.
+        data = self._read_cells_with_format(ws)
         num_rows = len(data)
         num_cols = max((len(row) for row in data), default=0)
         # Normalize all rows to same length
