@@ -23,13 +23,33 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## March 2026
+
+### v0.3.6 - OpenRouter, Startup Warm-up & Reliability (Mar 22, 2026)
+
+- **OpenRouter Support**: Added OpenRouter provider support, configuration wiring, connectivity checks, and tests
+- **Startup Warm-up (Zero-Token)**: Added `warm_llm_provider_registry()`, `get_cached_llm_provider_registry()`, and `reset_cached_llm_provider_registry()` to preload/reuse provider configuration without token-consuming startup probes
+- **Health & Preflight Improvements**:
+  - Added startup preflight checks for LLM provider validation
+  - Added embedding and reranker health probes
+  - Improved provider endpoint/region resolution in health checks
+  - Added Ollama API key support and improved configured-provider reporting in LLM health checks
+- **Observability & Logging**:
+  - Added `process_id` generation for improved correlation in logging context
+  - Added machine identification support for OTLP logging/tracing
+  - Added OTLP channel routing controls and service name handling improvements
+- **API & Provider Robustness**:
+  - Improved APIClient streaming error handling
+  - Improved connection error classification (including DNS resolution failures)
+  - Improved Google GenAI handling for 404/model availability scenarios
+  - Preserved array/object fields in JSON prompt templates and improved structured-output guidance
+- **Utility & Configuration Updates**:
+  - Added locale-aware date formatting utilities integrated with `ExcelManager`
+  - Added explicit `ENABLE_CACHE` flag to disable caching when needed
+  - Updated Gemini pricing/rate metadata and fuzzy model matching logic
+  - Added Alibaba Cloud (Qwen) + OpenAI Responses API support
+
 ## February 2026
-
-### Unreleased - LLM Startup Warm-up Helper (Mar 2026)
-
-- **Zero-Token Startup Warm-up**: Added `warm_llm_provider_registry()` and `get_cached_llm_provider_registry()` to preload and reuse `ProviderRegistry` configuration without running token-consuming live LLM startup probes
-- **Cache Reset Support**: Added `reset_cached_llm_provider_registry()` for tests and explicit reload scenarios
-- **Documentation**: Documented the recommended startup pattern for services that want eager LLM configuration loading without `run_llm_startup_preflight()`
 
 ### v0.3.5 - Vertex AI, Wake-on-LAN & Structured Output (Feb 25, 2026)
 
