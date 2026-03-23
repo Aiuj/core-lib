@@ -127,6 +127,56 @@ class TestTracingAutoDetection:
             assert settings.tracing is not None
             assert settings.tracing.langfuse_public_key == "pk_test"
             assert settings.tracing.langfuse_secret_key == "sk_test"
+
+    def test_langfuse_auto_detection_uses_test_keys_in_dev(self):
+        """Test dev environments prefer LANGFUSE_TEST_* credentials."""
+        env = {
+            "ENVIRONMENT": "dev",
+            "LANGFUSE_TEST_PUBLIC_KEY": "pk_test_env",
+            "LANGFUSE_TEST_SECRET_KEY": "sk_test_env",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            settings = ApiSettings.from_env(load_dotenv=False)
+
+            assert settings.enable_tracing is True
+            assert settings.tracing is not None
+            assert settings.tracing.langfuse_public_key == "pk_test_env"
+            assert settings.tracing.langfuse_secret_key == "sk_test_env"
+
+    def test_langfuse_auto_detection_dev_falls_back_to_default_keys(self):
+        """Test dev environments fall back to LANGFUSE_* when test keys are absent."""
+        env = {
+            "ENVIRONMENT": "dev",
+            "LANGFUSE_PUBLIC_KEY": "pk_default",
+            "LANGFUSE_SECRET_KEY": "sk_default",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            settings = ApiSettings.from_env(load_dotenv=False)
+
+            assert settings.enable_tracing is True
+            assert settings.tracing is not None
+            assert settings.tracing.langfuse_public_key == "pk_default"
+            assert settings.tracing.langfuse_secret_key == "sk_default"
+
+    def test_langfuse_auto_detection_uses_prod_keys_in_production(self):
+        """Test production environments use LANGFUSE_* credentials."""
+        env = {
+            "ENVIRONMENT": "production",
+            "LANGFUSE_TEST_PUBLIC_KEY": "pk_should_not_use",
+            "LANGFUSE_TEST_SECRET_KEY": "sk_should_not_use",
+            "LANGFUSE_PUBLIC_KEY": "pk_prod",
+            "LANGFUSE_SECRET_KEY": "sk_prod",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            settings = ApiSettings.from_env(load_dotenv=False)
+
+            assert settings.enable_tracing is True
+            assert settings.tracing is not None
+            assert settings.tracing.langfuse_public_key == "pk_prod"
+            assert settings.tracing.langfuse_secret_key == "sk_prod"
     
     def test_tracing_explicit_enable(self):
         """Test explicit tracing enablement."""
@@ -144,6 +194,18 @@ class TestTracingAutoDetection:
             settings = ApiSettings.from_env(load_dotenv=False)
             
             # Should not auto-enable with partial configuration
+            assert settings.enable_tracing is False
+
+    def test_tracing_partial_test_keys_no_auto_enable_in_dev(self):
+        """Test tracing not auto-enabled with incomplete LANGFUSE_TEST_* config."""
+        env = {
+            "ENVIRONMENT": "dev",
+            "LANGFUSE_TEST_PUBLIC_KEY": "pk_test_only",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            settings = ApiSettings.from_env(load_dotenv=False)
+
             assert settings.enable_tracing is False
 
 

@@ -515,7 +515,8 @@ class TestTracingSettings(unittest.TestCase):
         self.original_env = {}
         tracing_vars = [
             "LANGFUSE_TRACING_ENABLED", "TRACING_ENABLED", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
-            "LANGFUSE_HOST", "APP_NAME", "APP_VERSION", "OTLP_LOG_CHANNEL", "OTLP_INSTANCE_ID"
+            "LANGFUSE_TEST_PUBLIC_KEY", "LANGFUSE_TEST_SECRET_KEY", "LANGFUSE_HOST", "APP_NAME",
+            "APP_VERSION", "OTLP_LOG_CHANNEL", "OTLP_INSTANCE_ID", "ENVIRONMENT"
         ]
         for var in tracing_vars:
             self.original_env[var] = os.environ.get(var)
@@ -555,6 +556,32 @@ class TestTracingSettings(unittest.TestCase):
         settings = TracingSettings.from_env(load_dotenv=False)
 
         self.assertEqual(settings.otlp_instance_id, "server-01")
+
+    def test_tracing_settings_prefers_test_langfuse_keys_in_dev(self):
+        """Test dev environments resolve LANGFUSE_TEST_* first."""
+        os.environ["ENVIRONMENT"] = "dev"
+        os.environ["LANGFUSE_TEST_PUBLIC_KEY"] = "pk_test_env"
+        os.environ["LANGFUSE_TEST_SECRET_KEY"] = "sk_test_env"
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "pk_prod"
+        os.environ["LANGFUSE_SECRET_KEY"] = "sk_prod"
+
+        settings = TracingSettings.from_env(load_dotenv=False)
+
+        self.assertEqual(settings.langfuse_public_key, "pk_test_env")
+        self.assertEqual(settings.langfuse_secret_key, "sk_test_env")
+
+    def test_tracing_settings_uses_prod_langfuse_keys_in_production(self):
+        """Test production environments resolve LANGFUSE_* keys."""
+        os.environ["ENVIRONMENT"] = "production"
+        os.environ["LANGFUSE_TEST_PUBLIC_KEY"] = "pk_test_env"
+        os.environ["LANGFUSE_TEST_SECRET_KEY"] = "sk_test_env"
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "pk_prod"
+        os.environ["LANGFUSE_SECRET_KEY"] = "sk_prod"
+
+        settings = TracingSettings.from_env(load_dotenv=False)
+
+        self.assertEqual(settings.langfuse_public_key, "pk_prod")
+        self.assertEqual(settings.langfuse_secret_key, "sk_prod")
     
     def test_tracing_validation_enabled_missing_keys(self):
         """Test validation when tracing enabled but keys missing."""

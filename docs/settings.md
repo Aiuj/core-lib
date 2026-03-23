@@ -1291,9 +1291,16 @@ GOOGLE_GENAI_API_KEY=your-key
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LANGFUSE_TRACING_ENABLED` | `true` | Enable Langfuse tracing (also accepts legacy `TRACING_ENABLED`) |
-| `LANGFUSE_PUBLIC_KEY` | Required | Langfuse public key |
-| `LANGFUSE_SECRET_KEY` | Required | Langfuse secret key |
+| `LANGFUSE_TEST_PUBLIC_KEY` | Optional | Langfuse public key for non-production environments |
+| `LANGFUSE_TEST_SECRET_KEY` | Optional | Langfuse secret key for non-production environments |
+| `LANGFUSE_PUBLIC_KEY` | Required in production | Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | Required in production | Langfuse secret key |
 | `LANGFUSE_HOST` | `"http://localhost:3000"` | Langfuse host URL |
+
+Credential resolution is environment-aware:
+
+- `ENVIRONMENT=production` or `ENVIRONMENT=prod` → use `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`
+- Any other environment (for example `dev`, `development`, `test`, `staging`) → prefer `LANGFUSE_TEST_PUBLIC_KEY` / `LANGFUSE_TEST_SECRET_KEY`, then fall back to the unprefixed variables
 
 ### MCP Server Configuration
 

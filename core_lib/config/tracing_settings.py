@@ -27,6 +27,28 @@ class TracingSettings(BaseSettings):
     langfuse_public_key: Optional[str] = None
     langfuse_secret_key: Optional[str] = None
     langfuse_host: str = "http://localhost:3000"
+
+    @staticmethod
+    def _resolve_langfuse_credentials() -> tuple[Optional[str], Optional[str]]:
+        """Resolve Langfuse credentials based on ENVIRONMENT.
+
+        Production uses the unprefixed ``LANGFUSE_*`` variables.
+        Non-production environments prefer ``LANGFUSE_TEST_*`` and fall back to
+        ``LANGFUSE_*`` for backward compatibility.
+        """
+        environment = (EnvParser.get_env("ENVIRONMENT", default="dev") or "dev").lower()
+        is_production = environment in {"prod", "production"}
+
+        if is_production:
+            return (
+                EnvParser.get_env("LANGFUSE_PUBLIC_KEY"),
+                EnvParser.get_env("LANGFUSE_SECRET_KEY"),
+            )
+
+        return (
+            EnvParser.get_env("LANGFUSE_TEST_PUBLIC_KEY", "LANGFUSE_PUBLIC_KEY"),
+            EnvParser.get_env("LANGFUSE_TEST_SECRET_KEY", "LANGFUSE_SECRET_KEY"),
+        )
     
     @classmethod
     def from_env(
@@ -37,6 +59,7 @@ class TracingSettings(BaseSettings):
     ) -> "TracingSettings":
         """Create tracing settings from environment variables."""
         cls._load_dotenv_if_requested(load_dotenv, dotenv_paths)
+        langfuse_public_key, langfuse_secret_key = cls._resolve_langfuse_credentials()
         
         # Read LANGFUSE_TRACING_ENABLED (preferred) with fallback to legacy TRACING_ENABLED
         langfuse_enabled = EnvParser.get_env("LANGFUSE_TRACING_ENABLED", env_type=bool)
@@ -49,8 +72,8 @@ class TracingSettings(BaseSettings):
             "service_version": EnvParser.get_env("APP_VERSION", "SERVICE_VERSION", default="0.1.0"),
             "otlp_instance_id": EnvParser.get_env("OTLP_INSTANCE_ID"),
             "otlp_log_channel": EnvParser.get_env("OTLP_LOG_CHANNEL"),
-            "langfuse_public_key": EnvParser.get_env("LANGFUSE_PUBLIC_KEY"),
-            "langfuse_secret_key": EnvParser.get_env("LANGFUSE_SECRET_KEY"),
+            "langfuse_public_key": langfuse_public_key,
+            "langfuse_secret_key": langfuse_secret_key,
             "langfuse_host": EnvParser.get_env("LANGFUSE_HOST", default="http://localhost:3000"),
         }
         

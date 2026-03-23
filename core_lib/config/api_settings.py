@@ -211,12 +211,11 @@ class ApiSettings(BaseSettings):
         
         if EnvParser.get_env("ENABLE_TRACING", env_type=bool) is not None:
             return EnvParser.get_env("ENABLE_TRACING", env_type=bool)
+
+        langfuse_public_key, langfuse_secret_key = TracingSettings._resolve_langfuse_credentials()
         
         # Auto-detect based on Langfuse settings
-        return (
-            EnvParser.get_env("LANGFUSE_PUBLIC_KEY") and
-            EnvParser.get_env("LANGFUSE_SECRET_KEY")
-        ) is not None
+        return bool(langfuse_public_key and langfuse_secret_key)
     
     @staticmethod
     def _should_enable_logger(overrides: dict) -> bool:
