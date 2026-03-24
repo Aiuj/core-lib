@@ -161,6 +161,10 @@ class ProviderConfig:
     tier: str = "standard"            # "low", "standard", "high"
     
     extra: Dict[str, Any] = field(default_factory=dict)
+
+    # Per-provider HTTP timeout override (ms). Gemini-only for now.
+    # Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS when set.
+    http_timeout_ms: Optional[int] = None
     
     # Provider-specific aliases
     azure_endpoint: Optional[str] = None
@@ -308,6 +312,11 @@ class ProviderConfig:
         if tier:
             normalized["tier"] = str(tier).lower()
         
+        # Per-provider HTTP timeout override (ms)
+        http_timeout_ms = data.get("http_timeout_ms") or data.get("httpTimeoutMs") or data.get("timeout_ms")
+        if http_timeout_ms is not None:
+            normalized["http_timeout_ms"] = int(http_timeout_ms)
+
         # Azure-specific
         normalized["azure_endpoint"] = data.get("azure_endpoint") or data.get("azureEndpoint")
         normalized["azure_api_version"] = data.get("azure_api_version") or data.get("azureApiVersion")
@@ -333,7 +342,8 @@ class ProviderConfig:
             "enabled", "azure_endpoint", "azureEndpoint", "azure_api_version",
             "azureApiVersion", "organization", "org", "project", "location", "region",
             "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials",
-            "wake_on_lan", "wakeOnLan", "wol"
+            "wake_on_lan", "wakeOnLan", "wol",
+            "http_timeout_ms", "httpTimeoutMs", "timeout_ms",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
@@ -364,6 +374,7 @@ class ProviderConfig:
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
                 service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                http_timeout_ms=self.http_timeout_ms,
             )
 
         elif self.provider == "vertex":
@@ -379,6 +390,7 @@ class ProviderConfig:
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
                 service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                http_timeout_ms=self.http_timeout_ms,
             )
         
         elif self.provider in ("openai", "azure-openai"):

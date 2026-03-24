@@ -768,6 +768,19 @@ class GoogleGenAIProvider(BaseProvider):
                     "cached_content": cached_content,
                 },
             )
+            # Extract system message from messages list when the caller passes it inline
+            # (OpenAI-style) rather than as the explicit system_message kwarg.
+            # This ensures system_instruction is always set for Gemini, whether the
+            # caller uses the kwarg or the messages-list convention.
+            effective_system_message = system_message
+            if effective_system_message is None:
+                inline_system = next(
+                    (m.get("content", "") for m in messages if m.get("role") == "system"),
+                    None,
+                )
+                if inline_system:
+                    effective_system_message = inline_system
+
             # Determine if this is a single-turn prompt (only one user message, optional system)
             user_messages = [m for m in messages if m.get("role") == "user"]
             assistant_messages = [m for m in messages if m.get("role") == "assistant"]
@@ -794,7 +807,7 @@ class GoogleGenAIProvider(BaseProvider):
                 extra = self._build_config(
                     structured_output=structured_output if not use_fallback_json else None,
                     tools=tools,
-                    system_message=system_message,
+                    system_message=effective_system_message,
                     use_search_grounding=use_search_grounding,
                     thinking_enabled_override=thinking_enabled,
                     cached_content=cached_content,
@@ -826,7 +839,7 @@ class GoogleGenAIProvider(BaseProvider):
                 extra = self._build_config(
                     structured_output=structured_output if not use_fallback_json else None,
                     tools=tools,
-                    system_message=system_message,
+                    system_message=effective_system_message,
                     use_search_grounding=use_search_grounding,
                     thinking_enabled_override=thinking_enabled,
                     cached_content=cached_content,
