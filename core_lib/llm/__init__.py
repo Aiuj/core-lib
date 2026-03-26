@@ -20,6 +20,7 @@ Example:
 
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from .llm_client import LLMClient
+from .providers.azure_openai_provider import AzureOpenAIConfig
 from .factory import (
     LLMFactory,
     create_llm_client,
@@ -82,6 +83,7 @@ __all__ = [
     "GeminiConfig",
     "OllamaConfig",
     "OpenAIConfig",
+    "AzureOpenAIConfig",
     "OpenAIResponsesConfig",
     "LLMClient",
     

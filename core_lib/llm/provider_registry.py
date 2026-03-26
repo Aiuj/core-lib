@@ -393,7 +393,36 @@ class ProviderConfig:
                 http_timeout_ms=self.http_timeout_ms,
             )
         
-        elif self.provider in ("openai", "azure-openai"):
+        elif self.provider == "azure-openai":
+            from .providers.azure_openai_provider import AzureOpenAIConfig
+            api_key = (
+                self.api_key
+                or os.getenv("AZURE_OPENAI_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or ""
+            )
+            azure_endpoint = (
+                self.azure_endpoint
+                or os.getenv("AZURE_OPENAI_ENDPOINT")
+                or ""
+            )
+            thinking_budget: Optional[int] = None
+            if self.thinking_config and "budget" in self.thinking_config:
+                thinking_budget = int(self.thinking_config["budget"])
+            return AzureOpenAIConfig(
+                api_key=api_key,
+                azure_endpoint=azure_endpoint,
+                model=self.model,
+                azure_api_version=self.azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION") or "2024-08-01-preview",
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                thinking_budget=thinking_budget,
+                organization=self.organization,
+                project=self.project,
+            )
+
+        elif self.provider == "openai":
             from .providers.openai_provider import OpenAIConfig
             api_key = (
                 self.api_key
@@ -534,7 +563,9 @@ class ProviderConfig:
                 or bool(os.getenv("DASHSCOPE_API_KEY"))
             )
         elif self.provider == "azure-openai":
-            return bool(self.api_key) and bool(self.azure_endpoint)
+            has_key = bool(self.api_key) or bool(os.getenv("AZURE_OPENAI_API_KEY")) or bool(os.getenv("OPENAI_API_KEY"))
+            has_endpoint = bool(self.azure_endpoint) or bool(os.getenv("AZURE_OPENAI_ENDPOINT"))
+            return has_key and has_endpoint
         elif self.provider == "openai-responses":
             return (
                 bool(self.api_key)

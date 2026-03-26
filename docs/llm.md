@@ -71,6 +71,15 @@ client = LLMFactory.openai(model="gpt-4", temperature=0.3)
 client = LLMFactory.gemini(model="gemini-1.5-pro")
 client = LLMFactory.ollama(model="llama3.2")
 
+# Azure OpenAI — dedicated first-class provider
+client = LLMFactory.azure_openai(
+    api_key="<key>",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    deployment="gpt-4o",
+)
+# Or entirely from environment variables (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
+client = LLMFactory.azure_openai()
+
 # OpenAI Responses API (recommended for new OpenAI projects)
 client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
 
@@ -173,13 +182,13 @@ Available environment variables:
 
 Available environment variables:
 
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key (required)
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint URL (required)
-- `AZURE_OPENAI_API_VERSION`: API version (default: "2024-08-01-preview")
-- `AZURE_OPENAI_DEPLOYMENT`: Deployment name (maps to model)
-- `AZURE_OPENAI_TEMPERATURE`: Sampling temperature (default: "0.7")
-- `AZURE_OPENAI_MAX_TOKENS`: Maximum tokens to generate
-- `AZURE_OPENAI_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
+- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key (required; falls back to `OPENAI_API_KEY`)
+- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint URL, e.g. `https://<resource>.openai.azure.com` (required)
+- `AZURE_OPENAI_API_VERSION`: REST API date version (default: `2024-08-01-preview`)
+- `AZURE_OPENAI_DEPLOYMENT`: Deployment / model name (falls back to `OPENAI_MODEL`; default: `gpt-4o-mini`)
+- `AZURE_OPENAI_TEMPERATURE`: Sampling temperature (falls back to `OPENAI_TEMPERATURE`; default: `0.7`)
+- `AZURE_OPENAI_MAX_TOKENS`: Maximum tokens to generate (falls back to `OPENAI_MAX_TOKENS`)
+- `AZURE_OPENAI_ORG`: Organisation ID (optional)
 
 ### Ollama Configuration
 
@@ -209,6 +218,62 @@ Available environment variables:
 - `GEMINI_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
 
 ## Advanced Usage
+
+### Azure OpenAI
+
+Azure OpenAI is a **first-class provider** with its own configuration class
+(`AzureOpenAIConfig`) and provider (`AzureOpenAIProvider`). It uses the
+official `AzureOpenAI` SDK client and requires `azure_endpoint`.
+
+```python
+from core_lib.llm import create_azure_openai_client, AzureOpenAIConfig, LLMClient
+
+# 1. Simplest — reads AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT from env
+client = create_azure_openai_client()
+
+# 2. Explicit parameters
+client = create_azure_openai_client(
+    api_key="<your-key>",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    deployment="gpt-4o",                        # Azure deployment name
+    azure_api_version="2024-08-01-preview",
+    temperature=0.3,
+)
+
+# 3. Direct config object for full control
+config = AzureOpenAIConfig(
+    api_key="<your-key>",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    model="gpt-4o",
+    azure_api_version="2024-08-01-preview",
+    temperature=0.3,
+    max_tokens=1024,
+)
+client = LLMClient(config)
+response = client.chat("Summarise this in one sentence.")
+print(response["content"])
+```
+
+**Provider registry / YAML config:**
+
+```yaml
+providers:
+  - provider: azure          # also accepts "azure-openai" or "azure_openai"
+    api_key: ${AZURE_OPENAI_API_KEY}
+    azure_endpoint: ${AZURE_OPENAI_ENDPOINT}
+    model: gpt-4o
+    azure_api_version: "2024-08-01-preview"
+    priority: 1
+```
+
+**Minimum required environment variables:**
+
+```bash
+export AZURE_OPENAI_API_KEY=<your-azure-key>
+export AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+export AZURE_OPENAI_DEPLOYMENT=gpt-4o          # optional — defaults to gpt-4o-mini
+export AZURE_OPENAI_API_VERSION=2024-08-01-preview  # optional
+```
 
 ### Using Custom Configuration Objects
 

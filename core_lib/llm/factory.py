@@ -4,6 +4,7 @@ import os
 import warnings
 from typing import Optional, Dict, Any, Union, Type, TYPE_CHECKING
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
+from .providers.azure_openai_provider import AzureOpenAIConfig, AzureOpenAIProvider
 from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .llm_client import LLMClient
 
@@ -106,6 +107,8 @@ class LLMFactory:
             config = OllamaConfig.from_env()
         elif provider_lc in ("openai", "azure-openai"):
             config = OpenAIConfig.from_env()
+        elif provider_lc in ("azure", "azure_openai"):
+            config = AzureOpenAIConfig.from_env()
         elif provider_lc in ("openai-responses", "openai_responses"):
             config = OpenAIResponsesConfig.from_env()
         elif provider_lc in ("alibaba", "alibaba-cloud", "dashscope", "qwen"):
@@ -299,34 +302,41 @@ class LLMFactory:
         """Create an Azure OpenAI client.
 
         Args:
-            api_key: Azure OpenAI API key (if None, will try to get from environment)
-            azure_endpoint: Azure OpenAI endpoint URL
-            azure_api_version: Azure OpenAI API version
-            deployment: Azure deployment name (maps to model)
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            thinking_enabled: Whether to enable step-by-step thinking
-            **kwargs: Additional configuration parameters
-            
+            api_key: Azure OpenAI API key. Reads ``AZURE_OPENAI_API_KEY`` /
+                     ``OPENAI_API_KEY`` from environment when not provided.
+            azure_endpoint: Azure OpenAI endpoint URL, e.g.
+                            ``https://<resource>.openai.azure.com``.
+                            Reads ``AZURE_OPENAI_ENDPOINT`` when absent.
+            azure_api_version: REST API date version string.
+                               Reads ``AZURE_OPENAI_API_VERSION`` when absent.
+            deployment: Azure deployment name (maps to the ``model`` field).
+                        Reads ``AZURE_OPENAI_DEPLOYMENT`` / ``OPENAI_MODEL``
+                        when absent.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens to generate.
+            thinking_enabled: Whether to enable step-by-step thinking.
+            **kwargs: Additional :class:`AzureOpenAIConfig` parameters.
+
         Returns:
-            Configured LLMClient instance
+            Configured :class:`~core_lib.llm.llm_client.LLMClient` instance.
         """
         if api_key is None or azure_endpoint is None:
-            config = OpenAIConfig.from_env()
+            # Read from environment, then apply any explicit overrides
+            config = AzureOpenAIConfig.from_env()
             if deployment is not None:
                 config.model = deployment
         else:
-            config = OpenAIConfig(
+            config = AzureOpenAIConfig(
                 api_key=api_key,
+                azure_endpoint=azure_endpoint,
                 model=deployment or "gpt-4o-mini",
+                azure_api_version=azure_api_version or "2024-08-01-preview",
                 temperature=temperature,
                 max_tokens=max_tokens,
                 thinking_enabled=thinking_enabled,
-                azure_endpoint=azure_endpoint,
-                azure_api_version=azure_api_version or "2024-08-01-preview",
                 **kwargs,
             )
-        # Apply common overrides
+        # Apply common overrides regardless of construction path
         config.temperature = temperature
         config.max_tokens = max_tokens
         config.thinking_enabled = thinking_enabled
