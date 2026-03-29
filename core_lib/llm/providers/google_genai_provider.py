@@ -413,25 +413,75 @@ class GoogleGenAIProvider(BaseProvider):
             # Ultimate fallback
             return getattr(resp, "text", "")
 
-    def _to_genai_messages(self, messages: List[Dict[str, str]]) -> str:
-        """Flatten OpenAI-style messages to a single prompt string.
+    def _to_genai_messages(self, messages: List[Dict[str, Any]]) -> Any:
+        """Convert OpenAI-style messages to google.genai content.
 
-        google.genai chat API supports chat sessions, but mapping roles to a
-        single prompt keeps things simple for now. For richer role handling,
-        we could use client.chats and turn history, but generate_content also
-        accepts contents=str. We'll join messages into a single text.
+        For text-only messages, returns a flat string prompt (simple path).
+        For multimodal messages (containing image parts), returns a list of
+        google.genai Part objects that the model can process natively.
         """
-        parts: List[str] = []
+        has_multimodal = any(
+            isinstance(m.get("content"), list) for m in messages
+        )
+
+        if not has_multimodal:
+            # Fast path: text-only → flat string
+            parts: List[str] = []
+            for m in messages:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                if role == "system":
+                    parts.append(f"System: {content}")
+                elif role in ("assistant", "ai"):
+                    parts.append(f"Assistant: {content}")
+                else:
+                    parts.append(f"User: {content}")
+            return "\n".join(parts)
+
+        # Multimodal path: convert to google.genai Part objects
+        import base64
+        from google.genai import types  # type: ignore
+
+        genai_parts = []
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
-            if role == "system":
-                parts.append(f"System: {content}")
-            elif role in ("assistant", "ai"):
-                parts.append(f"Assistant: {content}")
-            else:
-                parts.append(f"User: {content}")
-        return "\n".join(parts)
+
+            if isinstance(content, str):
+                if role == "system":
+                    genai_parts.append(types.Part.from_text(text=f"System: {content}"))
+                elif role in ("assistant", "ai"):
+                    genai_parts.append(types.Part.from_text(text=f"Assistant: {content}"))
+                else:
+                    genai_parts.append(types.Part.from_text(text=content))
+            elif isinstance(content, list):
+                # OpenAI-style content parts
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = part.get("type", "")
+                    if part_type == "text":
+                        genai_parts.append(types.Part.from_text(text=part.get("text", "")))
+                    elif part_type == "image_url":
+                        image_url_obj = part.get("image_url", {})
+                        url = image_url_obj.get("url", "")
+                        if url.startswith("data:"):
+                            # data:image/png;base64,<data>
+                            header, b64_data = url.split(",", 1)
+                            mime = header.split(":")[1].split(";")[0]
+                            image_bytes = base64.b64decode(b64_data)
+                            genai_parts.append(types.Part.from_bytes(
+                                data=image_bytes,
+                                mime_type=mime,
+                            ))
+                        else:
+                            # External URL — use from_uri
+                            genai_parts.append(types.Part.from_uri(
+                                file_uri=url,
+                                mime_type="image/png",
+                            ))
+
+        return genai_parts
 
     def _build_config(
         self,
@@ -656,7 +706,7 @@ class GoogleGenAIProvider(BaseProvider):
     def chat(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         structured_output: Optional[Type[BaseModel]] = None,
         system_message: Optional[str] = None,
@@ -731,7 +781,7 @@ class GoogleGenAIProvider(BaseProvider):
     def _chat_with_retry(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         structured_output: Optional[Type[BaseModel]] = None,
         system_message: Optional[str] = None,

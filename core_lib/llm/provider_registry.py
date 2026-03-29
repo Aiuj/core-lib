@@ -174,6 +174,11 @@ class ProviderConfig:
     location: Optional[str] = None
     service_account_file: Optional[str] = None
     wake_on_lan: Optional[Dict[str, Any]] = None
+    
+    # Usage-based routing: filter providers by purpose (e.g. "ocr", "vision", "chat")
+    # None or empty means the provider is available for any usage.
+    usage: Optional[Union[str, List[str]]] = None
+    
     _missing_service_account_logged: ClassVar[Set[str]] = set()
     
     def __post_init__(self):
@@ -332,6 +337,14 @@ class ProviderConfig:
             data.get("google_application_credentials")
         )
         
+        # Usage-based routing
+        usage = (
+            data.get("usage") or data.get("use_case") or
+            data.get("usecase") or data.get("purpose") or data.get("task")
+        )
+        if usage is not None:
+            normalized["usage"] = usage
+        
         # Collect remaining keys as extra
         known_keys = {
             "provider", "type", "model", "model_name", "api_key", "apiKey", "key",
@@ -344,6 +357,7 @@ class ProviderConfig:
             "service_account_file", "serviceAccountFile", "credentials_file", "google_application_credentials",
             "wake_on_lan", "wakeOnLan", "wol",
             "http_timeout_ms", "httpTimeoutMs", "timeout_ms",
+            "usage", "use_case", "usecase", "purpose", "task",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
@@ -734,6 +748,35 @@ class ProviderRegistry:
         """
         providers = self.get_providers_for_level(intelligence_level)
         return providers[0] if providers else None
+    
+    def get_providers_for_usage(self, usage: str) -> List[ProviderConfig]:
+        """Get providers that match a specific usage tag.
+
+        A provider matches if:
+        - Its ``usage`` field is None/empty (available for any usage), or
+        - Its ``usage`` contains the requested value (or ``"*"``/``"all"``).
+
+        Args:
+            usage: Usage tag to filter by (e.g. ``"ocr"``, ``"vision"``).
+
+        Returns:
+            Matching providers sorted by priority.
+        """
+        requested = usage.strip().lower()
+        matching: List[ProviderConfig] = []
+        for p in self.providers:
+            cfg_usage = p.usage
+            if cfg_usage is None:
+                matching.append(p)
+                continue
+            if isinstance(cfg_usage, str):
+                if cfg_usage.strip().lower() in {requested, "*", "all"}:
+                    matching.append(p)
+            elif isinstance(cfg_usage, list):
+                values = {str(v).strip().lower() for v in cfg_usage}
+                if values.intersection({requested, "*", "all"}):
+                    matching.append(p)
+        return sorted(matching, key=lambda p: p.priority)
     
     def get_client_for_level(self, intelligence_level: int):
         """Get an LLMClient for the specified intelligence level.

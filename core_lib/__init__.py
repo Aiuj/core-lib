@@ -28,13 +28,16 @@ from .tools import ExcelManager
 # New settings management system
 from .config import (
     StandardSettings, BaseSettings, LLMSettings, EmbeddingsSettings, AppSettings,
-    CacheSettings, TracingSettings, DatabaseSettings, SettingsManager, settings_manager,
+    CacheSettings, TracingSettings, DatabaseSettings, OcrSettings, SettingsManager, settings_manager,
     SettingsError, EnvironmentVariableError, AuthSettings,
     DOC_CATEGORIES, DOC_CATEGORIES_BY_KEY, DOC_CATEGORY_CHOICES,
     CONFIDENTIALITY_LEVELS, CONFIDENTIALITY_LEVEL_NAMES, DEFAULT_CONFIDENTIALITY_LEVEL,
     CONFIDENTIALITY_LEVEL_DESCRIPTION, validate_confidentiality_level,
     get_confidentiality_level_name, get_confidentiality_level_value
 )
+
+# OCR services
+from .ocr import OcrService, OcrResult, OcrPageResult, DotsOcrClient
 
 # API utilities for time-based authentication
 from .api_utils import (
@@ -135,6 +138,7 @@ __all__ = [
     "CacheSettings",
     "TracingSettings",
     "DatabaseSettings",
+    "OcrSettings",
     "AuthSettings",
     "SettingsManager",
     "settings_manager",
@@ -175,6 +179,12 @@ __all__ = [
     "create_cohere_reranker",
     "create_local_reranker",
     "get_reranker_client",
+    
+    # OCR
+    "OcrService",
+    "OcrResult",
+    "OcrPageResult",
+    "DotsOcrClient",
     
     "__version__",
 ]
