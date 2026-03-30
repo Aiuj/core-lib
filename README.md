@@ -84,6 +84,15 @@ logger.debug("Debug information")
 - **OTLP** - OpenTelemetry Protocol for observability platforms
 - **OVH LDP** - OVH Logs Data Platform integration
 
+### Console color controls
+
+Console colors are applied to terminal output only (not file/OTLP/OVH handlers).
+
+- `LOG_CONSOLE_COLORS=true|false` — force-enable or disable ANSI colors.
+- `NO_COLOR=1` — disables colors when `LOG_CONSOLE_COLORS` is not explicitly set.
+
+Default behavior: auto-enable colors when running in an interactive TTY (for example, the VS Code integrated terminal).
+
 ### Key Features:
 - **Simple setup**: One function call at startup
 - **Multiple handlers**: Console, file, OTLP, OVH LDP (all can run simultaneously)

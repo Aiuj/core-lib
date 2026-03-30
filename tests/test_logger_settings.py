@@ -26,6 +26,7 @@ class TestLoggerSettings:
     def test_logger_settings_from_env(self, monkeypatch):
         """Test loading LoggerSettings from environment variables."""
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("LOG_CONSOLE_COLORS", "true")
         monkeypatch.setenv("LOG_FILE_ENABLED", "true")
         monkeypatch.setenv("LOG_FILE_PATH", "logs/test.log")
         monkeypatch.setenv("OVH_LDP_ENABLED", "true")
@@ -37,6 +38,7 @@ class TestLoggerSettings:
         settings = LoggerSettings.from_env(load_dotenv=False)
         
         assert settings.log_level == "DEBUG"
+        assert settings.console_colors is True
         assert settings.file_logging is True
         assert settings.file_path == "logs/test.log"
         assert settings.ovh_ldp_enabled is True

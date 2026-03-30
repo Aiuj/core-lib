@@ -10,6 +10,7 @@ OVH Logs Data Platform supports multiple protocols:
 
 Environment Variables:
     LOG_LEVEL: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    LOG_CONSOLE_COLORS: Enable ANSI colors for console logs (true/false). Defaults to auto-detect on TTY.
     LOG_FILE_ENABLED: Enable file logging (true/false)
     LOG_FILE_PATH: Path to log file (default: logs/<app_name>.log)
     LOG_FILE_MAX_BYTES: Max file size before rotation (default: 1048576)
@@ -71,6 +72,7 @@ class LoggerSettings(BaseSettings):
     
     # Standard logging settings
     log_level: str = "INFO"
+    console_colors: Optional[bool] = None
     file_logging: bool = False
     file_path: Optional[str] = None
     file_max_bytes: int = 1_048_576  # 1 MB
@@ -203,6 +205,11 @@ class LoggerSettings(BaseSettings):
         settings_dict = {
             # Standard logging
             "log_level": EnvParser.get_env("LOG_LEVEL", default="INFO"),
+            "console_colors": (
+                EnvParser.get_env("LOG_CONSOLE_COLORS", env_type=bool)
+                if EnvParser.get_env("LOG_CONSOLE_COLORS") is not None
+                else None
+            ),
             "file_logging": EnvParser.get_env("LOG_FILE_ENABLED", default=False, env_type=bool),
             "file_path": EnvParser.get_env("LOG_FILE_PATH"),
             "file_max_bytes": EnvParser.get_env("LOG_FILE_MAX_BYTES", default=1_048_576, env_type=int),
@@ -285,6 +292,7 @@ class LoggerSettings(BaseSettings):
         """Convert to dictionary representation."""
         return {
             "log_level": self.log_level,
+            "console_colors": self.console_colors,
             "file_logging": self.file_logging,
             "file_path": self.file_path,
             "file_max_bytes": self.file_max_bytes,
