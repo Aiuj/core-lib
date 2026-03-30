@@ -262,6 +262,13 @@ class OcrService:
 
         try:
             response = self._vision_client.chat(messages=messages)
+            # LLM clients may swallow exceptions internally and return
+            # {"content": None, "error": "..."} instead of raising.
+            # Detect this so the dots-ocr fallback can be attempted.
+            if response.get("error") or response.get("content") is None:
+                error_detail = response.get("error", "no content in response")
+                logger.error("Vision LLM OCR failed: %s", error_detail)
+                return OcrPageResult(page_number=0, raw_text="", source="llm-vision-error")
             raw_text = response.get("content", "") or ""
         except Exception as exc:
             logger.error("Vision LLM OCR failed: %s", exc)
