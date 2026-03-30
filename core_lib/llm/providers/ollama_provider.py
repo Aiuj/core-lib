@@ -166,6 +166,68 @@ class OllamaProvider(BaseProvider):
             return match.group(1)
         return self.config.model
 
+    @staticmethod
+    def _convert_messages_to_ollama_format(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Convert OpenAI-style multimodal messages to Ollama's native format.
+
+        Ollama's Python client (and HTTP API) requires:
+        - ``content``: plain string (text only)
+        - ``images``: list of base64-encoded image data (no data-URL prefix)
+
+        OpenAI-style multimodal messages use a ``content`` list with typed parts
+        (``{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}``,
+        ``{"type": "text", "text": "..."}``).  This method normalises the latter
+        into the former so that multimodal calls work with any Ollama vision model.
+        """
+        import base64 as _base64
+
+        result: List[Dict[str, Any]] = []
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                result.append(msg)
+                continue
+
+            # OpenAI multimodal format — extract text parts and image parts
+            text_parts: List[str] = []
+            images: List[str] = []
+
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part_type == "image_url":
+                    url: str = (part.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        # Strip "data:<mime>;base64," prefix — Ollama only wants raw b64
+                        try:
+                            b64_data = url.split(",", 1)[1]
+                        except IndexError:
+                            b64_data = url
+                    else:
+                        # Plain URL — encode as base64 bytes if possible; skip otherwise
+                        try:
+                            import urllib.request as _ur
+                            with _ur.urlopen(url, timeout=10) as resp:
+                                b64_data = _base64.b64encode(resp.read()).decode("ascii")
+                        except Exception:
+                            continue
+                    images.append(b64_data)
+
+            new_msg: Dict[str, Any] = {
+                **{k: v for k, v in msg.items() if k != "content"},
+                "content": " ".join(text_parts),
+            }
+            if images:
+                new_msg["images"] = images
+            result.append(new_msg)
+
+        return result
+
     def _chat_once(self, payload: Dict[str, Any], timeout: Optional[float]) -> Dict[str, Any]:
         """Execute one Ollama chat call with optional timeout override."""
         from ollama import Client  # type: ignore
@@ -259,7 +321,7 @@ class OllamaProvider(BaseProvider):
 
             payload: Dict[str, Any] = {
                 "model": self.config.model,
-                "messages": messages,
+                "messages": self._convert_messages_to_ollama_format(messages),
                 "options": self._build_options(),
             }
             if tools:

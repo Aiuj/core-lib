@@ -211,15 +211,28 @@ class StandardSettings(ApiSettings):
     
     @staticmethod
     def _should_enable_ocr(overrides: dict) -> bool:
-        """Check if OCR should be enabled based on environment variables."""
+        """Check if OCR should be enabled based on environment variables.
+
+        OCR is enabled when any of the following is true:
+        - ``enable_ocr=True`` passed as an override
+        - ``ENABLE_OCR=true`` environment variable
+        - ``DOTS_OCR_BASE_URL`` is set (dots-ocr service configured)
+        - ``LLM_PROVIDERS_FILE`` is set (vision-capable LLM providers may be
+          configured with ``usage: [vision, ocr]`` — enables vision-LLM-primary OCR)
+        """
         if "enable_ocr" in overrides:
             return overrides["enable_ocr"]
-        
+
         if EnvParser.get_env("ENABLE_OCR", env_type=bool) is not None:
             return EnvParser.get_env("ENABLE_OCR", env_type=bool)
-        
-        # Auto-detect based on dots-ocr service URL
-        return EnvParser.get_env("DOTS_OCR_BASE_URL") is not None
+
+        # Auto-detect: dots-ocr service URL explicitly configured
+        if EnvParser.get_env("DOTS_OCR_BASE_URL") is not None:
+            return True
+
+        # Auto-detect: an LLM providers file is configured, meaning vision-capable
+        # LLM providers tagged with usage: [vision, ocr] may be available.
+        return EnvParser.get_env("LLM_PROVIDERS_FILE") is not None
     
     def validate(self) -> None:
         """Validate the complete settings configuration."""

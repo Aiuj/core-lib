@@ -1,7 +1,9 @@
-"""OCR service with fallback and caching.
+"""OCR service with vision-LLM primary provider and optional dots-ocr fallback.
 
-Processes images through dots-ocr (primary) with vision-capable LLM
-(e.g. Gemini) as fallback. Uses Redis/Valkey cache for image
+Processes images primarily through a vision-capable LLM (e.g. Gemini,
+Configured via ``llm_providers.yaml`` with ``usage: [vision, ocr]``).
+dots-ocr is an optional secondary provider activated by setting
+``DOTS_OCR_BASE_URL``.  Uses Redis/Valkey cache for image
 deduplication — identical images are only OCR'd once.
 """
 
@@ -22,7 +24,15 @@ logger = get_module_logger()
 
 
 class OcrService:
-    """Orchestrates OCR processing with caching and provider fallback.
+    """Orchestrates OCR processing with caching and provider selection.
+
+    Primary provider: vision-capable LLM (passed as ``vision_llm_client``,
+    typically configured via ``llm_providers.yaml`` with
+    ``usage: [vision, ocr]``).
+
+    Optional secondary provider: dots-ocr — only attempted when
+    ``OcrSettings.dots_ocr_base_url`` is set.  Acts as a high-performance
+    specialist fallback when the vision LLM is unavailable.
 
     Usage::
 
@@ -30,7 +40,7 @@ class OcrService:
         from core_lib.ocr import OcrService
 
         settings = OcrSettings.from_env()
-        service = OcrService(settings)
+        service = OcrService(settings, vision_llm_client=my_gemini_client)
 
         result = service.process_images(images, mime_types=["image/png"])
     """
@@ -45,8 +55,9 @@ class OcrService:
         """
         Args:
             settings: OCR configuration.
-            vision_llm_client: Optional LLMClient configured for a vision model
-                (e.g. Gemini). Used as fallback when dots-ocr is unavailable.
+            vision_llm_client: LLMClient configured for a vision model
+                (e.g. Gemini). This is the **primary** OCR provider.
+                When not provided, falls back to dots-ocr (if configured).
             cache_client: Optional cache client (``BaseCache``) for deduplication.
                 When provided, OCR results for identical images are cached.
         """
@@ -160,23 +171,35 @@ class OcrService:
         mime_type: str = "image/png",
         mode: str = DEFAULT_MODE,
     ) -> OcrPageResult:
-        """Try dots-ocr, fall back to vision LLM."""
-        # Try dots-ocr first
-        if self._is_dots_available():
+        """Try vision LLM first, fall back to dots-ocr (if configured)."""
+        # Primary: vision-capable LLM
+        if self._vision_client is not None:
+            result = self._ocr_via_vision_llm(img_bytes, mime_type=mime_type)
+            if result.source != "llm-vision-error":
+                return result
+            logger.warning("Vision LLM OCR failed, trying dots-ocr fallback")
+
+        # Secondary (optional): dots-ocr — only when URL is configured
+        if self._is_dots_configured() and self._is_dots_available():
             try:
                 client = self._get_dots_client()
                 return client.process_image(img_bytes, mode=mode, mime_type=mime_type)
             except Exception as exc:
-                logger.warning("dots-ocr failed, falling back to vision LLM: %s", exc)
+                logger.warning("dots-ocr fallback also failed: %s", exc)
                 self._dots_healthy = False
                 self._dots_last_check = time.monotonic()
 
-        # Fallback: vision-capable LLM
-        if self._vision_client is not None:
-            return self._ocr_via_vision_llm(img_bytes, mime_type=mime_type)
-
-        logger.error("No OCR provider available (dots-ocr unhealthy, no vision LLM configured)")
+        logger.error(
+            "No OCR provider available (vision LLM not configured or failed, "
+            "dots-ocr %s)",
+            "also failed" if self._is_dots_configured() else "not configured",
+        )
         return OcrPageResult(page_number=0, raw_text="", source="none")
+
+    def _is_dots_configured(self) -> bool:
+        """Return True when a dots-ocr URL has been explicitly configured."""
+        url = self._settings.dots_ocr_base_url
+        return bool(url and url.strip())
 
     def _is_dots_available(self) -> bool:
         """Check if dots-ocr should be attempted."""

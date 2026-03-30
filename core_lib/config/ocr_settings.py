@@ -1,7 +1,9 @@
 """OCR Service Configuration Settings.
 
-Configuration for document OCR services including dots-ocr (primary)
-and vision-capable LLM fallback providers.
+Configuration for document OCR services. Vision-capable LLM providers
+(via llm_providers.yaml with ``usage: [vision, ocr]``) are the primary
+OCR backend. dots-ocr is an optional high-performance alternative that
+is activated only when ``DOTS_OCR_BASE_URL`` is set.
 """
 
 from __future__ import annotations
@@ -16,12 +18,16 @@ from .base_settings import BaseSettings, EnvParser
 class OcrSettings(BaseSettings):
     """OCR service configuration settings.
 
-    Supports dots-ocr (vLLM-hosted VLM) as primary provider and
-    vision-capable LLM providers (e.g. Gemini) as fallback.
+    Vision-capable LLM providers (configured via ``llm_providers.yaml``
+    with ``usage: [vision, ocr]``) are the primary OCR backend.
+
+    dots-ocr (a vLLM-hosted vision model) is an optional alternative:
+    set ``DOTS_OCR_BASE_URL`` to activate it. When configured it is
+    tried *after* the vision LLM succeeds, unless overridden.
     """
 
-    # dots-ocr service configuration
-    dots_ocr_base_url: str = "http://127.0.0.1:7990"
+    # dots-ocr service configuration (optional — None means not configured)
+    dots_ocr_base_url: Optional[str] = None
     dots_ocr_api_key: Optional[str] = None
     dots_ocr_model: str = "dots-ocr"
     dots_ocr_timeout: int = 120  # VLM inference is slow
