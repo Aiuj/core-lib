@@ -562,3 +562,243 @@ class TestFallbackLLMClientWoLWarmup:
         primary_mock.chat.assert_called_once()
         secondary_mock.chat.assert_not_called()
 
+
+# ---------------------------------------------------------------------------
+# Usage-based routing tests
+# ---------------------------------------------------------------------------
+
+class TestFallbackLLMClientUsageFiltering:
+    """Tests for usage-based provider filtering and the cascade fallback logic."""
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _reg(*specs) -> ProviderRegistry:
+        """Build a ProviderRegistry from dicts with optional usage/level keys."""
+        registry = ProviderRegistry()
+        for s in specs:
+            registry.add(ProviderConfig(
+                provider=s.get("provider", "gemini"),
+                model=s["model"],
+                api_key=s.get("api_key", "test-key"),
+                priority=s.get("priority", 1),
+                usage=s.get("usage", None),
+                min_intelligence_level=s.get("min_level", 0),
+                max_intelligence_level=s.get("max_level", 10),
+            ))
+        return registry
+
+    # ------------------------------------------------------------------ happy-path
+
+    def test_usage_specific_provider_wins_over_general(self, mock_health_tracker):
+        """Provider explicitly tagged for the requested usage is tried before general-purpose ones."""
+        registry = self._reg(
+            {"model": "rag-model",     "usage": ["rag"],           "priority": 1},
+            {"model": "vision-model",  "usage": ["vision", "ocr"], "priority": 2},
+            {"model": "general-model", "usage": None,              "priority": 3},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers = list(client._iter_providers(usage="rag"))
+        models = [c.model for c, _ in providers]
+
+        # vision-model has an incompatible explicit usage tag — must be excluded
+        assert "vision-model" not in models
+        # rag-model has higher priority than general-model
+        assert models[0] == "rag-model"
+        assert "general-model" in models
+
+    def test_incompatible_usage_providers_excluded(self, mock_health_tracker):
+        """Providers whose explicit usage tag does not match the request are excluded."""
+        registry = self._reg(
+            {"model": "vision-model", "usage": ["vision", "ocr"], "priority": 1},
+            {"model": "ocr-model",    "usage": "ocr",             "priority": 2},
+            {"model": "general-model","usage": None,              "priority": 3},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers = list(client._iter_providers(usage="rag"))
+        models = [c.model for c, _ in providers]
+
+        assert "vision-model" not in models
+        assert "ocr-model" not in models
+        assert models == ["general-model"]
+
+    def test_no_usage_filter_includes_all_level_providers(self, mock_health_tracker):
+        """When no usage is specified every level-filtered provider is eligible."""
+        registry = self._reg(
+            {"model": "rag-model",    "usage": ["rag"],           "priority": 1},
+            {"model": "vision-model", "usage": ["vision", "ocr"], "priority": 2},
+            {"model": "general-model","usage": None,              "priority": 3},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers = list(client._iter_providers(usage=None))
+        models = [c.model for c, _ in providers]
+
+        assert "rag-model" in models
+        assert "vision-model" in models
+        assert "general-model" in models
+
+    # ------------------------------------------------------------------ cascade: level-relaxed general-purpose
+
+    def test_cascade_level_relaxed_general_purpose(self, mock_health_tracker, caplog):
+        """When intersection is empty, general-purpose providers outside the level range are used."""
+        # Level range 0-10 has only vision providers.
+        # The general-purpose provider is restricted to levels 0-2 (outside level 5).
+        registry = self._reg(
+            {"model": "vision-A", "usage": ["vision", "ocr"], "priority": 1,
+             "min_level": 0, "max_level": 10},
+            {"model": "vision-B", "usage": ["vision", "ocr"], "priority": 2,
+             "min_level": 0, "max_level": 10},
+            {"model": "general-low", "usage": None, "priority": 3,
+             "min_level": 0, "max_level": 2},   # outside requested level
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        with caplog.at_level("WARNING"):
+            providers = list(client._iter_providers(intelligence_level=5, usage="rag"))
+
+        models = [c.model for c, _ in providers]
+
+        # Should fall back to the general-purpose provider despite it being outside level range
+        assert models == ["general-low"]
+        assert "intelligence-level constraint relaxed" in caplog.text
+
+    # ------------------------------------------------------------------ cascade: last resort
+
+    def test_cascade_last_resort_when_no_general_providers(self, mock_health_tracker, caplog):
+        """When no general-purpose providers exist anywhere, all level-filtered providers are tried."""
+        registry = self._reg(
+            {"model": "vision-A", "usage": ["vision", "ocr"], "priority": 1},
+            {"model": "vision-B", "usage": ["vision", "ocr"], "priority": 2},
+            # No general-purpose (usage=None) provider anywhere
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        with caplog.at_level("WARNING"):
+            providers = list(client._iter_providers(intelligence_level=5, usage="rag"))
+
+        models = [c.model for c, _ in providers]
+
+        assert "vision-A" in models
+        assert "vision-B" in models
+        assert "last resort" in caplog.text
+
+    # ------------------------------------------------------------------ default_usage
+
+    def test_default_usage_stored_on_client(self, mock_health_tracker):
+        """FallbackLLMClient stores usage= as _default_usage."""
+        registry = self._reg({"model": "m", "usage": ["rag"]})
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker, usage="rag")
+        assert client._default_usage == "rag"
+
+    def test_default_usage_applied_when_no_per_call_usage(self, mock_health_tracker):
+        """default_usage is used when _iter_providers is called without a usage arg."""
+        registry = self._reg(
+            {"model": "rag-model",    "usage": ["rag"],           "priority": 1},
+            {"model": "vision-model", "usage": ["vision", "ocr"], "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker, usage="rag")
+
+        # No per-call usage — should default to "rag"
+        providers = list(client._iter_providers())
+        models = [c.model for c, _ in providers]
+
+        assert "rag-model" in models
+        assert "vision-model" not in models
+
+    def test_per_call_usage_overrides_default(self, mock_health_tracker):
+        """A usage= arg on _iter_providers overrides the client's default_usage."""
+        registry = self._reg(
+            {"model": "rag-model",      "usage": ["rag"],      "priority": 1},
+            {"model": "classify-model", "usage": ["classify"], "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker, usage="rag")
+
+        # Explicitly request "classify" — should override the default "rag"
+        providers = list(client._iter_providers(usage="classify"))
+        models = [c.model for c, _ in providers]
+
+        assert "classify-model" in models
+        assert "rag-model" not in models
+
+    # ------------------------------------------------------------------ factory methods
+
+    def test_from_registry_stores_usage(self, mock_health_tracker):
+        """FallbackLLMClient.from_registry() forwards usage= to the instance."""
+        registry = ProviderRegistry()
+        registry.add(ProviderConfig(provider="gemini", api_key="k", model="m"))
+
+        client = FallbackLLMClient.from_registry(registry, usage="chat", health_tracker=mock_health_tracker)
+
+        assert client._default_usage == "chat"
+
+    def test_create_fallback_llm_client_stores_usage(self):
+        """create_fallback_llm_client() forwards usage= to FallbackLLMClient."""
+        client = create_fallback_llm_client(
+            providers=[{"provider": "gemini", "api_key": "k", "model": "m"}],
+            usage="quality_analysis",
+        )
+
+        assert isinstance(client, FallbackLLMClient)
+        assert client._default_usage == "quality_analysis"
+
+    # ------------------------------------------------------------------ chat() integration
+
+    def test_chat_usage_arg_filters_providers_tried(self, mock_health_tracker):
+        """chat(usage=...) only attempts providers matching that usage."""
+        registry = self._reg(
+            {"model": "rag-model",    "usage": ["rag"],           "priority": 1},
+            {"model": "vision-model", "usage": ["vision", "ocr"], "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers_tried = []
+
+        def mock_get_client(config):
+            providers_tried.append(config.model)
+            mock = MagicMock()
+            mock.is_in_warmup.return_value = False
+            mock.chat.return_value = {
+                "content": "ok",
+                "usage": {},
+                "tool_calls": [],
+                "structured": False,
+            }
+            return mock
+
+        client._get_client = mock_get_client
+        client.chat("hello", usage="rag")
+
+        assert providers_tried == ["rag-model"]
+        assert "vision-model" not in providers_tried
+
+    def test_chat_default_usage_applied_without_per_call_arg(self, mock_health_tracker):
+        """Default usage set on client is picked up by chat() when no per-call usage given."""
+        registry = self._reg(
+            {"model": "rag-model",    "usage": ["rag"],           "priority": 1},
+            {"model": "vision-model", "usage": ["vision", "ocr"], "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker, usage="rag")
+
+        providers_tried = []
+
+        def mock_get_client(config):
+            providers_tried.append(config.model)
+            mock = MagicMock()
+            mock.is_in_warmup.return_value = False
+            mock.chat.return_value = {
+                "content": "ok",
+                "usage": {},
+                "tool_calls": [],
+                "structured": False,
+            }
+            return mock
+
+        client._get_client = mock_get_client
+        client.chat("hello")  # No per-call usage
+
+        assert "rag-model" in providers_tried
+        assert "vision-model" not in providers_tried
+

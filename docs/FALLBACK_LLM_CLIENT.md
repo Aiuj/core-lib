@@ -151,6 +151,88 @@ response = client.chat("What is 2+2?", intelligence_level=3)
 response = client.chat("Explain quantum entanglement", intelligence_level=8)
 ```
 
+### Usage-Based Routing
+
+Route different workloads to purpose-specific providers (e.g. dedicate a vision-capable model to OCR tasks while keeping cheaper text models for RAG):
+
+```python
+# Configure providers with explicit usage tags
+client = FallbackLLMClient.from_config([
+    {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "priority": 1,
+        # No usage tag → general-purpose: matches ANY requested usage as fallback
+    },
+    {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "priority": 2,
+        "usage": ["vision", "ocr"],   # Restricted to vision/OCR workloads only
+    },
+    {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "priority": 3,
+        "usage": ["rag", "chat"],     # Restricted to RAG and chat workloads
+    },
+])
+
+# Route per call — only providers tagged "rag" (or with no tag) are tried
+response = client.chat("Summarize these documents", usage="rag")
+
+# Route via a default set on the client
+rag_client = FallbackLLMClient.from_env(usage="rag")
+response = rag_client.chat("Answer this question")  # uses "rag" routing automatically
+
+# Per-call usage overrides the client default
+response = rag_client.chat("Describe this image", usage="vision")
+```
+
+**Fallback cascade** — when no provider exactly matches the requested `usage` at the requested `intelligence_level`, the client degrades gracefully in three steps:
+
+1. **Intersection** *(normal path)*: providers that satisfy both the level range AND the usage tag (including providers with no usage tag — they always match).
+2. **Level-relaxed general-purpose**: if the intersection is empty, providers with no usage tag that exist anywhere in the registry are used (level constraint dropped). A warning is logged.
+3. **Last resort**: if no general-purpose providers exist at all, all level-filtered providers are tried regardless of their usage tag. A warning is logged.
+
+This means you can add a low-priority Ollama provider **without** a `usage` tag as a universal safety net:
+
+```yaml
+providers:
+  - provider: gemini
+    model: gemini-2.0-flash
+    api_key: ${GEMINI_API_KEY}
+    priority: 1
+    usage: [rag, chat]              # Only for text workloads
+
+  - provider: gemini
+    model: gemini-2.0-flash
+    api_key: ${GEMINI_API_KEY}
+    priority: 2
+    usage: [vision, ocr]            # Only for vision workloads
+
+  - provider: ollama
+    host: ${OLLAMA_HOST}
+    model: llama3.2
+    priority: 100                   # Low priority — acts as universal fallback
+    # No usage tag → general-purpose, used when nothing else matches
+```
+
+**Known usage tags** (used across the ecosystem):
+
+| Tag | Where used |
+|-----|-----------|
+| `rag` | Q&A retrieval-augmented generation |
+| `chat` | Conversational / chat endpoints |
+| `translation` | Cross-language Q&A translation |
+| `quality_analysis` | Search quality / answer grounding |
+| `query_expansion` | Query rewriting for retrieval |
+| `classify` | Document classification |
+| `extract` | Information extraction |
+| `agent` | LangGraph / agentic reasoning |
+| `vision` | Image understanding |
+| `ocr` | Optical character recognition |
+
 ### Rich Metadata
 
 Get detailed information about the request:
@@ -322,6 +404,7 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 | `min_intelligence_level` | int | Minimum intelligence level (0-10) |
 | `max_intelligence_level` | int | Maximum intelligence level (0-10) |
 | `tier` | str | Model tier: `low`, `standard`, `high` |
+| `usage` | str \| list[str] | Restrict provider to specific workloads (e.g. `["rag", "chat"]`). Omit or set `null` for general-purpose (matches any usage). |
 
 ### FallbackLLMClient Options
 
@@ -329,6 +412,7 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 |--------|------|---------|-------------|
 | `max_retries` | int | 1 | Retries per provider before fallback |
 | `intelligence_level` | int | None | Default intelligence level filter |
+| `usage` | str | None | Default usage tag for routing (e.g. `"rag"`, `"chat"`). Can be overridden per `chat()` call. |
 
 ### Environment Variables
 
