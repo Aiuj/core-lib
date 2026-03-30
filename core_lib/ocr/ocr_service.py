@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -251,9 +252,11 @@ class OcrService:
                         "type": "text",
                         "text": (
                             "Extract all text content from this image. "
+                            "Output as clean markdown. "
                             "Preserve the document structure including headings, "
-                            "paragraphs, lists, and tables. Output tables as HTML. "
-                            "Output formulas as LaTeX. Be thorough and accurate."
+                            "paragraphs, lists, and tables. Use markdown tables. "
+                            "Output formulas as LaTeX. Be thorough and accurate. "
+                            "Do not wrap the output in code fences."
                         ),
                     },
                 ],
@@ -274,12 +277,41 @@ class OcrService:
             logger.error("Vision LLM OCR failed: %s", exc)
             return OcrPageResult(page_number=0, raw_text="", source="llm-vision-error")
 
+        # Strip markdown code fences that some LLMs add around their output
+        # (e.g. ```html\n<table>...</table>\n```) even when not asked to.
+        raw_text = self._strip_code_fences(raw_text)
+
         return OcrPageResult(
             page_number=0,
             elements=[LayoutElement(category="Text", content=raw_text, order=0)] if raw_text else [],
             raw_text=raw_text,
             source="llm-vision",
         )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        """Remove markdown code fences wrapping the LLM response.
+
+        Vision LLMs sometimes wrap their entire output in a fenced code block
+        (e.g. ```html ... ```) even when not asked to.  This strips such
+        wrappers so the raw content (HTML, LaTeX, plain text) is stored
+        directly rather than inside a markdown formatting artefact.
+
+        If the whole response is one fence, the inner content is returned.
+        If the response contains multiple fences mixed with plain text, each
+        fence is replaced by its inner content in-place.
+        """
+        stripped = text.strip()
+        # Fast path: entire response is a single code fence
+        single = re.match(r'^```[a-zA-Z]*\n(.*?)\n?```\s*$', stripped, re.DOTALL)
+        if single:
+            return single.group(1).strip()
+        # Slow path: replace individual fences embedded in larger text
+        return re.sub(r'```[a-zA-Z]*\n(.*?)\n?```', lambda m: m.group(1).strip(), stripped, flags=re.DOTALL)
 
     # ------------------------------------------------------------------
     # Cache helpers

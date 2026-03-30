@@ -108,3 +108,68 @@ class TestProcessSingleFallback:
 
         assert page.source == "llm-vision"
         assert "Green energy" in page.raw_text
+
+
+class TestStripCodeFences:
+    """Tests for the _strip_code_fences helper."""
+
+    def _strip(self, text: str) -> str:
+        return OcrService._strip_code_fences(text)
+
+    def test_strips_single_html_fence(self):
+        raw = "```html\n<table><tr><td>Hello</td></tr></table>\n```"
+        assert self._strip(raw) == "<table><tr><td>Hello</td></tr></table>"
+
+    def test_strips_generic_fence_no_language(self):
+        raw = "```\nsome text\n```"
+        assert self._strip(raw) == "some text"
+
+    def test_strips_python_fence(self):
+        raw = "```python\nprint('hi')\n```"
+        assert self._strip(raw) == "print('hi')"
+
+    def test_plain_text_unchanged(self):
+        raw = "Just plain text without any fences."
+        assert self._strip(raw) == raw
+
+    def test_mixed_content_inline_fences_replaced(self):
+        """Fences embedded in larger text are stripped in-place."""
+        raw = "Title here\n\n```html\n<table></table>\n```\n\nMore text."
+        result = self._strip(raw)
+        assert "```" not in result
+        assert "<table></table>" in result
+        assert "Title here" in result
+        assert "More text." in result
+
+    def test_leading_trailing_whitespace_stripped(self):
+        raw = "  ```html\n<p>Text</p>\n```  "
+        assert self._strip(raw) == "<p>Text</p>"
+
+    def test_realistic_slide_html(self):
+        """Mirrors the actual LLM output observed in production."""
+        raw = (
+            "```html\n"
+            "<table border=\"1\">\n"
+            "    <tr><td><h1>Decarbonized Future</h1></td></tr>\n"
+            "</table>\n"
+            "```"
+        )
+        result = self._strip(raw)
+        assert result.startswith("<table")
+        assert "```" not in result
+        assert "Decarbonized Future" in result
+
+    def test_ocr_via_vision_llm_strips_fences_from_content(self, settings, tiny_image):
+        """End-to-end: when the LLM wraps its response in ```html, the stored raw_text is clean."""
+        html_in_fence = (
+            "```html\n"
+            "<table><tr><td>Green Energy Slide</td></tr></table>\n"
+            "```"
+        )
+        service = _make_service(settings, {"content": html_in_fence, "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png")
+
+        assert page.source == "llm-vision"
+        assert "```" not in page.raw_text, "Code fence must be stripped from raw_text"
+        assert "<table>" in page.raw_text
+        assert "Green Energy Slide" in page.raw_text
