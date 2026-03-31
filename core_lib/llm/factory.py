@@ -105,9 +105,9 @@ class LLMFactory:
             config = GeminiConfig.from_env()
         elif provider_lc == "ollama":
             config = OllamaConfig.from_env()
-        elif provider_lc in ("openai", "azure-openai"):
+        elif provider_lc in ("openai",):
             config = OpenAIConfig.from_env()
-        elif provider_lc in ("azure", "azure_openai"):
+        elif provider_lc in ("azure-openai", "azure", "azure_openai"):
             config = AzureOpenAIConfig.from_env()
         elif provider_lc in ("openai-responses", "openai_responses"):
             config = OpenAIResponsesConfig.from_env()

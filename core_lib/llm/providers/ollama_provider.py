@@ -209,13 +209,13 @@ class OllamaProvider(BaseProvider):
                         except IndexError:
                             b64_data = url
                     else:
-                        # Plain URL — encode as base64 bytes if possible; skip otherwise
-                        try:
-                            import urllib.request as _ur
-                            with _ur.urlopen(url, timeout=10) as resp:
-                                b64_data = _base64.b64encode(resp.read()).decode("ascii")
-                        except Exception:
-                            continue
+                        # For security and latency reasons, we do not fetch remote URLs here.
+                        # Only data: URLs are supported; skip any other image URLs.
+                        logger.warning(
+                            "Skipping non-data image URL in Ollama provider: %s",
+                            url,
+                        )
+                        continue
                     images.append(b64_data)
 
             new_msg: Dict[str, Any] = {

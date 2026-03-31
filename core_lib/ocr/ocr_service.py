@@ -341,7 +341,7 @@ class OcrService:
             return
         try:
             data = self._serialize_page(page)
-            self._cache.set(key, json.dumps(data), ttl=self._settings.ocr_cache_ttl)
+            self._cache.set(key, data, ttl=self._settings.ocr_cache_ttl)
         except Exception as exc:
             logger.debug("OCR cache write error: %s", exc)
 

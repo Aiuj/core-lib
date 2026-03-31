@@ -766,15 +766,26 @@ class ProviderRegistry:
         matching: List[ProviderConfig] = []
         for p in self.providers:
             cfg_usage = p.usage
+            # Match-all for None or empty/whitespace usage configuration
             if cfg_usage is None:
                 matching.append(p)
                 continue
             if isinstance(cfg_usage, str):
-                if cfg_usage.strip().lower() in {requested, "*", "all"}:
+                normalized = cfg_usage.strip().lower()
+                if not normalized:
+                    # Empty/whitespace string means available for any usage
+                    matching.append(p)
+                    continue
+                if normalized in {requested, "*", "all"}:
                     matching.append(p)
             elif isinstance(cfg_usage, list):
-                values = {str(v).strip().lower() for v in cfg_usage}
-                if values.intersection({requested, "*", "all"}):
+                # If list is empty or all entries are effectively empty, treat as match-all
+                normalized_values = {str(v).strip().lower() for v in cfg_usage}
+                non_empty_values = {v for v in normalized_values if v}
+                if not non_empty_values:
+                    matching.append(p)
+                    continue
+                if non_empty_values.intersection({requested, "*", "all"}):
                     matching.append(p)
         return sorted(matching, key=lambda p: p.priority)
     

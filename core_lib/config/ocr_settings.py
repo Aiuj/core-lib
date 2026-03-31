@@ -21,9 +21,11 @@ class OcrSettings(BaseSettings):
     Vision-capable LLM providers (configured via ``llm_providers.yaml``
     with ``usage: [vision, ocr]``) are the primary OCR backend.
 
-    dots-ocr (a vLLM-hosted vision model) is an optional alternative:
-    set ``DOTS_OCR_BASE_URL`` to activate it. When configured it is
-    tried *after* the vision LLM succeeds, unless overridden.
+    dots-ocr (a vLLM-hosted vision model) is an optional alternative
+    backend: set ``DOTS_OCR_BASE_URL`` to activate it. In the default
+    service implementation it is used as a fallback when the vision
+    LLM is unavailable or fails, rather than being called after a
+    successful vision LLM response.
     """
 
     # dots-ocr service configuration (optional — None means not configured)
