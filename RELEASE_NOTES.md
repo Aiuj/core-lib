@@ -25,6 +25,26 @@ Then commit, push and tag this new version in github and create a release for th
 
 ## March 2026
 
+### v0.3.7 - Azure OpenAI, OCR Service & Usage-Based Routing (Mar 31, 2026)
+
+- **Azure OpenAI Provider**: Added first-class Azure OpenAI support with `AzureOpenAIConfig`, `AzureOpenAIProvider`, and `LLMFactory.azure_openai()` factory method
+  - Environment variable support (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`)
+  - Comprehensive test coverage for configuration and provider functionality
+- **OCR Service**: Added OCR service with dots-ocr integration and vision LLM fallback
+  - `OcrSettings` for configuring OCR service parameters
+  - `DotsOcrClient` for interacting with the dots-ocr API
+  - `OcrService` for image processing with caching and fallback to vision-capable LLMs
+  - Structured OCR result models (`LayoutElement`, `OcrPageResult`)
+- **Usage-Based LLM Routing**: Implemented usage-based routing in `FallbackLLMClient` and `ProviderRegistry` for provider filtering and selection
+- **Logging Improvements**:
+  - Added console color controls for logging with ANSI support
+  - Code fence stripping helper (`_strip_code_fences`) for cleaner response handling
+- **Provider Enhancements**:
+  - Improved HTTP timeout override and system message handling in `GoogleGenAIProvider`
+  - Enhanced Langfuse credential resolution for environment-specific configurations
+  - Updated multimodal message handling across providers
+- **Documentation**: Refactored LLM module documentation with updated usage examples, environment variable references, and structured output guidance
+
 ### v0.3.6 - OpenRouter, Startup Warm-up & Reliability (Mar 22, 2026)
 
 - **OpenRouter Support**: Added OpenRouter provider support, configuration wiring, connectivity checks, and tests
