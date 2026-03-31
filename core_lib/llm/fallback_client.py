@@ -126,6 +126,7 @@ class FallbackLLMClient:
         health_tracker: Optional[ProviderHealthTracker] = None,
         max_retries_per_provider: int = 1,
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
         http_timeout_ms: Optional[int] = None,
     ):
         """Initialize fallback client with a provider registry.
@@ -135,6 +136,9 @@ class FallbackLLMClient:
             health_tracker: Optional custom health tracker (uses global if None)
             max_retries_per_provider: Retries per provider before moving to next
             intelligence_level: Optional default intelligence level for filtering
+            usage: Optional default usage tag for filtering (e.g. "rag", "chat",
+                "quality_analysis", "translation", "classify", "extract", "agent",
+                "vision", "ocr"). Providers without a usage tag match any usage.
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
                 Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS env var when set.
         """
@@ -145,6 +149,7 @@ class FallbackLLMClient:
         self._health_tracker = health_tracker or get_health_tracker()
         self._max_retries = max_retries_per_provider
         self._default_intelligence_level = intelligence_level
+        self._default_usage = usage
         self._http_timeout_ms = http_timeout_ms
         
         # Last request metadata (for observability)
@@ -207,6 +212,7 @@ class FallbackLLMClient:
     def _iter_providers(
         self,
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
     ) -> Iterator[Tuple[ProviderConfig, bool]]:
         """Iterate through providers in health-aware order.
         
@@ -214,19 +220,65 @@ class FallbackLLMClient:
         
         Args:
             intelligence_level: Optional filter by intelligence level
+            usage: Optional usage tag filter (e.g. "rag", "chat"). Providers
+                without a usage tag always match any requested usage.
             
         Yields:
             Tuple of (ProviderConfig, is_fallback)
         """
         level = intelligence_level or self._default_intelligence_level
+        effective_usage = usage or self._default_usage
         
-        # Get all applicable providers
+        # Get all applicable providers, filtered by intelligence level first
         if level is not None:
             providers = self._registry.get_providers_for_level(level)
             if not providers:
                 providers = self._registry.providers
         else:
             providers = self._registry.providers
+        
+        # Further filter by usage when specified.
+        # Providers with no usage tag match any usage (general-purpose).
+        if effective_usage is not None:
+            usage_providers = self._registry.get_providers_for_usage(effective_usage)
+            # Intersection: must satisfy both level AND usage constraints.
+            # Note: get_providers_for_usage() already includes providers with usage=None
+            # (general-purpose), so they appear here alongside usage-specific ones.
+            filtered = [p for p in providers if p in usage_providers]
+            if filtered:
+                providers = filtered
+            else:
+                # No provider within the level range matches the requested usage
+                # (either by explicit tag or by being general-purpose / no-usage).
+                # Fallback cascade:
+                #   1. General-purpose (no usage tag) providers within the level range
+                #   2. General-purpose providers anywhere in the registry (level relaxed)
+                #   3. All level-filtered providers as last resort (avoid total blackout)
+                general_in_level = [p for p in providers if not p.usage]
+                if general_in_level:
+                    providers = general_in_level
+                    logger.warning(
+                        f"No providers tagged '{effective_usage}' in level-filtered set; "
+                        "routing to general-purpose (no-usage) providers within level range."
+                    )
+                else:
+                    general_any_level = sorted(
+                        [p for p in self._registry.providers if not p.usage],
+                        key=lambda p: p.priority,
+                    )
+                    if general_any_level:
+                        providers = general_any_level
+                        logger.warning(
+                            f"No providers match usage='{effective_usage}' at level {level}; "
+                            "routing to general-purpose (no-usage) providers "
+                            "(intelligence-level constraint relaxed)."
+                        )
+                    else:
+                        # True last resort: all level-filtered providers regardless of usage tag.
+                        logger.warning(
+                            f"No providers match usage='{effective_usage}'; "
+                            "falling back to all level-filtered providers as last resort."
+                        )
         
         # Separate healthy and unhealthy
         healthy = self._health_tracker.filter_healthy(providers)
@@ -249,12 +301,16 @@ class FallbackLLMClient:
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
         return_fallback_result: bool = False,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
         This method has the same signature as `LLMClient.chat()` plus:
         - `intelligence_level`: Filter providers by intelligence level
+        - `usage`: Filter providers by usage tag (e.g. "rag", "chat",
+          "quality_analysis", "translation", "classify", "extract", "agent").
+          Providers without a usage tag always match.
         - `return_fallback_result`: If True, return FallbackResult with metadata
         
         Args:
@@ -265,6 +321,7 @@ class FallbackLLMClient:
             use_search_grounding: Enable search grounding (provider-specific)
             thinking_enabled: Enable thinking mode (provider-specific)
             intelligence_level: Filter providers by intelligence level
+            usage: Filter providers by usage tag
             return_fallback_result: Return FallbackResult instead of dict
             
         Returns:
@@ -278,6 +335,7 @@ class FallbackLLMClient:
         providers_tried: List[str] = []
         
         level = intelligence_level or self._default_intelligence_level
+        effective_usage = usage or self._default_usage
         
         # Log provider selection context
         if level is not None:
@@ -300,7 +358,7 @@ class FallbackLLMClient:
         else:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
-        for config, is_fallback in self._iter_providers(level):
+        for config, is_fallback in self._iter_providers(level, usage=effective_usage):
             provider_id = f"{config.provider}:{config.model}"
 
             # Skip providers whose WoL warmup window is still active.
@@ -525,6 +583,7 @@ class FallbackLLMClient:
         cls,
         registry: ProviderRegistry,
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
@@ -533,6 +592,7 @@ class FallbackLLMClient:
         Args:
             registry: Configured ProviderRegistry
             intelligence_level: Default intelligence level filter
+            usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
@@ -542,6 +602,7 @@ class FallbackLLMClient:
         return cls(
             registry=registry,
             intelligence_level=intelligence_level,
+            usage=usage,
             max_retries_per_provider=max_retries,
             http_timeout_ms=http_timeout_ms,
         )
@@ -552,6 +613,7 @@ class FallbackLLMClient:
         env_var: str = "LLM_PROVIDERS",
         file_env_var: str = "LLM_PROVIDERS_FILE",
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
@@ -566,6 +628,7 @@ class FallbackLLMClient:
             env_var: Environment variable with JSON config
             file_env_var: Environment variable with config file path
             intelligence_level: Default intelligence level filter
+            usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
@@ -576,6 +639,7 @@ class FallbackLLMClient:
         return cls.from_registry(
             registry=registry,
             intelligence_level=intelligence_level,
+            usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
         )
@@ -585,6 +649,7 @@ class FallbackLLMClient:
         cls,
         providers: List[Dict[str, Any]],
         intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
     ) -> "FallbackLLMClient":
@@ -593,6 +658,7 @@ class FallbackLLMClient:
         Args:
             providers: List of provider config dicts
             intelligence_level: Default intelligence level filter
+            usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
             
@@ -611,6 +677,7 @@ class FallbackLLMClient:
         return cls.from_registry(
             registry=registry,
             intelligence_level=intelligence_level,
+            usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
         )
@@ -620,6 +687,7 @@ class FallbackLLMClient:
 def create_fallback_llm_client(
     providers: Optional[List[Dict[str, Any]]] = None,
     intelligence_level: Optional[int] = None,
+    usage: Optional[str] = None,
     max_retries: int = 1,
     http_timeout_ms: Optional[int] = None,
 ) -> FallbackLLMClient:
@@ -631,6 +699,9 @@ def create_fallback_llm_client(
     Args:
         providers: Optional list of provider config dicts
         intelligence_level: Default intelligence level filter
+        usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis",
+            "translation", "classify", "extract", "agent", "vision", "ocr").
+            Providers without a usage tag match any usage.
         max_retries: Retries per provider before fallback
         
     Returns:
@@ -640,6 +711,9 @@ def create_fallback_llm_client(
         ```python
         # From environment
         client = create_fallback_llm_client()
+        
+        # With usage routing
+        client = create_fallback_llm_client(intelligence_level=5, usage="rag")
         
         # With explicit config
         client = create_fallback_llm_client([
@@ -652,11 +726,13 @@ def create_fallback_llm_client(
         return FallbackLLMClient.from_config(
             providers=providers,
             intelligence_level=intelligence_level,
+            usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
         )
     return FallbackLLMClient.from_env(
         intelligence_level=intelligence_level,
+        usage=usage,
         max_retries=max_retries,
         http_timeout_ms=http_timeout_ms,
     )

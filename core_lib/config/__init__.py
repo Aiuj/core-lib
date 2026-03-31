@@ -33,6 +33,7 @@ from .database_settings import DatabaseSettings
 from .opensearch_settings import OpenSearchSettings
 from .mcp_settings import MCPServerSettings
 from .fastapi_settings import FastAPIServerSettings
+from .ocr_settings import OcrSettings
 from .standard_settings import StandardSettings
 from .settings_singleton import (
     SettingsSingletonManager,
@@ -78,6 +79,7 @@ __all__ = [
     "LoggerSettings",
     "DatabaseSettings",
     "DatabaseSettings",
+    "OcrSettings",
     "OpenSearchSettings",
     "MCPServerSettings",
     "FastAPIServerSettings",

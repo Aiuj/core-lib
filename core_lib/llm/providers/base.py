@@ -86,7 +86,7 @@ class BaseProvider(ABC):
     def chat(
         self,
         *,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         structured_output: Optional[Type[BaseModel]] = None,
         system_message: Optional[str] = None,
@@ -102,6 +102,8 @@ class BaseProvider(ABC):
         Args:
             messages: List of message dictionaries with 'role' and 'content' keys.
                      Roles should be 'system', 'user', or 'assistant'.
+                     Content can be a string or a list of content parts for
+                     multimodal messages (text + images).
             tools: Optional list of tools/functions in OpenAI JSON format.
                   Each tool should have 'type', 'function' with 'name', 
                   'description', and 'parameters' fields.

@@ -34,6 +34,7 @@ from .embeddings_settings import EmbeddingsSettings
 from .cache_settings import CacheSettings
 from .tracing_settings import TracingSettings
 from .database_settings import DatabaseSettings
+from .ocr_settings import OcrSettings
 from .mcp_settings import MCPServerSettings
 from .fastapi_settings import FastAPIServerSettings
 
@@ -57,11 +58,13 @@ class StandardSettings(ApiSettings):
     llm: Optional[LLMSettings] = None
     embeddings: Optional[EmbeddingsSettings] = None
     database: Optional[DatabaseSettings] = None
+    ocr: Optional[OcrSettings] = None
     
     # Additional service enablement flags (beyond ApiSettings)
     enable_llm: bool = field(default=True)
     enable_embeddings: bool = field(default=False)
     enable_database: bool = field(default=False)
+    enable_ocr: bool = field(default=False)
     
     @classmethod
     def from_env(
@@ -85,6 +88,7 @@ class StandardSettings(ApiSettings):
         enable_llm = cls._should_enable_llm(overrides)
         enable_embeddings = cls._should_enable_embeddings(overrides)
         enable_database = cls._should_enable_database(overrides)
+        enable_ocr = cls._should_enable_ocr(overrides)
         
         # Create service configurations if enabled
         llm_config = None
@@ -108,6 +112,13 @@ class StandardSettings(ApiSettings):
             except Exception:
                 enable_database = False
         
+        ocr_config = None
+        if enable_ocr:
+            try:
+                ocr_config = OcrSettings.from_env(load_dotenv=False)
+            except Exception:
+                enable_ocr = False
+        
         # Build the settings dict, inheriting app and API settings from parent
         settings_dict = {
             # Core app settings component from ApiSettings
@@ -121,6 +132,7 @@ class StandardSettings(ApiSettings):
             "llm": llm_config,
             "embeddings": embeddings_config,
             "database": database_config,
+            "ocr": ocr_config,
             # API settings from parent ApiSettings
             "cache": api_settings.cache,
             "tracing": api_settings.tracing,
@@ -131,6 +143,7 @@ class StandardSettings(ApiSettings):
             "enable_llm": enable_llm,
             "enable_embeddings": enable_embeddings,
             "enable_database": enable_database,
+            "enable_ocr": enable_ocr,
             "enable_cache": api_settings.enable_cache,
             "enable_tracing": api_settings.enable_tracing,
             "enable_logger": api_settings.enable_logger,
@@ -196,6 +209,31 @@ class StandardSettings(ApiSettings):
             EnvParser.get_env("DATABASE_USER")
         ) is not None
     
+    @staticmethod
+    def _should_enable_ocr(overrides: dict) -> bool:
+        """Check if OCR should be enabled based on environment variables.
+
+        OCR is enabled when any of the following is true:
+        - ``enable_ocr=True`` passed as an override
+        - ``ENABLE_OCR=true`` environment variable
+        - ``DOTS_OCR_BASE_URL`` is set (dots-ocr service configured)
+        - ``LLM_PROVIDERS_FILE`` is set (vision-capable LLM providers may be
+          configured with ``usage: [vision, ocr]`` — enables vision-LLM-primary OCR)
+        """
+        if "enable_ocr" in overrides:
+            return overrides["enable_ocr"]
+
+        if EnvParser.get_env("ENABLE_OCR", env_type=bool) is not None:
+            return EnvParser.get_env("ENABLE_OCR", env_type=bool)
+
+        # Auto-detect: dots-ocr service URL explicitly configured
+        if EnvParser.get_env("DOTS_OCR_BASE_URL") is not None:
+            return True
+
+        # Auto-detect: an LLM providers file is configured, meaning vision-capable
+        # LLM providers tagged with usage: [vision, ocr] may be available.
+        return EnvParser.get_env("LLM_PROVIDERS_FILE") is not None
+    
     def validate(self) -> None:
         """Validate the complete settings configuration."""
         # Validate API settings (cache, tracing, mcp_server, fastapi_server) via parent
@@ -208,6 +246,8 @@ class StandardSettings(ApiSettings):
             self.embeddings.validate()
         if self.database:
             self.database.validate()
+        if self.ocr:
+            self.ocr.validate()
     
     @classmethod
     def extend_from_env(

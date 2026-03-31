@@ -37,7 +37,7 @@ class LLMConfig(ABC):
         raise NotImplementedError()
 
 
-__all__ = ["LLMConfig", "GeminiConfig", "OpenAIConfig", "OllamaConfig", "OpenAIResponsesConfig"]
+__all__ = ["LLMConfig", "GeminiConfig", "OpenAIConfig", "AzureOpenAIConfig", "OllamaConfig", "OpenAIResponsesConfig"]
 
 
 def __getattr__(name: str):
@@ -49,6 +49,10 @@ def __getattr__(name: str):
         from .providers.openai_provider import OpenAIConfig  # type: ignore
 
         return OpenAIConfig
+    if name == "AzureOpenAIConfig":
+        from .providers.azure_openai_provider import AzureOpenAIConfig  # type: ignore
+
+        return AzureOpenAIConfig
     if name == "OllamaConfig":
         from .providers.ollama_provider import OllamaConfig  # type: ignore
 

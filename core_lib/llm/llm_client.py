@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from core_lib.tracing.tracing import setup_tracing
 from .providers.base import BaseProvider
+from .providers.azure_openai_provider import AzureOpenAIConfig, AzureOpenAIProvider
 from .providers.google_genai_provider import GoogleGenAIProvider
 from .providers.ollama_provider import OllamaProvider
 from .providers.openai_provider import OpenAIProvider
@@ -39,13 +40,16 @@ class LLMClient:
             return OllamaProvider(self.config)
         if isinstance(self.config, OpenAIResponsesConfig):
             return OpenAIResponsesProvider(self.config)
+        # AzureOpenAIConfig must be checked before OpenAIConfig (it is a subclass)
+        if isinstance(self.config, AzureOpenAIConfig):
+            return AzureOpenAIProvider(self.config)
         if isinstance(self.config, OpenAIConfig):
             return OpenAIProvider(self.config)
         raise ValueError(f"Unsupported LLM provider: {self.config.provider}")
     
     def chat(
         self,
-        messages: Union[str, List[Dict[str, str]]],
+        messages: Union[str, List[Dict[str, Any]]],
         tools: Optional[List[Dict[str, Any]]] = None,
         structured_output: Optional[Type[BaseModel]] = None,
         system_message: Optional[str] = None,
@@ -56,7 +60,9 @@ class LLMClient:
         
         Args:
             messages: Either a string message or a list of message dictionaries
-                     with 'role' and 'content' keys
+                     with 'role' and 'content' keys. Content can be a string or
+                     a list of content parts for multimodal messages (e.g.
+                     [{"type": "text", "text": "..."}, {"type": "image_url", ...}])
             tools: Optional list of tools in OpenAI JSON format
             structured_output: Optional Pydantic model for structured JSON output
             system_message: Optional system message to prepend
@@ -90,7 +96,11 @@ class LLMClient:
                     "message_count": len(formatted_messages),
                     "message_roles": [m.get("role") for m in formatted_messages],
                     # avoid recording full content by default; log lengths for privacy
-                    "message_content_lengths": [len(m.get("content", "") or "") for m in formatted_messages],
+                    "message_content_lengths": [
+                        len(m.get("content", "") or "") if isinstance(m.get("content"), str)
+                        else len(str(m.get("content", "")))
+                        for m in formatted_messages
+                    ],
                 },
                 "tools": {
                     "count": len(tools) if tools else 0,
@@ -180,15 +190,19 @@ class LLMClient:
     
     def _normalize_messages(
         self,
-        messages: Union[str, List[Dict[str, str]]],
+        messages: Union[str, List[Dict[str, Any]]],
         system_message: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """Normalize messages into a list of dicts with role/content.
 
         Providers (Ollama) accept OpenAI-style dicts directly. For Google GenAI, the
         provider will adapt these messages to its native format.
+
+        Content may be a plain string or a list of content parts for multimodal
+        messages (text + images). Multimodal content lists are passed through
+        without modification.
         """
-        result: List[Dict[str, str]] = []
+        result: List[Dict[str, Any]] = []
         if system_message:
             result.append({"role": "system", "content": system_message})
         if isinstance(messages, str):

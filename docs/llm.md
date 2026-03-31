@@ -1,510 +1,453 @@
-# LLM Module Documentation
+# LLM Client Usage Guide
 
-The LLM module provides a unified interface for working with different Large Language Model providers, supporting Google Gemini, OpenAI (Chat Completions and Responses API), Azure OpenAI, Alibaba Cloud (Qwen via DashScope), and local Ollama APIs.
+The LLM module provides a unified interface for working with different Large Language Model providers.  
+For **multi-provider fallback with health tracking and per-task routing**, see [FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md).
 
-## Features
-
-- **Provider Abstraction**: Use the same interface for different LLM providers
-- **Factory-based Creation**: Simplified client creation with intelligent defaults
-- **Configuration Management**: Environment-based configuration with sensible defaults  
-- **Tool Support**: Pass tools in OpenAI JSON format for function calling
-- **Structured Output**: Get structured JSON responses using Pydantic models
-- **Thinking Mode**: Enable step-by-step reasoning for supported models (Gemini 2.5, Qwen3/3.5, OpenAI reasoning)
-- **Conversation History**: Support for multi-turn conversations
-- **OpenAI Responses API**: `client.responses.create()` — the recommended interface for OpenAI and Alibaba/Qwen models, with stateful multi-turn and built-in tools
-- **Alibaba Cloud (Qwen)**: First-class support via `create_alibaba_client()` using the DashScope Responses endpoint
-- **Grounding with Search (Gemini)**: Optional Google Search grounding for fresher, corroborated answers on supported models
+---
 
 ## Quick Start
 
-### Simplest Usage (Recommended)
-
-The new factory-based approach automatically detects your configuration and creates the appropriate client:
+### Single Provider (LLMClient)
 
 ```python
 from core_lib.llm import create_llm_client
 
 # Auto-detect provider from environment variables
 client = create_llm_client()
-
-# Simple chat
 response = client.chat("What is the capital of France?")
 print(response["content"])
 ```
 
-### Provider-Specific Creation
+### Multi-Provider with Fallback (Recommended for Production)
 
+```python
+from core_lib.llm import FallbackLLMClient
+
+# Load providers from llm_providers.yaml (set LLM_PROVIDERS_FILE env var)
+client = FallbackLLMClient.from_env()
+response = client.chat("What is the capital of France?")
+print(response["content"])
+```
+
+See [FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md) for configuration, `usage=` routing, intelligence levels, and health tracking.
+
+---
+
+## Single-Provider Usage (LLMClient)
+
+### Creating a Client
+
+**Factory function — auto-detect from environment:**
 ```python
 from core_lib.llm import create_llm_client
 
-# Use a specific provider with overrides
-client = create_llm_client(
-    provider="openai",
-    model="gpt-4",
-    temperature=0.2
-)
-
-# OpenAI Responses API (recommended for new OpenAI / Alibaba projects)
-client = create_llm_client(provider="openai-responses", model="gpt-4.1")
-
-# Alibaba Cloud / Qwen — reads DASHSCOPE_API_KEY automatically
-client = create_llm_client(provider="alibaba", model="qwen-plus")
-
-# OpenRouter — access 300+ models with a single API key
-client = create_llm_client(provider="openrouter", model="anthropic/claude-3.5-sonnet")
-
-# Or use Ollama with custom settings
-client = create_llm_client(
-    provider="ollama",
-    model="llama3.2",
-    thinking_enabled=True
-)
+client = create_llm_client()                              # auto-detect
+client = create_llm_client(provider="openai", model="gpt-4o")
+client = create_llm_client(provider="gemini", model="gemini-2.5-flash")
+client = create_llm_client(provider="ollama", model="qwen3.5:4b")
 ```
 
-### Using the Factory Class Directly
-
-```python
-from core_lib.llm import LLMFactory
-
-# Create with factory methods
-client = LLMFactory.openai(model="gpt-4", temperature=0.3)
-client = LLMFactory.gemini(model="gemini-1.5-pro")
-client = LLMFactory.ollama(model="llama3.2")
-
-# OpenAI Responses API (recommended for new OpenAI projects)
-client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
-
-# Alibaba Cloud / Qwen via Responses API
-client = LLMFactory.alibaba(model="qwen-plus")                      # international
-client = LLMFactory.alibaba(model="qwen3-max", region="china")       # Beijing region
-client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True) # chain-of-thought
-
-# OpenRouter — access 300+ models via a single API key
-client = LLMFactory.openrouter(model="anthropic/claude-3.5-sonnet")
-client = LLMFactory.openrouter()  # defaults to openrouter/auto (best available model)
-
-# Or use the main factory method
-client = LLMFactory.create(provider="openrouter", model="google/gemini-2.0-flash")
-```
-
-### Environment Configuration
-
-Set environment variables and let the factory handle detection:
-
-```bash
-# Option 1: Explicit provider setting
-export LLM_PROVIDER=openai
-
-# Option 2: Let the factory auto-detect based on available API keys
-# For OpenAI
-export OPENAI_API_KEY=sk-your-api-key
-export OPENAI_MODEL=gpt-4o-mini
-
-# For Gemini  
-export GEMINI_API_KEY=your-api-key
-export GEMINI_MODEL=gemini-1.5-flash
-
-# For Ollama
-export OLLAMA_MODEL=llama3.2
-export OLLAMA_BASE_URL=http://localhost:11434
-
-# For Azure OpenAI
-export AZURE_OPENAI_API_KEY=your-api-key
-export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-export AZURE_OPENAI_DEPLOYMENT=gpt-4
-```
-
-```python
-from core_lib.llm import create_llm_client
-
-# Factory auto-detects the provider and uses environment settings
-client = create_llm_client()
-
-```
-
-## Environment Variables Reference
-
-### Auto-Detection
-
-The factory automatically detects the provider based on available environment variables:
-
-1. If `LLM_PROVIDER` is set, it uses that provider explicitly. Valid values:
-   - `gemini`, `openai`, `openai-responses`, `openrouter`, `azure`, `ollama`, `alibaba`
-2. Otherwise, it checks for provider-specific API keys in this order:
-   - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
-   - `OPENAI_API_KEY` → OpenAI Chat Completions
-   - `AZURE_OPENAI_API_KEY` → Azure OpenAI
-   - `OLLAMA_BASE_URL` or `OLLAMA_HOST` → Ollama
-   - Default fallback → Ollama
-
-> **Tip**: For Alibaba Cloud / Qwen, set `LLM_PROVIDER=openai-responses` (or `alibaba`) and `DASHSCOPE_API_KEY` to use the DashScope Responses endpoint.
-
-> **Tip**: For OpenRouter, set `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY`. The `OPENROUTER_MODEL` env var sets the default model (default: `openrouter/auto`).
-
-### OpenAI Responses API Configuration (`openai-responses` / `alibaba`)
-
-Available environment variables:
-
-- `OPENAI_API_KEY` or `DASHSCOPE_API_KEY`: API key (required; `DASHSCOPE_API_KEY` takes precedence for Alibaba)
-- `OPENAI_RESPONSES_MODEL`: Model name (default: "gpt-4.1"; use Qwen model names for Alibaba)
-- `OPENAI_BASE_URL`: Custom endpoint — set to DashScope international URL for Alibaba
-- `OPENAI_TEMPERATURE`: Sampling temperature (default: "0.7")
-- `OPENAI_MAX_TOKENS`: Maximum output tokens
-- `OPENAI_THINKING_ENABLED`: Enable chain-of-thought / thinking mode ("true"/"false")
-- `OPENAI_THINKING_BUDGET`: Token budget for the Qwen thinking step — integer, e.g. "4000" (Alibaba only)
-- `OPENAI_REASONING_EFFORT`: Reasoning effort for OpenAI reasoning models ("low"/"medium"/"high"; default: "medium")
-- `OPENAI_ORGANIZATION`: OpenAI organization ID
-- `OPENAI_PROJECT`: OpenAI project ID
-
-### OpenAI Chat Completions Configuration (`openai`)
-
-Available environment variables:
-
-- `OPENAI_API_KEY`: OpenAI API key (required)
-- `OPENAI_MODEL`: Model name (default: "gpt-4o-mini")
-- `OPENAI_BASE_URL`: Custom base URL for OpenAI-compatible endpoints
-- `OPENAI_TEMPERATURE`: Sampling temperature (default: "0.7")
-- `OPENAI_MAX_TOKENS`: Maximum tokens to generate
-- `OPENAI_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
-- `OPENAI_ORGANIZATION`: OpenAI organization ID
-- `OPENAI_PROJECT`: OpenAI project ID
-
-### Azure OpenAI Configuration
-
-Available environment variables:
-
-- `AZURE_OPENAI_API_KEY`: Azure OpenAI API key (required)
-- `AZURE_OPENAI_ENDPOINT`: Azure OpenAI endpoint URL (required)
-- `AZURE_OPENAI_API_VERSION`: API version (default: "2024-08-01-preview")
-- `AZURE_OPENAI_DEPLOYMENT`: Deployment name (maps to model)
-- `AZURE_OPENAI_TEMPERATURE`: Sampling temperature (default: "0.7")
-- `AZURE_OPENAI_MAX_TOKENS`: Maximum tokens to generate
-- `AZURE_OPENAI_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
-
-### Ollama Configuration
-
-Available environment variables:
-
-- `OLLAMA_MODEL`: Model name (default: "llama3.2")
-- `OLLAMA_BASE_URL`: Server URL (default: "http://localhost:11434")  
-- `OLLAMA_TEMPERATURE`: Sampling temperature (default: "0.7")
-- `OLLAMA_MAX_TOKENS`: Maximum tokens to generate
-- `OLLAMA_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
-- `OLLAMA_TIMEOUT`: Request timeout in seconds (default: "60")
-- `OLLAMA_NUM_CTX`: Context window size
-- `OLLAMA_NUM_PREDICT`: Max tokens to predict
-- `OLLAMA_REPEAT_PENALTY`: Repetition penalty
-- `OLLAMA_TOP_K`: Top-K sampling
-- `OLLAMA_TOP_P`: Top-P sampling
-
-### Gemini Configuration
-
-Available environment variables:
-
-- `GEMINI_API_KEY`: Google API key (required)
-- `GEMINI_MODEL`: Model name (default: "gemini-1.5-flash")
-- `GEMINI_BASE_URL`: API base URL (default: Google's API endpoint)
-- `GEMINI_TEMPERATURE`: Sampling temperature (default: "0.7")  
-- `GEMINI_MAX_TOKENS`: Maximum tokens to generate
-- `GEMINI_THINKING_ENABLED`: Enable thinking mode ("true"/"false")
-
-## Advanced Usage
-
-### Using Custom Configuration Objects
-
-```python
-from core_lib.llm import LLMFactory, OpenAIConfig, GeminiConfig
-
-# Create a custom configuration
-config = OpenAIConfig(
-    api_key="sk-your-key",
-    model="gpt-4",
-    temperature=0.3,
-    max_tokens=2000,
-    thinking_enabled=True
-)
-
-# Use the factory with the custom config
-client = LLMFactory.from_config(config)
-
-# Or apply overrides to environment-loaded config
-client = LLMFactory.from_config(
-    OpenAIConfig.from_env(),
-    temperature=0.8,  # Override just the temperature
-    max_tokens=1500
-)
-```
-
-### Mixing Environment and Manual Configuration
-
-```python
-from core_lib.llm import create_llm_client
-
-# Load base settings from env, override specific parameters
-client = create_llm_client(
-    provider="openai",  # Use OpenAI even if LLM_PROVIDER is different
-    model="gpt-4",      # Override the model from environment
-    temperature=0.2     # Override temperature
-    # API key still comes from OPENAI_API_KEY env var
-)
-```
-
-### Conversation History
-
-```python
-from core_lib.llm import create_llm_client
-
-client = create_llm_client()
-
-messages = [
-    {"role": "user", "content": "Hello, I'm planning a trip."},
-    {"role": "assistant", "content": "Great! Where are you thinking of going?"},
-    {"role": "user", "content": "I want to visit Japan. Any recommendations?"}
-]
-
-response = client.chat(
-    messages, 
-    system_message="You are a helpful travel assistant."
-)
-```
-
-### Structured Output
-
-```python
-from pydantic import BaseModel
-from typing import Optional
-from core_lib.llm import create_llm_client
-
-class WeatherResponse(BaseModel):
-    location: str
-    temperature: float
-    condition: str
-    humidity: Optional[int] = None
-
-client = create_llm_client(provider="openai")  # Structured output works well with OpenAI
-
-response = client.chat(
-    "What's the weather in Paris?",
-    structured_output=WeatherResponse
-)
-
-if response["structured"] and not response.get("error"):
-    weather_data = response["content"]
-    print(f"Temperature in {weather_data.location}: {weather_data.temperature}°C")
-```
-
-### Using Tools
-
-```python
-from core_lib.llm import create_llm_client
-
-client = create_llm_client()
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather", 
-            "description": "Get current weather for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "City and country, e.g. 'Paris, France'"
-                    },
-                    "unit": {
-                        "type": "string", 
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "Temperature unit"
-                    }
-                },
-                "required": ["location"]
-            }
-        }
-    }
-]
-
-response = client.chat(
-    "What's the weather in Tokyo?",
-    tools=tools
-)
-
-```
-
-Notes:
-
-- The `use_search_grounding` flag is provider-agnostic and is forwarded to providers; only Gemini implements it currently. Other providers will ignore it unless they support a similar capability in the future.
-
-## Factory Class Methods
-
-The `LLMFactory` class provides multiple creation methods:
-
-### Factory.create()
-
-Main factory method that intelligently creates clients based on parameters:
-
-```python
-from core_lib.llm import LLMFactory
-
-# Auto-detect from environment
-client = LLMFactory.create()
-
-# Specify provider with overrides
-client = LLMFactory.create(provider="openai", model="gpt-4", temperature=0.3)
-
-# Use with existing config
-config = OpenAIConfig(api_key="sk-...", model="gpt-4")
-client = LLMFactory.create(config=config)
-```
-
-### Provider-Specific Methods
-
-```python
-# Direct provider methods
-client = LLMFactory.openai(model="gpt-4", temperature=0.2)
-client = LLMFactory.gemini(api_key="key", model="gemini-1.5-pro")
-client = LLMFactory.ollama(model="llama3.2", base_url="http://localhost:11434")
-client = LLMFactory.azure_openai(deployment="gpt-4", azure_endpoint="https://...")
-client = LLMFactory.openai_compatible(base_url="http://localhost:8000")
-
-# OpenAI Responses API
-client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
-client = LLMFactory.openai_responses(model="o3", thinking_enabled=True)
-
-# Alibaba Cloud / Qwen (shorthand for openai_responses with DashScope config)
-client = LLMFactory.alibaba(model="qwen-plus")                         # international
-client = LLMFactory.alibaba(model="qwen3-max", region="china")         # Beijing region
-client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True)  # chain-of-thought
-```
-
-### Convenience Functions
-
-For simpler usage, several convenience functions are available:
-
+**Provider-specific factory functions:**
 ```python
 from core_lib.llm import (
-    create_llm_client,
-    create_client_from_env,
+    create_gemini_client,
+    create_ollama_client,
     create_openai_responses_client,
     create_alibaba_client,
+    create_azure_openai_client,
 )
 
-# Main convenience function - recommended for most use cases
-client = create_llm_client()  # Auto-detect
-client = create_llm_client(provider="openai", model="gpt-4")
-
-# Environment-based creation
-client = create_client_from_env()  # Auto-detect provider
-client = create_client_from_env(provider="gemini")
-
-# OpenAI Responses API
+client = create_ollama_client(model="qwen3.5:4b", temperature=0.1)
+client = create_gemini_client(api_key="your-key", model="gemini-2.5-flash")
 client = create_openai_responses_client(api_key="sk-...", model="gpt-4.1")
-client = create_openai_responses_client(model="o3", reasoning_effort="high")
-
-# Alibaba Cloud / Qwen (reads DASHSCOPE_API_KEY or OPENAI_API_KEY)
-client = create_alibaba_client(model="qwen-plus")
-client = create_alibaba_client(model="qwen3-max", thinking_enabled=True, region="china")
+client = create_alibaba_client(model="qwen3-max")      # reads DASHSCOPE_API_KEY
+client = create_azure_openai_client()                   # reads AZURE_OPENAI_* env vars
 ```
 
-## Migration from utils.py
+**Using the factory class:**
+```python
+from core_lib.llm import LLMFactory
 
-If you were using the old `utils.py` functions, here's how to migrate:
+client = LLMFactory.gemini(model="gemini-2.5-pro")
+client = LLMFactory.ollama(model="qwen3.5:4b", base_url="http://localhost:11434")
+client = LLMFactory.openai(model="gpt-4o", temperature=0.3)
+client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
+client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True)
+client = LLMFactory.azure_openai(deployment="gpt-4o")
+client = LLMFactory.openrouter(model="anthropic/claude-3.5-sonnet")
+```
+
+---
+
+## Chat Interface
+
+All clients share the same `chat()` interface:
 
 ```python
-# Old way
-from core_lib.llm.utils import create_gemini_client
-client = create_gemini_client(model="gemini-pro")
-
-# New way (all approaches work)
-from core_lib.llm import LLMFactory, create_llm_client
-
-# Option 1: Use the factory
-client = LLMFactory.gemini(model="gemini-pro")
-
-# Option 2: Use the main convenience function
-client = create_llm_client(provider="gemini", model="gemini-pro")
-
-# Option 3: Backward-compatible functions still work
-from core_lib.llm import create_gemini_client
-client = create_gemini_client(model="gemini-pro")
+response = client.chat(messages)
+print(response["content"])
 ```
 
-## Response Format
-
-All chat methods return a dictionary with the following structure:
+### Response Format
 
 ```python
 {
-    "content": "The response text",
-    "structured": False,  # True if structured output was requested
-    "tool_calls": [],     # List of tool calls made by the model
-    "usage": {},          # Usage statistics (varies by provider)
-    "error": None,        # Error message if something went wrong
+    "content": str | dict,    # text, or dict when structured_output is used
+    "structured": bool,       # True if structured_output was requested
+    "tool_calls": list,       # function calls requested by the model (if any)
+    "usage": dict,            # token usage statistics
+    "error": str | None,      # present on failure
     # OpenAI Responses API only:
-    "response_id": "resp_abc123",  # ID for stateful multi-turn (previous_response_id)
+    "response_id": str,       # pass back as previous_response_id for stateful multi-turn
 }
 ```
 
-> **Note**: `response_id` is only present when using `OpenAIResponsesProvider`. Pass it back as `previous_response_id` in `OpenAIResponsesConfig` to continue a stateful conversation.
-
-## API Reference
-
-### Classes
-
-#### `LLMClient`
-
-Main client class for interacting with LLMs.
-
-**Methods:**
-- `chat(messages, tools=None, structured_output=None, system_message=None, use_search_grounding=False)`: Send chat message
-- `get_model_info()`: Get information about the current model
-
-#### `GeminiConfig` / `OllamaConfig` / `OpenAIConfig` / `AzureOpenAIConfig`
-
-Configuration classes for each provider.
-
-**Methods:**
-- `from_env()`: Create configuration from environment variables
-
-#### `OpenAIResponsesConfig`
-
-Configuration for the OpenAI Responses API and Alibaba Cloud (DashScope) Responses endpoint.
-
-**Extra fields:**
-- `previous_response_id`: ID from a prior response — enables stateful multi-turn without resending history
-- `reasoning_effort`: `"low"` | `"medium"` | `"high"` — for OpenAI reasoning models (o-series)
-- `is_alibaba`: Auto-detected from `base_url` (contains "alibaba", "dashscope", or "aliyun"); triggers Alibaba-specific parameters (thinking mode via `extra_body`, no `instructions` param)
-
-**Class methods:**
-- `from_env()`: Read `OPENAI_API_KEY`/`DASHSCOPE_API_KEY`, `OPENAI_RESPONSES_MODEL`, `OPENAI_REASONING_EFFORT`, etc.
-- `for_alibaba(api_key, model, region="international")`: Pre-configured DashScope endpoint for the given region
-
-### Utility Functions
-
-- `create_ollama_client(**kwargs)`: Create Ollama client with parameters
-- `create_gemini_client(**kwargs)`: Create Gemini client with parameters
-- `create_openai_responses_client(**kwargs)`: Create OpenAI Responses API client
-- `create_alibaba_client(**kwargs)`: Create Alibaba Cloud / Qwen client via DashScope Responses endpoint
-- `create_client_from_env(provider)`: Create client from environment variables
-
-## Error Handling
-
-The library handles errors gracefully and returns them in the response:
-
+Always check for errors:
 ```python
 response = client.chat("Hello")
-
 if response.get("error"):
     print(f"Error: {response['error']}")
 else:
-    print(f"Response: {response['content']}")
+    print(response["content"])
 ```
 
-## Best Practices
+---
 
-1. **Use Environment Variables**: Store API keys and configuration in environment variables
-2. **Handle Errors**: Always check for errors in responses
-3. **Model Compatibility**: Not all models support tools, structured output, or search grounding
-4. **Rate Limiting**: Be mindful of API rate limits, especially with cloud providers
-5. **Context Management**: Keep track of conversation history for multi-turn chats
+## Common Patterns
+
+### Simple Chat
+
+```python
+response = client.chat("Explain quantum computing in one paragraph")
+print(response["content"])
+```
+
+### System Message + Multi-Turn
+
+```python
+messages = [
+    {"role": "user", "content": "Hello, I'm planning a trip to Japan."},
+    {"role": "assistant", "content": "Great! What would you like to know?"},
+    {"role": "user", "content": "What are the best times to visit Kyoto?"}
+]
+
+response = client.chat(messages, system_message="You are a helpful travel expert.")
+print(response["content"])
+```
+
+### Structured Output (Pydantic)
+
+Pass a Pydantic model class to get validated structured output:
+
+```python
+from pydantic import BaseModel
+
+class WeatherReport(BaseModel):
+    location: str
+    temperature: float
+    condition: str
+
+response = client.chat(
+    "What's the weather like in Paris today?",
+    structured_output=WeatherReport,
+)
+
+if response["structured"] and not response.get("error"):
+    report = response["content"]           # already a dict (model_dump())
+    print(f"{report['location']}: {report['temperature']}°C, {report['condition']}")
+```
+
+### Tool / Function Calling
+
+```python
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {"type": "string", "description": "City name"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+            },
+            "required": ["location"]
+        }
+    }
+}]
+
+response = client.chat("What's the weather in Tokyo?", tools=tools)
+if response["tool_calls"]:
+    print(response["tool_calls"])
+```
+
+### Thinking / Reasoning Mode
+
+Supported by Gemini 2.5+ and Qwen3/3.5 models:
+
+```python
+client = create_ollama_client(model="qwen3.5:4b", thinking_enabled=True)
+response = client.chat("Explain why P≠NP is hard to prove")
+print(response["content"])
+```
+
+### Vision and Image Input
+
+Multimodal models (Gemini, qwen3.5, qwen2.5vl) accept images via the standard message format:
+
+```python
+import base64
+
+with open("chart.png", "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode()
+
+messages = [{
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "Describe what you see in this image"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
+    ]
+}]
+
+# qwen3.5 is fully multimodal (all sizes: 0.8b–122b)
+client = create_ollama_client(model="qwen3.5:4b")
+response = client.chat(messages)
+print(response["content"])
+```
+
+### Google Search Grounding (Gemini)
+
+```python
+from core_lib.llm import create_gemini_client
+
+client = create_gemini_client(model="gemini-2.5-flash")
+response = client.chat(
+    "What are the latest updates on the Mars mission?",
+    use_search_grounding=True,
+)
+print(response["content"])
+```
+
+---
+
+## Provider-Specific Features
+
+### OpenAI Responses API (Stateful Multi-Turn)
+
+```python
+from core_lib.llm import create_openai_responses_client
+
+client = create_openai_responses_client(api_key="sk-...")
+
+resp1 = client.chat("My name is Alice.")
+prev_id = resp1["response_id"]
+
+client.config.previous_response_id = prev_id
+resp2 = client.chat("What is my name?")
+print(resp2["content"])   # "Alice" — context preserved server-side
+```
+
+### Alibaba Cloud / Qwen (DashScope)
+
+```python
+from core_lib.llm import create_alibaba_client
+
+# Reads DASHSCOPE_API_KEY automatically
+client = create_alibaba_client(model="qwen3-max", thinking_enabled=True)
+response = client.chat("Solve: if 3x + 7 = 22, what is x?")
+print(response["content"])
+
+# China Beijing region
+client = create_alibaba_client(model="qwen3-max", region="china")
+```
+
+### Azure OpenAI
+
+```python
+from core_lib.llm import create_azure_openai_client
+
+# From env vars (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
+client = create_azure_openai_client()
+
+# Explicit parameters
+client = create_azure_openai_client(
+    api_key="your-key",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    deployment="gpt-4o",
+)
+response = client.chat("Summarize in one sentence.")
+print(response["content"])
+```
+
+### OpenRouter (300+ Models)
+
+```python
+from core_lib.llm import create_llm_client
+
+# OPENROUTER_API_KEY from env
+client = create_llm_client(provider="openrouter", model="anthropic/claude-3.5-sonnet")
+response = client.chat("Explain the Renaissance briefly.")
+print(response["content"])
+```
+
+### Ollama (Local)
+
+```python
+from core_lib.llm import create_ollama_client
+
+client = create_ollama_client(
+    model="qwen3.5:4b",
+    base_url="http://localhost:11434",
+    temperature=0.1,
+    thinking_enabled=False,   # Disable for faster, deterministic output
+)
+response = client.chat("Classify this text: ...")
+```
+
+---
+
+## Environment Variables
+
+### Auto-Detection Priority
+
+1. `LLM_PROVIDER` — explicit: `gemini`, `openai`, `openai-responses`, `openrouter`, `azure`, `ollama`, `alibaba`
+2. `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
+3. `OPENAI_API_KEY` → OpenAI Chat Completions
+4. `AZURE_OPENAI_API_KEY` → Azure OpenAI
+5. Default fallback → Ollama
+
+### Gemini (Developer API)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEMINI_API_KEY` | — | API key (also `GOOGLE_GENAI_API_KEY`) |
+| `GEMINI_MODEL` | `gemini-1.5-flash` | Model name |
+| `GEMINI_TEMPERATURE` | `0.1` | Sampling temperature |
+| `GEMINI_MAX_TOKENS` | — | Max output tokens |
+| `GEMINI_THINKING_ENABLED` | — | Enable thinking mode (`true`/`false`) |
+
+### Gemini (Vertex AI via ADC)
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_CLOUD_PROJECT` | GCP project ID |
+| `GOOGLE_CLOUD_LOCATION` | Region, e.g. `us-central1` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON |
+
+### OpenAI Responses API (`openai-responses` / `alibaba`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` / `DASHSCOPE_API_KEY` | — | API key |
+| `OPENAI_RESPONSES_MODEL` | `gpt-4.1` | Model name |
+| `OPENAI_BASE_URL` | — | Custom endpoint (set for Alibaba) |
+| `OPENAI_TEMPERATURE` | `0.7` | Sampling temperature |
+| `OPENAI_THINKING_ENABLED` | — | Enable chain-of-thought |
+| `OPENAI_REASONING_EFFORT` | `medium` | `low`/`medium`/`high` for o-series |
+
+### OpenAI Chat Completions
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | — | API key |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Model name |
+| `OPENAI_TEMPERATURE` | `0.7` | Sampling temperature |
+| `OPENAI_MAX_TOKENS` | — | Max output tokens |
+| `OPENAI_ORG` / `OPENAI_PROJECT` | — | Organization/project IDs |
+
+### Azure OpenAI
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AZURE_OPENAI_API_KEY` | — | Azure API key |
+| `AZURE_OPENAI_ENDPOINT` | — | Resource endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-4o-mini` | Deployment/model name |
+| `AZURE_OPENAI_API_VERSION` | `2024-08-01-preview` | REST API version |
+
+### Ollama
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_MODEL` | `qwen3:1.7b` | Model name |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Server URL |
+| `OLLAMA_TEMPERATURE` | `0.1` | Sampling temperature |
+| `OLLAMA_THINKING_ENABLED` | — | Enable thinking mode |
+| `OLLAMA_TIMEOUT` | `60` | Request timeout (seconds) |
+| `OLLAMA_NUM_CTX` | — | Context window size |
+
+---
+
+## Provider Comparison
+
+| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | OpenRouter | Alibaba (Qwen) |
+|---------|--------|--------|---------------|-----------------|------------|----------------|
+| Cost | Free (local) | Paid | Paid | Paid | Paid | Paid |
+| Privacy | Local | Cloud | Cloud | Cloud | Cloud | Cloud |
+| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `response_format` | `text.format` |
+| Tool Calling | Model-dependent | Native | Native | Native | Model-dependent | Native |
+| Vision / Multimodal | qwen3.5, qwen2.5vl | All | GPT-4o+ | GPT-4o+ | Model-dependent | Qwen-VL models |
+| Thinking / Reasoning | qwen3, qwen3.5 | 2.5-series | Not forwarded | o-series | Model-dependent | Qwen3+ |
+| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | Model-dependent | ✅ |
+| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ❌ | ✅ |
+| Rate limiting | None (local) | Auto (model-specific) | None | None | None | None |
+| Auto-retry | None | Exponential backoff | None | None | None | None |
+
+---
+
+## Resilience Features (Gemini)
+
+Gemini clients include built-in rate limiting and retry logic:
+
+- **Per-model RPM limits**: Gemini 2.5 Pro: 5 RPM, Flash: 10 RPM, Flash-Lite: 15 RPM
+- **Automatic retry**: Up to 3 retries with exponential backoff (1s → 2s → 4s + jitter) on rate limits, server errors, and network failures
+- **Circuit breaker**: Partial failures don't block the entire system
+
+No extra configuration needed — these operate transparently.
+
+For **cross-provider failover**, use `FallbackLLMClient` (see [FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md)).
+
+---
+
+## Advanced: Vertex AI Context Caching
+
+Reduce costs and latency for large, repeated contexts using Vertex AI context caching.
+
+### Implicit Caching (Automatic)
+
+Vertex AI automatically caches context when:
+- Prompt is **> 2048 tokens**
+- Large static content is at the **beginning** of the prompt
+- Subsequent requests share the same prefix
+
+**~90% cost reduction** on cached tokens; no code changes required.
+
+### Explicit Caching
+
+```python
+from google import genai
+from google.genai.types import CreateCachedContentConfig
+
+# Create a cache once
+gclient = genai.Client(vertexai=True, project="my-project", location="us-central1")
+cache = gclient.caches.create(
+    model="gemini-2.0-flash",
+    config=CreateCachedContentConfig(
+        contents=[...],        # Your large static context
+        ttl="3600s",
+        display_name="my-rfx-cache"
+    )
+)
+cache_name = cache.name
+
+# Use the cache via core-lib LLMClient
+from core_lib.llm import create_gemini_client
+client = create_gemini_client(model="gemini-2.0-flash", project="my-project", location="us-central1")
+response = client.chat(
+    messages=[{"role": "user", "content": "Analyze section 4 of the cached RFx."}],
+    cached_content=cache_name,
+)
+```
+
+---
+
+## References
+
+- [FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md) — Multi-provider configuration, usage-based routing, health tracking
+- [PROVIDER_REGISTRY_QUICK_REFERENCE.md](PROVIDER_REGISTRY_QUICK_REFERENCE.md) — ProviderRegistry API reference
+- [LLM_QUICK_REFERENCE.md](LLM_QUICK_REFERENCE.md) — Cheat sheet
+- Google GenAI Python SDK: https://googleapis.github.io/python-genai/
+- Gemini Structured Output: https://ai.google.dev/gemini-api/docs/structured-output

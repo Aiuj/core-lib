@@ -59,6 +59,14 @@ _app_version: Optional[str] = None
 
 _LAST_CONFIG: dict = {}  # keep track of parameters used to configure logging
 
+_DEFAULT_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_ANSI_RESET = "\x1b[0m"
+_LEVEL_COLOR_CODES = {
+    logging.WARNING: "\x1b[33;1m",
+    logging.ERROR: "\x1b[31;1m",
+    logging.CRITICAL: "\x1b[37;41;1m",
+}
+
 
 class AppMetadataFilter(logging.Filter):
     """Logging filter that adds app name and version to log records.
@@ -92,6 +100,62 @@ class AppMetadataFilter(logging.Filter):
             record.extra_attrs['client.app.version'] = self.app_version
         
         return True
+
+
+class ColorizedConsoleFormatter(logging.Formatter):
+    """TTY-focused formatter that highlights warnings/errors with ANSI colors."""
+
+    def __init__(self, fmt: str = _DEFAULT_LOG_FORMAT):
+        super().__init__(fmt=fmt)
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        color_code = _LEVEL_COLOR_CODES.get(record.levelno)
+        if not color_code:
+            return formatted
+        return f"{color_code}{formatted}{_ANSI_RESET}"
+
+
+def _parse_env_bool(name: str) -> Optional[bool]:
+    """Parse a boolean-like environment variable if present."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _should_enable_console_colors(logger_settings: Optional[Any], stream: Any) -> bool:
+    """Return whether ANSI colors should be enabled for the active console stream."""
+    explicit_setting = None
+    if logger_settings is not None:
+        explicit_setting = getattr(logger_settings, "console_colors", None)
+    if explicit_setting is not None:
+        return bool(explicit_setting)
+
+    env_override = _parse_env_bool("LOG_CONSOLE_COLORS")
+    if env_override is not None:
+        return env_override
+
+    if os.getenv("NO_COLOR"):
+        return False
+
+    if os.getenv("TERM", "").lower() == "dumb":
+        return False
+
+    is_tty = getattr(stream, "isatty", None)
+    if callable(is_tty):
+        try:
+            return bool(is_tty())
+        except Exception:
+            return False
+
+    return False
 
 
 def _resolve_logger_name(module_name: Optional[str]) -> str:
@@ -259,6 +323,7 @@ def setup_logging(
 
     new_config = {
         "level": numeric_level,
+        "console_colors": _should_enable_console_colors(logger_settings, sys.stdout),
         "file_logging": file_logging,
         "file_path": file_path,
         "file_max_bytes": file_max_bytes,
@@ -288,6 +353,10 @@ def setup_logging(
                 console_handler.stream.reconfigure(encoding='utf-8')
             except Exception:
                 pass  # Fallback if reconfigure not available
+        if new_config["console_colors"]:
+            console_handler.setFormatter(ColorizedConsoleFormatter())
+        else:
+            console_handler.setFormatter(logging.Formatter(_DEFAULT_LOG_FORMAT))
         handlers = [console_handler]
         
         # Add file handler if enabled (lazy import)
@@ -364,7 +433,7 @@ def setup_logging(
 
         logging.basicConfig(
             level=numeric_level,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            format=_DEFAULT_LOG_FORMAT,
             handlers=handlers,
             force=True,  # Python 3.8+: replace handlers
         )

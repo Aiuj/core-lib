@@ -399,3 +399,87 @@ def test_think_true_not_sent_for_non_hinted_model(monkeypatch):
 
     # Should NOT propagate think:true for an unknown model
     assert "think" not in captured_payload
+
+
+# ---------------------------------------------------------------------------
+# Multimodal / vision message conversion
+# ---------------------------------------------------------------------------
+
+def test_convert_messages_plain_text_unchanged():
+    """Plain text messages must pass through without modification."""
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "Hello!"},
+    ]
+    result = OllamaProvider._convert_messages_to_ollama_format(messages)
+    assert result == messages
+
+
+def test_convert_messages_multimodal_extracts_images_and_text():
+    """OpenAI-style multimodal messages are converted to Ollama format."""
+    import base64
+
+    raw_b64 = base64.b64encode(b"fake-image-bytes").decode("ascii")
+    data_url = f"data:image/png;base64,{raw_b64}"
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": "Describe this image."},
+            ],
+        }
+    ]
+
+    result = OllamaProvider._convert_messages_to_ollama_format(messages)
+
+    assert len(result) == 1
+    msg = result[0]
+    assert msg["role"] == "user"
+    assert msg["content"] == "Describe this image."
+    assert "images" in msg
+    assert msg["images"] == [raw_b64]
+
+
+def test_convert_messages_multimodal_multiple_text_parts_joined():
+    """Multiple text parts are joined with a space."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Part one."},
+                {"type": "text", "text": "Part two."},
+            ],
+        }
+    ]
+
+    result = OllamaProvider._convert_messages_to_ollama_format(messages)
+
+    assert result[0]["content"] == "Part one. Part two."
+    assert "images" not in result[0]
+
+
+def test_convert_messages_mixed_plain_and_multimodal():
+    """Only multimodal messages are converted; plain-text ones are left alone."""
+    import base64
+
+    raw_b64 = base64.b64encode(b"img").decode("ascii")
+    data_url = f"data:image/jpeg;base64,{raw_b64}"
+
+    messages = [
+        {"role": "system", "content": "Be concise."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": "What is this?"},
+            ],
+        },
+    ]
+
+    result = OllamaProvider._convert_messages_to_ollama_format(messages)
+
+    assert result[0] == {"role": "system", "content": "Be concise."}
+    assert result[1]["content"] == "What is this?"
+    assert result[1]["images"] == [raw_b64]

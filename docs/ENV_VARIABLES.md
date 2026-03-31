@@ -98,6 +98,48 @@ export RERANKER_TRUST_REMOTE_CODE=false         # Trust remote code from Hugging
 
 **See:** [RERANKER_GUIDE.md](./RERANKER_GUIDE.md) for detailed configuration guide
 
+## Azure OpenAI Configuration
+
+```bash
+# Authentication & endpoint (both required)
+export AZURE_OPENAI_API_KEY=<your-azure-key>          # API key (falls back to OPENAI_API_KEY)
+export AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com  # Required
+
+# Model / deployment
+export AZURE_OPENAI_DEPLOYMENT=gpt-4o                 # Deployment name (falls back to OPENAI_MODEL; default: gpt-4o-mini)
+export AZURE_OPENAI_API_VERSION=2024-08-01-preview     # REST API date version (default: 2024-08-01-preview)
+
+# Generation settings
+export AZURE_OPENAI_TEMPERATURE=0.7                   # Sampling temperature (falls back to OPENAI_TEMPERATURE)
+export AZURE_OPENAI_MAX_TOKENS=                       # Max tokens (optional; falls back to OPENAI_MAX_TOKENS)
+
+# Optional
+export AZURE_OPENAI_ORG=                              # Organisation ID (optional)
+```
+
+Usage:
+
+```python
+from core_lib.llm import create_azure_openai_client, LLMFactory
+
+# From environment
+client = create_azure_openai_client()
+
+# Explicit parameters (override / supplement env vars)
+client = create_azure_openai_client(
+    api_key="<key>",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    deployment="gpt-4o",
+)
+
+# Via factory
+client = LLMFactory.azure_openai(deployment="gpt-4o", temperature=0.2)
+
+# Via create_llm_client (provider= accepts "azure", "azure_openai", or "azure-openai")
+from core_lib.llm import create_llm_client
+client = create_llm_client(provider="azure")
+```
+
 ## Ollama Configuration
 
 ```bash
