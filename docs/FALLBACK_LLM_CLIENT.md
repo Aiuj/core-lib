@@ -1,18 +1,22 @@
-# Fallback LLM Client Guide
+# LLM Provider Configuration & Fallback Guide
 
-The `FallbackLLMClient` provides transparent automatic failover between multiple LLM providers. When a provider fails (rate limit, timeout, server error), it automatically switches to backup providers and tracks health status for intelligent routing.
+This document explains how to configure multiple LLM providers and use `FallbackLLMClient` for automatic failover with health tracking and usage-based routing.
+
+For single-provider usage patterns (structured output, tools, vision, multi-turn), see [llm.md](llm.md).
 
 ## Quick Start
 
 ```python
-from core_lib.llm import FallbackLLMClient, create_fallback_llm_client
+from core_lib.llm import FallbackLLMClient
 
-# Simplest: load from environment/config file
-client = create_fallback_llm_client()
-
-# Use just like a normal LLMClient
+# Load providers from llm_providers.yaml (set LLM_PROVIDERS_FILE env var)
+client = FallbackLLMClient.from_env()
 response = client.chat("What is the capital of France?")
 print(response["content"])
+
+# Route to providers tagged for a specific workload
+client = FallbackLLMClient.from_env(usage="rag")
+response = client.chat("Summarize these documents")
 
 # Check which provider was used
 print(f"Provider: {client.last_used_provider}")
@@ -63,10 +67,18 @@ client = FallbackLLMClient.from_config([
     {"provider": "ollama", "host": "http://localhost:11434", "model": "llama3.2", "priority": 3},
 ])
 
-# Using an existing ProviderRegistry
+# Using an existing ProviderRegistry (from shared llm_providers.yaml)
 from core_lib.llm import ProviderRegistry
 registry = ProviderRegistry.from_env()
+
+# No usage filter — general-purpose routing
 client = FallbackLLMClient.from_registry(registry)
+
+# Restrict to rag-capable providers (providers tagged 'rag' or with no usage tag)
+client = FallbackLLMClient.from_registry(registry, usage="rag")
+
+# Restrict for OCR workloads with higher intelligence
+client = FallbackLLMClient.from_registry(registry, usage="ocr", intelligence_level=7)
 ```
 
 ## Features
@@ -150,6 +162,88 @@ response = client.chat("What is 2+2?", intelligence_level=3)
 # Use higher-tier model for complex queries
 response = client.chat("Explain quantum entanglement", intelligence_level=8)
 ```
+
+### Usage-Based Routing
+
+Route different workloads to purpose-specific providers (e.g. dedicate a vision-capable model to OCR tasks while keeping cheaper text models for RAG):
+
+```python
+# Configure providers with explicit usage tags
+client = FallbackLLMClient.from_config([
+    {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "priority": 1,
+        # No usage tag → general-purpose: matches ANY requested usage as fallback
+    },
+    {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "priority": 2,
+        "usage": ["vision", "ocr"],   # Restricted to vision/OCR workloads only
+    },
+    {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "priority": 3,
+        "usage": ["rag", "chat"],     # Restricted to RAG and chat workloads
+    },
+])
+
+# Route per call — only providers tagged "rag" (or with no tag) are tried
+response = client.chat("Summarize these documents", usage="rag")
+
+# Route via a default set on the client
+rag_client = FallbackLLMClient.from_env(usage="rag")
+response = rag_client.chat("Answer this question")  # uses "rag" routing automatically
+
+# Per-call usage overrides the client default
+response = rag_client.chat("Describe this image", usage="vision")
+```
+
+**Fallback cascade** — when no provider exactly matches the requested `usage` at the requested `intelligence_level`, the client degrades gracefully in three steps:
+
+1. **Intersection** *(normal path)*: providers that satisfy both the level range AND the usage tag (including providers with no usage tag — they always match).
+2. **Level-relaxed general-purpose**: if the intersection is empty, providers with no usage tag that exist anywhere in the registry are used (level constraint dropped). A warning is logged.
+3. **Last resort**: if no general-purpose providers exist at all, all level-filtered providers are tried regardless of their usage tag. A warning is logged.
+
+This means you can add a low-priority Ollama provider **without** a `usage` tag as a universal safety net:
+
+```yaml
+providers:
+  - provider: gemini
+    model: gemini-2.0-flash
+    api_key: ${GEMINI_API_KEY}
+    priority: 1
+    usage: [rag, chat]              # Only for text workloads
+
+  - provider: gemini
+    model: gemini-2.0-flash
+    api_key: ${GEMINI_API_KEY}
+    priority: 2
+    usage: [vision, ocr]            # Only for vision workloads
+
+  - provider: ollama
+    host: ${OLLAMA_HOST}
+    model: llama3.2
+    priority: 100                   # Low priority — acts as universal fallback
+    # No usage tag → general-purpose, used when nothing else matches
+```
+
+**Known usage tags** (used across the ecosystem):
+
+| Tag | Where used |
+|-----|-----------|
+| `rag` | Q&A retrieval-augmented generation |
+| `chat` | Conversational / chat endpoints |
+| `translation` | Cross-language Q&A translation |
+| `quality_analysis` | Search quality / answer grounding |
+| `query_expansion` | Query rewriting for retrieval |
+| `classify` | Document classification |
+| `extract` | Information extraction |
+| `agent` | LangGraph / agentic reasoning |
+| `vision` | Image understanding |
+| `ocr` | Optical character recognition |
 
 ### Rich Metadata
 
@@ -322,6 +416,38 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 | `min_intelligence_level` | int | Minimum intelligence level (0-10) |
 | `max_intelligence_level` | int | Maximum intelligence level (0-10) |
 | `tier` | str | Model tier: `low`, `standard`, `high` |
+| `usage` | str \| list[str] | Restrict provider to specific workloads (e.g. `["rag", "chat"]`). Omit or set `null` for general-purpose (matches any usage). |
+
+### FallbackLLMClient Factory Methods
+
+```python
+# From environment / YAML config file
+client = FallbackLLMClient.from_env(
+    intelligence_level=5,   # Optional: filter by intelligence level
+    usage="rag",            # Optional: pre-set usage tag for all calls
+    max_retries=1,          # Retries per provider before fallback
+)
+
+# From an existing ProviderRegistry
+client = FallbackLLMClient.from_registry(
+    registry=registry,
+    intelligence_level=5,
+    usage="ocr",
+    max_retries=2,
+)
+```
+
+The `usage` set at construction time is the **default** and can be overridden per `chat()` call:
+
+```python
+client = FallbackLLMClient.from_env(usage="rag")
+
+# Uses the default "rag" routing
+client.chat("Answer this question from the knowledge base")
+
+# Override for a single call — routes to vision-capable providers
+client.chat("Describe this image", usage="vision")
+```
 
 ### FallbackLLMClient Options
 
@@ -329,6 +455,7 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 |--------|------|---------|-------------|
 | `max_retries` | int | 1 | Retries per provider before fallback |
 | `intelligence_level` | int | None | Default intelligence level filter |
+| `usage` | str | None | Default usage tag for routing (e.g. `"rag"`, `"ocr"`). Can be overridden per `chat()` call. |
 
 ### Environment Variables
 
@@ -340,3 +467,12 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 | `GEMINI_API_KEY` | Gemini API key (legacy) |
 | `OPENAI_API_KEY` | OpenAI API key (legacy) |
 | `OLLAMA_HOST` | Ollama host URL (legacy) |
+
+---
+
+## References
+
+- [llm.md](llm.md) — Single-provider usage: structured output, tools, vision, multi-turn
+- [PROVIDER_REGISTRY_QUICK_REFERENCE.md](PROVIDER_REGISTRY_QUICK_REFERENCE.md) — ProviderRegistry API reference
+- [LLM_QUICK_REFERENCE.md](LLM_QUICK_REFERENCE.md) — Cheat sheet
+
