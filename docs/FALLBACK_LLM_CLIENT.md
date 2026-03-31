@@ -1,18 +1,22 @@
-# Fallback LLM Client Guide
+# LLM Provider Configuration & Fallback Guide
 
-The `FallbackLLMClient` provides transparent automatic failover between multiple LLM providers. When a provider fails (rate limit, timeout, server error), it automatically switches to backup providers and tracks health status for intelligent routing.
+This document explains how to configure multiple LLM providers and use `FallbackLLMClient` for automatic failover with health tracking and usage-based routing.
+
+For single-provider usage patterns (structured output, tools, vision, multi-turn), see [llm.md](llm.md).
 
 ## Quick Start
 
 ```python
-from core_lib.llm import FallbackLLMClient, create_fallback_llm_client
+from core_lib.llm import FallbackLLMClient
 
-# Simplest: load from environment/config file
-client = create_fallback_llm_client()
-
-# Use just like a normal LLMClient
+# Load providers from llm_providers.yaml (set LLM_PROVIDERS_FILE env var)
+client = FallbackLLMClient.from_env()
 response = client.chat("What is the capital of France?")
 print(response["content"])
+
+# Route to providers tagged for a specific workload
+client = FallbackLLMClient.from_env(usage="rag")
+response = client.chat("Summarize these documents")
 
 # Check which provider was used
 print(f"Provider: {client.last_used_provider}")
@@ -63,10 +67,18 @@ client = FallbackLLMClient.from_config([
     {"provider": "ollama", "host": "http://localhost:11434", "model": "llama3.2", "priority": 3},
 ])
 
-# Using an existing ProviderRegistry
+# Using an existing ProviderRegistry (from shared llm_providers.yaml)
 from core_lib.llm import ProviderRegistry
 registry = ProviderRegistry.from_env()
+
+# No usage filter — general-purpose routing
 client = FallbackLLMClient.from_registry(registry)
+
+# Restrict to rag-capable providers (providers tagged 'rag' or with no usage tag)
+client = FallbackLLMClient.from_registry(registry, usage="rag")
+
+# Restrict for OCR workloads with higher intelligence
+client = FallbackLLMClient.from_registry(registry, usage="ocr", intelligence_level=7)
 ```
 
 ## Features
@@ -406,13 +418,44 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 | `tier` | str | Model tier: `low`, `standard`, `high` |
 | `usage` | str \| list[str] | Restrict provider to specific workloads (e.g. `["rag", "chat"]`). Omit or set `null` for general-purpose (matches any usage). |
 
+### FallbackLLMClient Factory Methods
+
+```python
+# From environment / YAML config file
+client = FallbackLLMClient.from_env(
+    intelligence_level=5,   # Optional: filter by intelligence level
+    usage="rag",            # Optional: pre-set usage tag for all calls
+    max_retries=1,          # Retries per provider before fallback
+)
+
+# From an existing ProviderRegistry
+client = FallbackLLMClient.from_registry(
+    registry=registry,
+    intelligence_level=5,
+    usage="ocr",
+    max_retries=2,
+)
+```
+
+The `usage` set at construction time is the **default** and can be overridden per `chat()` call:
+
+```python
+client = FallbackLLMClient.from_env(usage="rag")
+
+# Uses the default "rag" routing
+client.chat("Answer this question from the knowledge base")
+
+# Override for a single call — routes to vision-capable providers
+client.chat("Describe this image", usage="vision")
+```
+
 ### FallbackLLMClient Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `max_retries` | int | 1 | Retries per provider before fallback |
 | `intelligence_level` | int | None | Default intelligence level filter |
-| `usage` | str | None | Default usage tag for routing (e.g. `"rag"`, `"chat"`). Can be overridden per `chat()` call. |
+| `usage` | str | None | Default usage tag for routing (e.g. `"rag"`, `"ocr"`). Can be overridden per `chat()` call. |
 
 ### Environment Variables
 
@@ -424,3 +467,12 @@ print(f"Used: {client.last_used_provider}, fallback: {client.last_was_fallback}"
 | `GEMINI_API_KEY` | Gemini API key (legacy) |
 | `OPENAI_API_KEY` | OpenAI API key (legacy) |
 | `OLLAMA_HOST` | Ollama host URL (legacy) |
+
+---
+
+## References
+
+- [llm.md](llm.md) — Single-provider usage: structured output, tools, vision, multi-turn
+- [PROVIDER_REGISTRY_QUICK_REFERENCE.md](PROVIDER_REGISTRY_QUICK_REFERENCE.md) — ProviderRegistry API reference
+- [LLM_QUICK_REFERENCE.md](LLM_QUICK_REFERENCE.md) — Cheat sheet
+
