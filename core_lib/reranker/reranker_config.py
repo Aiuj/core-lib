@@ -32,6 +32,7 @@ class RerankerSettings(BaseSettings):
     infinity_timeout: Optional[int] = None
     infinity_token: Optional[str] = None
     infinity_wake_on_lan: Optional[Dict[str, Any]] = None
+    infinity_wakeup_service: Optional[Dict[str, Any]] = None
     
     # Local model settings
     device: str = "auto"
@@ -117,6 +118,9 @@ class RerankerSettings(BaseSettings):
                 wake_on_lan = config.get("wake_on_lan")
                 if isinstance(wake_on_lan, dict):
                     entry["wake_on_lan"] = wake_on_lan
+                wakeup_service = config.get("wakeup_service")
+                if isinstance(wakeup_service, dict):
+                    entry["wakeup_service"] = wakeup_service
             elif provider == "local":
                 if config.get("device"):
                     entry["device"] = config.get("device")
@@ -185,7 +189,19 @@ class RerankerSettings(BaseSettings):
         # Get timeout
         timeout = EnvParser.get_env("RERANKER_TIMEOUT", env_type=int, default=30)
         infinity_timeout = EnvParser.get_env("INFINITY_TIMEOUT", env_type=int) or timeout
-        
+
+        # HTTP wakeup service for on-demand container start
+        _wakeup_url = EnvParser.get_env("INFINITY_RERANK_WAKEUP_URL")
+        infinity_wakeup_service: Optional[Dict[str, Any]] = None
+        if _wakeup_url:
+            infinity_wakeup_service = {
+                "url": _wakeup_url,
+                "token": EnvParser.get_env("INFINITY_RERANK_WAKEUP_TOKEN", default=""),
+                "warmup_seconds": EnvParser.get_env(
+                    "INFINITY_RERANK_WAKEUP_WARMUP_SECONDS", env_type=float, default=90.0
+                ),
+            }
+
         settings_dict = {
             "provider": provider,
             "model": model,
@@ -194,6 +210,7 @@ class RerankerSettings(BaseSettings):
             "infinity_timeout": infinity_timeout,
             "infinity_token": EnvParser.get_env("INFINITY_TOKEN") or EnvParser.get_env("RERANKER_TOKEN"),
             "infinity_wake_on_lan": None,
+            "infinity_wakeup_service": infinity_wakeup_service,
             "device": EnvParser.get_env("RERANKER_DEVICE", default="auto"),
             "cache_dir": EnvParser.get_env("RERANKER_CACHE_DIR"),
             "trust_remote_code": EnvParser.get_env("RERANKER_TRUST_REMOTE_CODE", default=False, env_type=bool),
@@ -229,6 +246,8 @@ class RerankerSettings(BaseSettings):
                 settings_dict["infinity_token"] = selected.get("token")
             if isinstance(selected.get("wake_on_lan"), dict):
                 settings_dict["infinity_wake_on_lan"] = selected.get("wake_on_lan")
+            if isinstance(selected.get("wakeup_service"), dict):
+                settings_dict["infinity_wakeup_service"] = selected.get("wakeup_service")
             if selected.get("device"):
                 settings_dict["device"] = selected.get("device")
             if selected.get("cache_dir"):
@@ -251,6 +270,7 @@ class RerankerSettings(BaseSettings):
             "infinity_timeout": self.infinity_timeout,
             "infinity_token": self.infinity_token,
             "infinity_wake_on_lan": self.infinity_wake_on_lan,
+            "infinity_wakeup_service": self.infinity_wakeup_service,
             "device": self.device,
             "cache_dir": self.cache_dir,
             "trust_remote_code": self.trust_remote_code,

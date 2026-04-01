@@ -173,3 +173,82 @@ class TestStripCodeFences:
         assert "```" not in page.raw_text, "Code fence must be stripped from raw_text"
         assert "<table>" in page.raw_text
         assert "Green Energy Slide" in page.raw_text
+
+
+class TestEnrichedMode:
+    """Tests for the enrich=True mode that produces description + search terms + OCR."""
+
+    def test_enriched_returns_enriched_source(self, settings, tiny_image):
+        """When enrich=True, the source should be 'llm-vision-enriched'."""
+        enriched_content = (
+            "## Description\n"
+            "A bar chart showing quarterly revenue growth.\n\n"
+            "## Search Terms\n"
+            "revenue, quarterly, bar chart, growth, financial performance\n\n"
+            "## Text Content\n"
+            "Q1: $1.2M  Q2: $1.5M  Q3: $1.8M  Q4: $2.1M"
+        )
+        service = _make_service(settings, {"content": enriched_content, "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+
+        assert page.source == "llm-vision-enriched"
+        assert "## Description" in page.raw_text
+        assert "## Search Terms" in page.raw_text
+        assert "## Text Content" in page.raw_text
+
+    def test_non_enriched_returns_standard_source(self, settings, tiny_image):
+        """When enrich=False (default), the source should be 'llm-vision'."""
+        service = _make_service(settings, {"content": "Simple OCR text", "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=False)
+
+        assert page.source == "llm-vision"
+
+    def test_enriched_prompt_used_in_chat_call(self, settings, tiny_image):
+        """Verify that enrich=True sends the enriched prompt to the LLM."""
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"content": "enriched output", "error": None}
+        service = OcrService(settings, vision_llm_client=mock_client)
+
+        service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+
+        call_args = mock_client.chat.call_args
+        messages = call_args[1].get("messages") or call_args[0][0]
+        prompt_text = messages[0]["content"][1]["text"]
+        assert "## Description" in prompt_text
+        assert "## Search Terms" in prompt_text
+        assert "## Text Content" in prompt_text
+
+    def test_non_enriched_prompt_used_by_default(self, settings, tiny_image):
+        """Verify that enrich=False sends the standard OCR-only prompt."""
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"content": "ocr output", "error": None}
+        service = OcrService(settings, vision_llm_client=mock_client)
+
+        service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=False)
+
+        call_args = mock_client.chat.call_args
+        messages = call_args[1].get("messages") or call_args[0][0]
+        prompt_text = messages[0]["content"][1]["text"]
+        assert "Extract all text content" in prompt_text
+        assert "## Description" not in prompt_text
+
+    def test_enriched_cache_key_differs_from_standard(self, settings, tiny_image):
+        """Enriched and standard cache keys must differ for the same image."""
+        key_standard = OcrService._cache_key(tiny_image, enrich=False)
+        key_enriched = OcrService._cache_key(tiny_image, enrich=True)
+        assert key_standard != key_enriched
+        assert key_standard.startswith("ocr:")
+        assert key_enriched.startswith("ocr-enriched:")
+
+    def test_process_images_passes_enrich_to_vision_llm(self, settings, tiny_image):
+        """process_images(enrich=True) must produce enriched source pages."""
+        enriched_content = (
+            "## Description\nA diagram\n\n"
+            "## Search Terms\ndiagram, flow\n\n"
+            "## Text Content\nStep 1 → Step 2"
+        )
+        service = _make_service(settings, {"content": enriched_content, "error": None})
+        result = service.process_images([tiny_image], enrich=True)
+
+        assert len(result.pages) == 1
+        assert result.pages[0].source == "llm-vision-enriched"

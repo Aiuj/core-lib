@@ -35,10 +35,20 @@ class OcrSettings(BaseSettings):
     dots_ocr_timeout: int = 120  # VLM inference is slow
     dots_ocr_max_tokens: int = 32768
 
+    # Vision LLM timeout — higher than the default LLM timeout because
+    # local models process images slowly (large base64 payloads).
+    # When set, overrides the vision LLM client's configured timeout.
+    vision_llm_timeout: int = 180  # seconds
+
     # Image filtering thresholds — skip icons, logos, and decorative images
     min_image_width: int = 200
     min_image_height: int = 200
     min_image_bytes: int = 20480  # 20 KB
+
+    # Image optimisation — resize and compress before sending to vision LLM
+    # to reduce base64 payload size and speed up local model inference.
+    max_image_dimension: int = 1568   # px, longest side; 0 = no resize
+    ocr_jpeg_quality: int = 85        # JPEG quality for PNG→JPEG conversion
 
     # OCR generation settings
     ocr_temperature: float = 0.1
@@ -86,9 +96,21 @@ class OcrSettings(BaseSettings):
         if min_b is not None:
             settings["min_image_bytes"] = min_b
 
+        vision_timeout = EnvParser.get_env("OCR_VISION_LLM_TIMEOUT", env_type=int)
+        if vision_timeout is not None:
+            settings["vision_llm_timeout"] = vision_timeout
+
         temp = EnvParser.get_env("OCR_TEMPERATURE", env_type=float)
         if temp is not None:
             settings["ocr_temperature"] = temp
+
+        max_dim = EnvParser.get_env("OCR_MAX_IMAGE_DIMENSION", env_type=int)
+        if max_dim is not None:
+            settings["max_image_dimension"] = max_dim
+
+        jpeg_q = EnvParser.get_env("OCR_JPEG_QUALITY", env_type=int)
+        if jpeg_q is not None:
+            settings["ocr_jpeg_quality"] = jpeg_q
 
         cache_ttl = EnvParser.get_env("OCR_CACHE_TTL", env_type=int)
         if cache_ttl is not None:

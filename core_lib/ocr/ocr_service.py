@@ -67,6 +67,19 @@ class OcrService:
         self._cache = cache_client
         self._cache_prefix = "ocr:"
 
+        # Override the vision LLM's timeout with the OCR-specific value.
+        # Vision / OCR requests send large base64 payloads that local models
+        # (Ollama) process much slower than text-only requests — the default
+        # 60 s provider timeout is often insufficient.
+        if self._vision_client is not None:
+            try:
+                provider = getattr(self._vision_client, "_provider", None)
+                config = getattr(provider, "config", None)
+                if config is not None and hasattr(config, "timeout"):
+                    config.timeout = settings.vision_llm_timeout
+            except Exception:
+                pass  # Best effort — not all providers expose a timeout
+
         # Lazily initialised dots-ocr client
         self._dots_client: Optional[DotsOcrClient] = None
         self._dots_healthy = True
@@ -84,6 +97,7 @@ class OcrService:
         mime_types: Optional[List[str]] = None,
         start_page: int = 1,
         mode: str = DEFAULT_MODE,
+        enrich: bool = False,
     ) -> OcrResult:
         """Process a batch of images sequentially.
 
@@ -92,6 +106,10 @@ class OcrService:
             mime_types: Parallel list of MIME types (defaults to image/png).
             start_page: Page number offset for the first image.
             mode: dots-ocr prompt mode.
+            enrich: When True, the vision LLM produces a combined output
+                with an image description, search-oriented keywords, and
+                the extracted text.  Improves embedding quality for
+                search/retrieval at the cost of slightly higher latency.
 
         Returns:
             Aggregated ``OcrResult``.
@@ -112,7 +130,7 @@ class OcrService:
                 continue
 
             # --- cache lookup ---
-            cache_key = self._cache_key(img_bytes)
+            cache_key = self._cache_key(img_bytes, enrich=enrich)
             cached = self._cache_get(cache_key)
             if cached is not None:
                 cached.page_number = page_num
@@ -122,7 +140,7 @@ class OcrService:
                 continue
 
             # --- OCR ---
-            page_result = self._process_single(img_bytes, mime_type=mime, mode=mode)
+            page_result = self._process_single(img_bytes, mime_type=mime, mode=mode, enrich=enrich)
             page_result.page_number = page_num
             result.pages.append(page_result)
             result.total_images_processed += 1
@@ -140,18 +158,19 @@ class OcrService:
         mime_type: str = "image/png",
         mode: str = DEFAULT_MODE,
         page_number: int = 1,
+        enrich: bool = False,
     ) -> OcrPageResult:
         """Process one image with caching and fallback."""
         if not self._passes_filter(image_bytes):
             return OcrPageResult(page_number=page_number, source="skipped")
 
-        cache_key = self._cache_key(image_bytes)
+        cache_key = self._cache_key(image_bytes, enrich=enrich)
         cached = self._cache_get(cache_key)
         if cached is not None:
             cached.page_number = page_number
             return cached
 
-        page = self._process_single(image_bytes, mime_type=mime_type, mode=mode)
+        page = self._process_single(image_bytes, mime_type=mime_type, mode=mode, enrich=enrich)
         page.page_number = page_number
         self._cache_set(cache_key, page)
         return page
@@ -171,11 +190,12 @@ class OcrService:
         *,
         mime_type: str = "image/png",
         mode: str = DEFAULT_MODE,
+        enrich: bool = False,
     ) -> OcrPageResult:
         """Try vision LLM first, fall back to dots-ocr (if configured)."""
         # Primary: vision-capable LLM
         if self._vision_client is not None:
-            result = self._ocr_via_vision_llm(img_bytes, mime_type=mime_type)
+            result = self._ocr_via_vision_llm(img_bytes, mime_type=mime_type, enrich=enrich)
             if result.source != "llm-vision-error":
                 return result
             logger.warning("Vision LLM OCR failed, trying dots-ocr fallback")
@@ -233,15 +253,59 @@ class OcrService:
     # Vision LLM fallback
     # ------------------------------------------------------------------
 
+    _OCR_ONLY_PROMPT = (
+        "Extract all text content from this image. "
+        "Output as clean markdown. "
+        "Preserve the document structure including headings, "
+        "paragraphs, lists, and tables. Use markdown tables. "
+        "Output formulas as LaTeX. Be thorough and accurate. "
+        "Do not wrap the output in code fences."
+    )
+
+    _ENRICHED_PROMPT = (
+        "Analyze this image and produce a comprehensive text representation "
+        "optimized for search and retrieval. Include three sections in this exact order:\n\n"
+        "## Description\n"
+        "Describe what the image shows: its type (chart, graph, diagram, table, "
+        "photo, screenshot, schematic, flowchart, etc.), the visual elements, "
+        "the data or relationships it conveys, and the key takeaways. "
+        "Be specific about colors, trends, comparisons, and any visual patterns.\n\n"
+        "## Search Terms\n"
+        "List keywords, synonyms, domain-specific terminology, and natural-language "
+        "question phrasings that someone might use to search for the information in "
+        "this image. Include alternative ways to refer to the concepts shown "
+        "(e.g. abbreviations, related terms, broader/narrower categories). "
+        "Format as a comma-separated list.\n\n"
+        "## Text Content\n"
+        "Extract all readable text from the image verbatim. "
+        "Preserve the document structure including headings, paragraphs, lists, "
+        "and tables. Use markdown tables for tabular data. "
+        "Output formulas as LaTeX.\n\n"
+        "Output as clean markdown. Do not wrap the output in code fences."
+    )
+
     def _ocr_via_vision_llm(
         self,
         img_bytes: bytes,
         *,
         mime_type: str = "image/png",
+        enrich: bool = False,
     ) -> OcrPageResult:
-        """Use a vision-capable LLM (e.g. Gemini) to extract text from an image."""
+        """Use a vision-capable LLM (e.g. Gemini) to extract text from an image.
+
+        When *enrich* is True the prompt asks for a visual description and
+        search-oriented keywords in addition to the raw OCR text.  This
+        produces richer content that improves embedding quality for
+        search and retrieval of image-heavy documents.
+        """
+        # Resize large images and convert PNG→JPEG to shrink the base64
+        # payload.  This dramatically speeds up local model inference.
+        img_bytes, mime_type = self._optimize_image(img_bytes, mime_type)
+
         b64 = base64.b64encode(img_bytes).decode("ascii")
         data_url = f"data:{mime_type};base64,{b64}"
+
+        prompt_text = self._ENRICHED_PROMPT if enrich else self._OCR_ONLY_PROMPT
 
         messages = [
             {
@@ -250,14 +314,7 @@ class OcrService:
                     {"type": "image_url", "image_url": {"url": data_url}},
                     {
                         "type": "text",
-                        "text": (
-                            "Extract all text content from this image. "
-                            "Output as clean markdown. "
-                            "Preserve the document structure including headings, "
-                            "paragraphs, lists, and tables. Use markdown tables. "
-                            "Output formulas as LaTeX. Be thorough and accurate. "
-                            "Do not wrap the output in code fences."
-                        ),
+                        "text": prompt_text,
                     },
                 ],
             }
@@ -281,12 +338,89 @@ class OcrService:
         # (e.g. ```html\n<table>...</table>\n```) even when not asked to.
         raw_text = self._strip_code_fences(raw_text)
 
+        source = "llm-vision-enriched" if enrich else "llm-vision"
         return OcrPageResult(
             page_number=0,
             elements=[LayoutElement(category="Text", content=raw_text, order=0)] if raw_text else [],
             raw_text=raw_text,
-            source="llm-vision",
+            source=source,
         )
+
+    # ------------------------------------------------------------------
+    # Image optimisation
+    # ------------------------------------------------------------------
+
+    def _optimize_image(
+        self,
+        img_bytes: bytes,
+        mime_type: str,
+    ) -> tuple:
+        """Resize and compress an image to reduce vision-LLM processing time.
+
+        1. If the longest side exceeds ``max_image_dimension``, resize
+           proportionally (LANCZOS downscale).
+        2. Convert non-JPEG images to JPEG at ``ocr_jpeg_quality`` to
+           shrink the base64 payload (typically 3-5× smaller than PNG).
+
+        Returns ``(optimised_bytes, mime_type)``; falls back to the
+        original if PIL is not available or on any error.
+        """
+        max_dim = self._settings.max_image_dimension
+        jpeg_quality = self._settings.ocr_jpeg_quality
+
+        # Feature disabled — return as-is
+        if max_dim <= 0 and mime_type in ("image/jpeg", "image/jpg"):
+            return img_bytes, mime_type
+
+        try:
+            from PIL import Image
+            import io as _io
+
+            img = Image.open(_io.BytesIO(img_bytes))
+            w, h = img.size
+            original_size = len(img_bytes)
+            resized = False
+
+            # --- Resize if needed ----------------------------------------
+            if max_dim > 0 and max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+                resized = True
+
+            # --- Convert to JPEG -----------------------------------------
+            # JPEG doesn't support alpha; convert RGBA → RGB first.
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGB")
+
+            buf = _io.BytesIO()
+            img.save(buf, format="JPEG", quality=jpeg_quality, optimize=True)
+            optimised = buf.getvalue()
+            new_mime = "image/jpeg"
+
+            if resized or len(optimised) < original_size:
+                logger.debug(
+                    "Image optimised: %dx%d → %dx%d, %s → JPEG, "
+                    "%.1f KB → %.1f KB (%.0f%% reduction)",
+                    w, h,
+                    img.size[0], img.size[1],
+                    mime_type.split("/")[-1].upper(),
+                    original_size / 1024,
+                    len(optimised) / 1024,
+                    (1 - len(optimised) / original_size) * 100 if original_size else 0,
+                )
+                return optimised, new_mime
+
+            # Conversion didn't help (rare for PNG) — keep original
+            return img_bytes, mime_type
+
+        except ImportError:
+            logger.debug("PIL not available — skipping image optimisation")
+            return img_bytes, mime_type
+        except Exception as exc:
+            logger.debug("Image optimisation failed, using original: %s", exc)
+            return img_bytes, mime_type
 
     # ------------------------------------------------------------------
     # Helpers
@@ -318,10 +452,11 @@ class OcrService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _cache_key(img_bytes: bytes) -> str:
+    def _cache_key(img_bytes: bytes, *, enrich: bool = False) -> str:
         """Generate a deterministic cache key from image bytes."""
         digest = hashlib.sha256(img_bytes).hexdigest()
-        return f"ocr:{digest}"
+        prefix = "ocr-enriched" if enrich else "ocr"
+        return f"{prefix}:{digest}"
 
     def _cache_get(self, key: str) -> Optional[OcrPageResult]:
         if self._cache is None:
