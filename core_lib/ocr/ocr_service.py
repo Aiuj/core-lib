@@ -67,18 +67,23 @@ class OcrService:
         self._cache = cache_client
         self._cache_prefix = "ocr:"
 
-        # Override the vision LLM's timeout with the OCR-specific value.
+        # Override the vision LLM's timeout and max output tokens.
         # Vision / OCR requests send large base64 payloads that local models
         # (Ollama) process much slower than text-only requests — the default
         # 60 s provider timeout is often insufficient.
+        # The max_tokens cap prevents small models from generating excessively
+        # long (or runaway) output with complex prompts like the enriched one.
         if self._vision_client is not None:
             try:
                 provider = getattr(self._vision_client, "_provider", None)
                 config = getattr(provider, "config", None)
-                if config is not None and hasattr(config, "timeout"):
-                    config.timeout = settings.vision_llm_timeout
+                if config is not None:
+                    if hasattr(config, "timeout"):
+                        config.timeout = settings.vision_llm_timeout
+                    if settings.vision_max_output_tokens > 0 and hasattr(config, "max_tokens"):
+                        config.max_tokens = settings.vision_max_output_tokens
             except Exception:
-                pass  # Best effort — not all providers expose a timeout
+                pass  # Best effort — not all providers expose these attributes
 
         # Lazily initialised dots-ocr client
         self._dots_client: Optional[DotsOcrClient] = None
@@ -121,12 +126,16 @@ class OcrService:
         if mime_types is None:
             mime_types = ["image/png"] * len(images)
 
+        total = len(images)
+        logger.info("OCR: processing %d image(s) (enrich=%s)", total, enrich)
+
         for idx, (img_bytes, mime) in enumerate(zip(images, mime_types)):
             page_num = start_page + idx
 
             # --- size filter ---
             if not self._passes_filter(img_bytes):
                 result.total_images_skipped += 1
+                logger.debug("OCR image %d/%d: skipped (too small)", idx + 1, total)
                 continue
 
             # --- cache lookup ---
@@ -137,9 +146,11 @@ class OcrService:
                 result.pages.append(cached)
                 result.total_images_cached += 1
                 result.total_images_processed += 1
+                logger.debug("OCR image %d/%d: cache hit", idx + 1, total)
                 continue
 
             # --- OCR ---
+            logger.info("OCR image %d/%d: processing (%.1f KB)...", idx + 1, total, len(img_bytes) / 1024)
             page_result = self._process_single(img_bytes, mime_type=mime, mode=mode, enrich=enrich)
             page_result.page_number = page_num
             result.pages.append(page_result)
@@ -149,6 +160,10 @@ class OcrService:
             # --- cache store ---
             self._cache_set(cache_key, page_result)
 
+        logger.info(
+            "OCR: completed — processed=%d, cached=%d, skipped=%d",
+            result.total_images_processed, result.total_images_cached, result.total_images_skipped,
+        )
         return result
 
     def process_single_image(
@@ -263,25 +278,16 @@ class OcrService:
     )
 
     _ENRICHED_PROMPT = (
-        "Analyze this image and produce a comprehensive text representation "
-        "optimized for search and retrieval. Include three sections in this exact order:\n\n"
+        "Analyze this image and summarize it for search indexing. "
+        "Return EXACTLY three markdown sections in this order:\n\n"
         "## Description\n"
-        "Describe what the image shows: its type (chart, graph, diagram, table, "
-        "photo, screenshot, schematic, flowchart, etc.), the visual elements, "
-        "the data or relationships it conveys, and the key takeaways. "
-        "Be specific about colors, trends, comparisons, and any visual patterns.\n\n"
+        "Write 1-2 short sentences describing the main subject of the image.\n\n"
         "## Search Terms\n"
-        "List keywords, synonyms, domain-specific terminology, and natural-language "
-        "question phrasings that someone might use to search for the information in "
-        "this image. Include alternative ways to refer to the concepts shown "
-        "(e.g. abbreviations, related terms, broader/narrower categories). "
-        "Format as a comma-separated list.\n\n"
+        "List 5-10 relevant keywords as a comma-separated list.\n\n"
         "## Text Content\n"
-        "Extract all readable text from the image verbatim. "
-        "Preserve the document structure including headings, paragraphs, lists, "
-        "and tables. Use markdown tables for tabular data. "
-        "Output formulas as LaTeX.\n\n"
-        "Output as clean markdown. Do not wrap the output in code fences."
+        "Extract all readable text exactly as it appears. Use markdown tables for tabular data. "
+        "Output formulas as LaTeX. If there is no text, write 'None'.\n\n"
+        "Do not include any other commentary. Do not wrap the output in code fences."
     )
 
     def _ocr_via_vision_llm(

@@ -45,6 +45,12 @@ class OcrSettings(BaseSettings):
     min_image_height: int = 200
     min_image_bytes: int = 20480  # 20 KB
 
+    # Vision LLM output cap — limits the number of tokens the vision model
+    # can generate per image.  Prevents small local models from producing
+    # excessively long output (or looping) with complex prompts such as
+    # the enriched OCR prompt.  0 = no limit (provider default).
+    vision_max_output_tokens: int = 2048
+
     # Image optimisation — resize and compress before sending to vision LLM
     # to reduce base64 payload size and speed up local model inference.
     max_image_dimension: int = 1568   # px, longest side; 0 = no resize
@@ -103,6 +109,10 @@ class OcrSettings(BaseSettings):
         temp = EnvParser.get_env("OCR_TEMPERATURE", env_type=float)
         if temp is not None:
             settings["ocr_temperature"] = temp
+
+        vision_max_tokens = EnvParser.get_env("OCR_VISION_MAX_OUTPUT_TOKENS", env_type=int)
+        if vision_max_tokens is not None:
+            settings["vision_max_output_tokens"] = vision_max_tokens
 
         max_dim = EnvParser.get_env("OCR_MAX_IMAGE_DIMENSION", env_type=int)
         if max_dim is not None:
