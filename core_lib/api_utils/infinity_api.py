@@ -16,7 +16,7 @@ except ImportError:
     requests = None
 
 from core_lib.tracing.logger import get_module_logger
-from .wake_on_lan import WakeOnLanStrategy
+from .wake_on_lan import WakeOnLanStrategy, WakeupServiceStrategy
 
 logger = get_module_logger()
 
@@ -53,6 +53,7 @@ class InfinityAPIClient:
         token: Optional[str] = None,
         max_retries_per_url: int = 1,
         wake_on_lan: Optional[Dict[str, Any]] = None,
+        wakeup_service: Optional[Dict[str, Any]] = None,
     ):
         """Initialize Infinity API client with failover support.
         
@@ -86,7 +87,8 @@ class InfinityAPIClient:
         self.token = token
         self.max_retries_per_url = max_retries_per_url
         self.wake_on_lan = WakeOnLanStrategy(wake_on_lan)
-        
+        self.wakeup_service = WakeupServiceStrategy(wakeup_service)
+
         # Track current working URL to prefer it on next request
         self.current_url_index = 0
         self.url_failures: Dict[int, int] = {i: 0 for i in range(len(self.base_urls))}
@@ -97,12 +99,16 @@ class InfinityAPIClient:
         )
 
     def is_in_warmup(self) -> bool:
-        """Return True if any configured URL is currently in a WoL warmup window.
+        """Return True if any configured URL is currently in a warmup window.
 
-        During the warmup window the host is booting up — callers should route
-        requests to a secondary server instead of waiting for this one.
+        During the warmup window the host or container is starting up — callers
+        should route requests to a secondary server instead of waiting.
+        Checks both Wake-on-LAN and HTTP wakeup service warmup windows.
         """
-        return any(self.wake_on_lan.is_in_warmup(url) for url in self.base_urls)
+        return (
+            any(self.wake_on_lan.is_in_warmup(url) for url in self.base_urls)
+            or any(self.wakeup_service.is_in_warmup(url) for url in self.base_urls)
+        )
 
     def _is_connection_or_timeout_error(self, error: Exception) -> bool:
         """Return True when error indicates host may be sleeping/unreachable."""
@@ -157,14 +163,12 @@ class InfinityAPIClient:
             base_url = self.base_urls[url_index]
             full_url = f"{base_url}/{endpoint}"
 
-            # Skip hosts that are currently in a WoL warmup window.
-            # After sending a magic packet the host needs time to power on; we
-            # route to secondary providers for `warmup_seconds` instead of
-            # blocking until the host responds.  Once the window elapses the
-            # host will be attempted again as normal.
-            if self.wake_on_lan.is_in_warmup(base_url):
+            # Skip hosts that are currently in a warmup window (WoL or wakeup
+            # service).  The host/container is starting up; route to secondary
+            # providers until the window elapses.
+            if self.wake_on_lan.is_in_warmup(base_url) or self.wakeup_service.is_in_warmup(base_url):
                 logger.info(
-                    f"Skipping {base_url}: WoL warmup in progress — routing to next server"
+                    f"Skipping {base_url}: warmup in progress — routing to next server"
                 )
                 continue
 
@@ -173,10 +177,9 @@ class InfinityAPIClient:
             for retry in range(self.max_retries_per_url):
                 try:
                     start_time = time.time()
-                    effective_timeout = self.wake_on_lan.maybe_get_initial_timeout(
-                        base_url,
-                        timeout,
-                    )
+                    _wol_timeout = self.wake_on_lan.maybe_get_initial_timeout(base_url, timeout)
+                    _svc_timeout = self.wakeup_service.maybe_get_initial_timeout(base_url, timeout)
+                    effective_timeout = min(_wol_timeout, _svc_timeout)
                     response = requests.post(
                         full_url,
                         json=json,
@@ -228,6 +231,11 @@ class InfinityAPIClient:
                     # retry and let the caller route to a secondary server instead.
                     if wake_result.warmup_seconds:
                         wol_warmup_fired = True
+                    # HTTP wakeup service — triggers in parallel or standalone.
+                    if not self.wakeup_service.is_in_warmup(base_url):
+                        svc_result = self.wakeup_service.maybe_wake(base_url, e)
+                        if svc_result.warmup_seconds:
+                            wol_warmup_fired = True
 
                     error_msg = f"Timeout after {effective_timeout}s: {full_url}"
                     errors.append(error_msg)
@@ -266,6 +274,11 @@ class InfinityAPIClient:
                     # retry and let the caller route to a secondary server instead.
                     if wake_result.warmup_seconds:
                         wol_warmup_fired = True
+                    # HTTP wakeup service — triggers in parallel or standalone.
+                    if not self.wakeup_service.is_in_warmup(base_url):
+                        svc_result = self.wakeup_service.maybe_wake(base_url, e)
+                        if svc_result.warmup_seconds:
+                            wol_warmup_fired = True
 
                     error_msg = f"Connection failed: {full_url} - {str(e)}"
                     errors.append(error_msg)

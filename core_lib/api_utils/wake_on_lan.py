@@ -339,3 +339,121 @@ class WakeOnLanStrategy:
             retry_timeout_seconds=target.retry_timeout_seconds,
             warmup_seconds=self.warmup_seconds if self.warmup_seconds else None,
         )
+
+
+class WakeupServiceStrategy:
+    """HTTP-based wakeup for containers managed by a remote wakeup API.
+
+    Instead of a UDP magic packet, POSTs to an HTTP endpoint to start the
+    container.  Supports non-blocking mode: after calling the API the host
+    is assumed to be unavailable for *warmup_seconds* so that callers can
+    route requests to secondary providers while the container boots.
+
+    Config shape:
+        {
+            "url": "https://server:7999/reranker/start",
+            "token": "secret-bearer-token",     # Authorization: Bearer <token>
+            "warmup_seconds": 90,               # route to secondary for this long (default 90)
+            "timeout": 5,                       # HTTP call timeout in seconds (default 5)
+            "initial_timeout_seconds": 2,       # fast probe timeout to detect stopped containers
+        }
+
+    Set ``"enabled": false`` to disable while keeping the config in place (e.g.
+    for local development where the container is always running).
+    """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        cfg = config or {}
+        self.enabled: bool = bool(cfg.get("enabled", bool(cfg)))
+        self.url: str = cfg.get("url", "")
+        self.token: str = cfg.get("token", "")
+        self.warmup_seconds: float = float(cfg.get("warmup_seconds", 90.0))
+        self.http_timeout: int = int(cfg.get("timeout", 5))
+        configured_initial = WakeOnLanStrategy._to_optional_float(
+            cfg.get("initial_timeout_seconds") or cfg.get("initial_timeout")
+        )
+        self.initial_timeout_seconds: Optional[float] = (
+            configured_initial if configured_initial is not None
+            else (2.0 if self.enabled else None)
+        )
+        # base_url → epoch timestamp when the wakeup call was sent
+        self._waking_timestamps: Dict[str, float] = {}
+
+    def is_in_warmup(self, base_url: str) -> bool:
+        """Return True while a wakeup warmup window is active for *base_url*.
+
+        After calling the wakeup API the container needs time to start.
+        During this window callers should route to secondary providers instead.
+        Once the window elapses the container is assumed operational.
+        """
+        if not self.enabled or self.warmup_seconds <= 0:
+            return False
+        wake_time = self._waking_timestamps.get(base_url)
+        if wake_time is None:
+            return False
+        remaining = self.warmup_seconds - (time.time() - wake_time)
+        if remaining > 0:
+            logger.debug(
+                f"Wakeup service warmup active for {base_url}: {remaining:.1f}s remaining "
+                f"(routing to secondary)"
+            )
+            return True
+        # Window elapsed — clear so future failures can trigger a fresh wake.
+        self._waking_timestamps.pop(base_url, None)
+        return False
+
+    def maybe_get_initial_timeout(self, base_url: str, default_timeout: float) -> float:
+        """Return a short initial timeout to quickly detect a stopped container."""
+        if not self.enabled or base_url in self._waking_timestamps:
+            return default_timeout
+        if self.initial_timeout_seconds and self.initial_timeout_seconds > 0:
+            return self.initial_timeout_seconds
+        return default_timeout
+
+    def maybe_wake(self, base_url: str, error: Exception) -> WakeResult:
+        """POST to the wakeup URL with ``?nowait=1`` and enter the warmup window.
+
+        Uses stdlib ``urllib`` only — no extra dependencies required.
+        The ``?nowait=1`` flag tells the wakeup server to return immediately
+        (HTTP 202) rather than waiting for the container to be healthy.
+        """
+        if not self.enabled or not self.url:
+            return WakeResult(attempted=False, succeeded=False)
+        if base_url in self._waking_timestamps:
+            # Already in warmup window — do not double-call.
+            return WakeResult(attempted=False, succeeded=False)
+
+        logger.debug(
+            f"Container at {base_url} appears stopped: {error}. "
+            f"Calling wakeup service at {self.url}"
+        )
+
+        try:
+            import urllib.request as _urlreq
+
+            wakeup_url = self.url
+            sep = "&" if "?" in wakeup_url else "?"
+            if "nowait" not in wakeup_url:
+                wakeup_url = f"{wakeup_url}{sep}nowait=1"
+
+            req = _urlreq.Request(wakeup_url, data=b"", method="POST")
+            if self.token:
+                req.add_header("Authorization", f"Bearer {self.token}")
+
+            with _urlreq.urlopen(req, timeout=self.http_timeout) as resp:
+                status = resp.status
+
+            self._waking_timestamps[base_url] = time.time()
+            logger.info(
+                f"Wakeup service responded {status} for {base_url} — "
+                f"warmup active for {self.warmup_seconds:.0f}s, routing to secondary"
+            )
+            return WakeResult(
+                attempted=True,
+                succeeded=True,
+                warmup_seconds=self.warmup_seconds,
+            )
+
+        except Exception as exc:
+            logger.warning(f"Wakeup service call failed for {base_url}: {exc}")
+            return WakeResult(attempted=True, succeeded=False)

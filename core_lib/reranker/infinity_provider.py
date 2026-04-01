@@ -43,6 +43,7 @@ class InfinityRerankerClient(BaseRerankerClient):
         timeout: Optional[int] = None,
         token: Optional[str] = None,
         wake_on_lan: Optional[dict] = None,
+        wakeup_service: Optional[dict] = None,
         cache_duration_seconds: Optional[int] = None,
         return_documents: bool = True,
         **kwargs
@@ -55,6 +56,7 @@ class InfinityRerankerClient(BaseRerankerClient):
             timeout: Request timeout in seconds (default: 30)
             token: Authentication token for secured Infinity servers
             wake_on_lan: Optional Wake-on-LAN config for sleeping hosts
+            wakeup_service: Optional HTTP wakeup service config for stopped containers
             cache_duration_seconds: How long to cache results
             return_documents: Whether to include document text in results
             **kwargs: Additional parameters
@@ -78,13 +80,18 @@ class InfinityRerankerClient(BaseRerankerClient):
         
         # Set token for authentication
         token = token or reranker_settings.infinity_token
-        
+
+        # Wakeup service config — falls back to settings if not passed explicitly
+        if wakeup_service is None:
+            wakeup_service = reranker_settings.infinity_wakeup_service
+
         # Create shared API client with multi-URL failover support
         self._api_client = InfinityAPIClient(
             base_urls=base_url,
             timeout=timeout,
             token=token,
             wake_on_lan=wake_on_lan,
+            wakeup_service=wakeup_service,
         )
         
         # Set default model if not provided
