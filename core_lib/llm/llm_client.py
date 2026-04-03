@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from core_lib.tracing.tracing import setup_tracing
+from core_lib.tracing.service_usage import _llm_usage_type
 from .providers.base import BaseProvider
 from .providers.azure_openai_provider import AzureOpenAIConfig, AzureOpenAIProvider
 from .providers.google_genai_provider import GoogleGenAIProvider
@@ -55,6 +56,7 @@ class LLMClient:
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        usage: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a chat message to the LLM.
         
@@ -66,102 +68,111 @@ class LLMClient:
             tools: Optional list of tools in OpenAI JSON format
             structured_output: Optional Pydantic model for structured JSON output
             system_message: Optional system message to prepend
+            usage: How the LLM is being used (e.g., "chat", "vision", "classify", "extract").
+                   Logged as metadata alongside token usage.
             
         Returns:
             Dictionary containing the response, usage info, and any tool calls
         """
         # Normalize messages into a list[dict] with role/content for providers
         formatted_messages = self._normalize_messages(messages, system_message)
-        
-        # Initialize tracing and record pre-call metadata
-        tracing_provider = None
-        try:
-            tracing_provider = setup_tracing()
-            pre_metadata: Dict[str, Any] = {
-                "event": "llm.chat.start",
-                "llm": {
-                    "provider": self.config.provider,
-                    "model": self.config.model,
-                },
-                "config": {
-                    "temperature": self.config.temperature,
-                    "max_tokens": getattr(self.config, "max_tokens", None),
-                    "thinking_enabled": getattr(self.config, "thinking_enabled", False),
-                },
-                "overrides": {
-                    "thinking_enabled": thinking_enabled,
-                },
-                "input": {
-                    "system_message_present": system_message is not None,
-                    "message_count": len(formatted_messages),
-                    "message_roles": [m.get("role") for m in formatted_messages],
-                    # avoid recording full content by default; log lengths for privacy
-                    "message_content_lengths": [
-                        len(m.get("content", "") or "") if isinstance(m.get("content"), str)
-                        else len(str(m.get("content", "")))
-                        for m in formatted_messages
-                    ],
-                },
-                "tools": {
-                    "count": len(tools) if tools else 0,
-                    "names": [t.get("function", {}).get("name") for t in tools] if tools else [],
-                },
-                "structured_output": bool(structured_output),
-                "search_grounding": use_search_grounding,
-            }
-            tracing_provider.add_metadata(pre_metadata)
-        except Exception:
-            # Tracing should never break the chat flow
-            pass
 
-        # Delegate to the provider (handles structured output and tools natively)
+        # Set usage type context variable scoped to this call
+        _usage_token = _llm_usage_type.set(usage) if usage is not None else None
         try:
-            result = self._provider.chat(
-                messages=formatted_messages,
-                tools=tools,
-                structured_output=structured_output,
-                system_message=system_message,
-                use_search_grounding=use_search_grounding,
-                thinking_enabled=thinking_enabled,
-            )
-
-            # Post-call tracing metadata
+            # Initialize tracing and record pre-call metadata
+            tracing_provider = None
             try:
-                if tracing_provider:
-                    tracing_provider.add_metadata({
-                        "event": "llm.chat.end",
-                        "structured": result.get("structured", False),
-                        "output": {
-                            "content_length": len(json.dumps(result.get("content", ""))) if not isinstance(result.get("content"), str) else len(result.get("content") or ""),
-                        },
-                        "tools": {
-                            "tool_calls_count": len(result.get("tool_calls", []) or []),
-                            "names": [tc.get("function", {}).get("name") for tc in (result.get("tool_calls") or [])],
-                        },
-                        "usage": result.get("usage", {}),
-                    })
+                tracing_provider = setup_tracing()
+                pre_metadata: Dict[str, Any] = {
+                    "event": "llm.chat.start",
+                    "llm": {
+                        "provider": self.config.provider,
+                        "model": self.config.model,
+                    },
+                    "config": {
+                        "temperature": self.config.temperature,
+                        "max_tokens": getattr(self.config, "max_tokens", None),
+                        "thinking_enabled": getattr(self.config, "thinking_enabled", False),
+                    },
+                    "overrides": {
+                        "thinking_enabled": thinking_enabled,
+                    },
+                    "input": {
+                        "system_message_present": system_message is not None,
+                        "message_count": len(formatted_messages),
+                        "message_roles": [m.get("role") for m in formatted_messages],
+                        # avoid recording full content by default; log lengths for privacy
+                        "message_content_lengths": [
+                            len(m.get("content", "") or "") if isinstance(m.get("content"), str)
+                            else len(str(m.get("content", "")))
+                            for m in formatted_messages
+                        ],
+                    },
+                    "tools": {
+                        "count": len(tools) if tools else 0,
+                        "names": [t.get("function", {}).get("name") for t in tools] if tools else [],
+                    },
+                    "structured_output": bool(structured_output),
+                    "search_grounding": use_search_grounding,
+                    "usage_type": usage,
+                }
+                tracing_provider.add_metadata(pre_metadata)
             except Exception:
+                # Tracing should never break the chat flow
                 pass
 
-            return result
-        except Exception as e:
-            # Trace error
+            # Delegate to the provider (handles structured output and tools natively)
             try:
-                if tracing_provider:
-                    tracing_provider.add_metadata({
-                        "event": "llm.chat.error",
-                        "structured": bool(structured_output),
-                        "error": str(e),
-                    })
-            except Exception:
-                pass
-            return {
-                "error": f"Chat request failed: {str(e)}",
-                "content": None,
-                "structured": bool(structured_output),
-                "tool_calls": [],
-                "usage": {},
-            }
+                result = self._provider.chat(
+                    messages=formatted_messages,
+                    tools=tools,
+                    structured_output=structured_output,
+                    system_message=system_message,
+                    use_search_grounding=use_search_grounding,
+                    thinking_enabled=thinking_enabled,
+                )
+
+                # Post-call tracing metadata
+                try:
+                    if tracing_provider:
+                        tracing_provider.add_metadata({
+                            "event": "llm.chat.end",
+                            "structured": result.get("structured", False),
+                            "output": {
+                                "content_length": len(json.dumps(result.get("content", ""))) if not isinstance(result.get("content"), str) else len(result.get("content") or ""),
+                            },
+                            "tools": {
+                                "tool_calls_count": len(result.get("tool_calls", []) or []),
+                                "names": [tc.get("function", {}).get("name") for tc in (result.get("tool_calls") or [])],
+                            },
+                            "usage": result.get("usage", {}),
+                        })
+                except Exception:
+                    pass
+
+                return result
+            except Exception as e:
+                # Trace error
+                try:
+                    if tracing_provider:
+                        tracing_provider.add_metadata({
+                            "event": "llm.chat.error",
+                            "structured": bool(structured_output),
+                            "error": str(e),
+                        })
+                except Exception:
+                    pass
+                return {
+                    "error": f"Chat request failed: {str(e)}",
+                    "content": None,
+                    "structured": bool(structured_output),
+                    "tool_calls": [],
+                    "usage": {},
+                }
+        finally:
+            if _usage_token is not None:
+                _llm_usage_type.reset(_usage_token)
 
     def is_in_warmup(self) -> bool:
         """Return True while the underlying provider is in a WoL warmup window.
