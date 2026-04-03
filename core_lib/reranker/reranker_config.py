@@ -119,8 +119,10 @@ class RerankerSettings(BaseSettings):
                 if isinstance(wake_on_lan, dict):
                     entry["wake_on_lan"] = wake_on_lan
                 wakeup_service = config.get("wakeup_service")
-                if isinstance(wakeup_service, dict):
-                    entry["wakeup_service"] = wakeup_service
+                # Always set wakeup_service explicitly so that providers without it in
+                # the YAML config don't silently inherit the global reranker_settings
+                # wakeup_service (which would point to a different server's endpoint).
+                entry["wakeup_service"] = wakeup_service if isinstance(wakeup_service, dict) else {}
             elif provider == "local":
                 if config.get("device"):
                     entry["device"] = config.get("device")

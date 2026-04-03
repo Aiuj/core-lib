@@ -231,6 +231,35 @@ class InfinityAPIClient:
                     # retry and let the caller route to a secondary server instead.
                     if wake_result.warmup_seconds:
                         wol_warmup_fired = True
+
+                    # If we used a short initial timeout (e.g. WoL probe timeout)
+                    # and WoL fired in non-blocking mode, the host may already be
+                    # running but just needed more time to handle the request.
+                    # Retry ONCE with the full timeout before accepting failure.
+                    if wake_result.warmup_seconds and effective_timeout < timeout:
+                        logger.debug(
+                            f"WoL fired with short timeout ({effective_timeout}s < {timeout}s); "
+                            f"retrying {full_url} once with full timeout to check if host is alive"
+                        )
+                        try:
+                            response = requests.post(
+                                full_url, json=json, headers=headers, timeout=timeout
+                            )
+                            response.raise_for_status()
+                            self.current_url_index = url_index
+                            self.url_failures[url_index] = 0
+                            elapsed_ms = (time.time() - start_time) * 1000
+                            logger.info(
+                                f"Infinity API succeeded on full-timeout retry after WoL probe: "
+                                f"{endpoint} @ {base_url} ({elapsed_ms:.0f}ms)"
+                            )
+                            return response.json(), base_url
+                        except Exception as retry_err:
+                            logger.debug(
+                                f"Full-timeout retry also failed for {full_url}: {retry_err}"
+                            )
+                            # Host is truly unreachable — fall through to warmup routing.
+
                     # HTTP wakeup service — triggers in parallel or standalone.
                     if not self.wakeup_service.is_in_warmup(base_url):
                         svc_result = self.wakeup_service.maybe_wake(base_url, e)
