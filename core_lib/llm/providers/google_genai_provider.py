@@ -755,9 +755,31 @@ class GoogleGenAIProvider(BaseProvider):
             except ImportError:
                 pass
 
+            # Detect missing/invalid Google credentials (service account file not found,
+            # GOOGLE_APPLICATION_CREDENTIALS pointing to a non-existent path, etc.).
+            # These are configuration errors, not crashes — log a clear actionable message.
+            is_credentials_error = False
+            try:
+                import google.auth.exceptions as _google_auth_exc
+                if isinstance(e, (_google_auth_exc.DefaultCredentialsError, _google_auth_exc.TransportError)):
+                    is_credentials_error = True
+                    error_reason = "credentials_error"
+            except ImportError:
+                pass
+            # Fallback: detect by class name for environments where google-auth is vendored differently
+            if not is_credentials_error and "credentialserror" in type(e).__name__.lower():
+                is_credentials_error = True
+                error_reason = "credentials_error"
+
             # Expected transient failures: log as warning without traceback
             silent_reasons = ("rate_limit", "quota_exceeded", "server_error", "timeout")
-            if error_reason in silent_reasons or is_server_overload:
+            if is_credentials_error:
+                logger.warning(
+                    f"genai.chat skipped — Google credentials not available: {e}. "
+                    "Check GOOGLE_APPLICATION_CREDENTIALS or the service account file path.",
+                    extra={"model": self.config.model, "error_reason": error_reason},
+                )
+            elif error_reason in silent_reasons or is_server_overload:
                 logger.warning(
                     f"genai.chat unavailable ({error_reason}): {type(e).__name__}: {e}",
                     extra={"model": self.config.model, "error_reason": error_reason},
