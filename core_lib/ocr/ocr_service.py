@@ -213,7 +213,11 @@ class OcrService:
             result = self._ocr_via_vision_llm(img_bytes, mime_type=mime_type, enrich=enrich)
             if result.source != "llm-vision-error":
                 return result
-            logger.warning("Vision LLM OCR failed, trying dots-ocr fallback")
+            _in_warmup = getattr(self._vision_client, "is_in_warmup", lambda: False)()
+            if _in_warmup:
+                logger.info("Vision LLM in WoL warmup, trying dots-ocr fallback")
+            else:
+                logger.warning("Vision LLM OCR failed, trying dots-ocr fallback")
 
         # Secondary (optional): dots-ocr — only when URL is configured
         if self._is_dots_configured() and self._is_dots_available():
@@ -225,11 +229,23 @@ class OcrService:
                 self._dots_healthy = False
                 self._dots_last_check = time.monotonic()
 
-        logger.error(
-            "No OCR provider available (vision LLM not configured or failed, "
-            "dots-ocr %s)",
-            "also failed" if self._is_dots_configured() else "not configured",
+        _vision_in_warmup = (
+            self._vision_client is not None
+            and getattr(self._vision_client, "is_in_warmup", lambda: False)()
         )
+        dots_status = "also failed" if self._is_dots_configured() else "not configured"
+        if _vision_in_warmup:
+            logger.info(
+                "Vision LLM is in WoL warmup (server waking up), OCR skipped; "
+                "dots-ocr %s",
+                dots_status,
+            )
+        else:
+            logger.error(
+                "No OCR provider available (vision LLM not configured or failed, "
+                "dots-ocr %s)",
+                dots_status,
+            )
         return OcrPageResult(page_number=0, raw_text="", source="none")
 
     def _is_dots_configured(self) -> bool:
@@ -337,7 +353,11 @@ class OcrService:
                 return OcrPageResult(page_number=0, raw_text="", source="llm-vision-error")
             raw_text = response.get("content", "") or ""
         except Exception as exc:
-            logger.error("Vision LLM OCR failed: %s", exc)
+            _in_warmup = getattr(self._vision_client, "is_in_warmup", lambda: False)()
+            if _in_warmup:
+                logger.info("Vision LLM unavailable during WoL warmup: %s", exc)
+            else:
+                logger.error("Vision LLM OCR failed: %s", exc)
             return OcrPageResult(page_number=0, raw_text="", source="llm-vision-error")
 
         # Strip markdown code fences that some LLMs add around their output

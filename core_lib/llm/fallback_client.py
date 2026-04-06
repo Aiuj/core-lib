@@ -188,6 +188,18 @@ class FallbackLLMClient:
                 self._client_cache[cache_key] = config.to_client()
         return self._client_cache[cache_key]
 
+    def is_in_warmup(self) -> bool:
+        """Return True if any configured provider is currently in a WoL warmup window.
+
+        Only inspects already-cached client instances to avoid creating new
+        ones just for a warmup check.  Returns False when no provider has been
+        contacted yet (warmup is triggered on first connection attempt).
+        """
+        for client in self._client_cache.values():
+            if client.is_in_warmup():
+                return True
+        return False
+
     def _build_cache_key(self, config: ProviderConfig) -> str:
         """Build a stable cache key for a specific provider configuration.
 
