@@ -289,7 +289,22 @@ async def run_llm_startup_preflight() -> StartupValidationSummary:
     )
 
 
-def check_llm_providers_health(providers: Iterable | None = None) -> List[ProviderHealthResult]:
+def _get_wol_warmup_seconds(provider) -> float:
+    """Return the WoL warmup/wait duration for a provider, or 0 if not WoL-configured."""
+    wol_cfg = getattr(provider, "wake_on_lan", None)
+    if not isinstance(wol_cfg, dict):
+        return 0.0
+    if not wol_cfg.get("enabled", True):
+        return 0.0
+    warmup = wol_cfg.get("warmup_seconds") or wol_cfg.get("wait_seconds") or 0
+    return max(float(warmup), 0.0)
+
+
+def check_llm_providers_health(
+    providers: Iterable | None = None,
+    *,
+    wait_for_wol: bool = False,
+) -> List[ProviderHealthResult]:
     """Probe every configured LLM provider and return per-provider health results.
 
     This is a **synchronous** function suitable for REST health endpoints.  It
@@ -300,6 +315,11 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
         providers: Optional iterable of ``ProviderConfig`` objects.  When
             *None* (the default) the registry is loaded from the environment
             via ``ProviderRegistry.from_env()``.
+        wait_for_wol: When *True*, providers that fail the initial probe and
+            have Wake-on-LAN configured are retried after waiting for their
+            warmup period.  The first probe triggers the WoL magic packet;
+            the wait gives the host time to boot before the retry.  Useful
+            for health endpoints where extra latency is acceptable.
 
     Returns:
         A list of :class:`ProviderHealthResult` — one per configured provider
@@ -315,6 +335,8 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
 
     configured = list(providers)
     results: List[ProviderHealthResult] = []
+    # (provider, warmup_seconds, index_in_results) for WoL retry candidates
+    wol_retry_candidates: list[tuple] = []
 
     for provider in configured:
         start = time.monotonic()
@@ -335,6 +357,63 @@ def check_llm_providers_health(providers: Iterable | None = None) -> List[Provid
                 location=resolved_region,
             )
         )
+
+        if error is not None and wait_for_wol:
+            warmup = _get_wol_warmup_seconds(provider)
+            if warmup > 0:
+                wol_retry_candidates.append(
+                    (provider, warmup, len(results) - 1)
+                )
+
+    # Retry WoL-configured providers after waiting for the longest warmup.
+    # The first probe already triggered the magic packet (inside
+    # OllamaProvider.chat → WakeOnLanStrategy.maybe_wake), so we only need
+    # to wait for the host(s) to finish booting and then re-probe.
+    if wol_retry_candidates:
+        max_warmup = max(w for _, w, _ in wol_retry_candidates)
+        provider_labels = ", ".join(
+            f"{p.provider}:{p.model}" for p, _, _ in wol_retry_candidates
+        )
+        logger.info(
+            "LLM health check: %d WoL provider(s) failed initial probe (%s) "
+            "— waiting %.0fs for host(s) to wake before retry",
+            len(wol_retry_candidates),
+            provider_labels,
+            max_warmup,
+        )
+        time.sleep(max_warmup)
+
+        for provider, _warmup, idx in wol_retry_candidates:
+            start = time.monotonic()
+            error = _probe_provider(provider)
+            elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+            resolved_url, resolved_region = _resolve_provider_endpoint_and_region(
+                provider
+            )
+            results[idx] = ProviderHealthResult(
+                provider=provider.provider,
+                model=provider.model,
+                tier=getattr(provider, "tier", "standard"),
+                priority=getattr(provider, "priority", 100),
+                healthy=error is None,
+                error=error,
+                latency_ms=elapsed_ms,
+                url=resolved_url,
+                location=resolved_region,
+            )
+            if error is None:
+                logger.info(
+                    "LLM health check: %s:%s passed after WoL retry",
+                    provider.provider,
+                    provider.model,
+                )
+            else:
+                logger.warning(
+                    "LLM health check: %s:%s still unhealthy after WoL retry: %s",
+                    provider.provider,
+                    provider.model,
+                    error,
+                )
 
     results.sort(key=lambda r: r.priority)
     return results

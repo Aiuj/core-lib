@@ -23,6 +23,7 @@ class RerankerProviderHealthResult:
     healthy: bool
     error: Optional[str]
     latency_ms: Optional[float]
+    url: Optional[str] = None
 
 
 def _close_client(client) -> None:
@@ -77,6 +78,7 @@ def check_reranker_providers_health(
             start = time.monotonic()
             error = _probe_settings(settings)
             elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+            resolved_url = getattr(settings, "infinity_url", None) or getattr(settings, "base_url", None) or None
             return [
                 RerankerProviderHealthResult(
                     provider=settings.provider,
@@ -85,6 +87,7 @@ def check_reranker_providers_health(
                     healthy=error is None,
                     error=error,
                     latency_ms=elapsed_ms,
+                    url=resolved_url,
                 )
             ]
 
@@ -96,6 +99,11 @@ def check_reranker_providers_health(
         start = time.monotonic()
         error = _probe_single_provider(config)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
+        resolved_url = (
+            config.get("base_url")
+            or raw_config.get("base_url")
+            or None
+        )
         results.append(
             RerankerProviderHealthResult(
                 provider=str(config.get("provider", raw_config.get("provider", ""))),
@@ -104,6 +112,7 @@ def check_reranker_providers_health(
                 healthy=error is None,
                 error=error,
                 latency_ms=elapsed_ms,
+                url=resolved_url,
             )
         )
 
