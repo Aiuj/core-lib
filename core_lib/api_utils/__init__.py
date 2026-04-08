@@ -121,6 +121,12 @@ from .uvicorn_runner import (
     run_uvicorn_from_settings,
 )
 
+# Shared provider diagnostics for health endpoints
+from .providers_health import (
+    check_providers_health,
+    is_providers_healthy,
+)
+
 __all__ = [
     # Core authentication
     "generate_time_key",
@@ -157,4 +163,8 @@ __all__ = [
     # Uvicorn runner
     "run_uvicorn_server",
     "run_uvicorn_from_settings",
+
+    # Provider diagnostics
+    "check_providers_health",
+    "is_providers_healthy",
 ] + __all_jwt__ + __all_fastapi__
