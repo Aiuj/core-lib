@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 from core_lib import get_module_logger
+from core_lib.config.provider_config_loader import resolve_config_file_path
 
 logger = get_module_logger()
 
@@ -889,22 +890,15 @@ class ProviderRegistry:
         # Priority 1: Check for config file path
         config_file = os.getenv(file_env_var)
         if config_file:
-            # Resolve relative paths
-            if not os.path.isabs(config_file):
-                # Try current directory first, then common config locations
-                for base in [os.getcwd(), os.path.dirname(__file__), "/etc/llm", "~/.config/llm"]:
-                    candidate = os.path.expanduser(os.path.join(base, config_file))
-                    if os.path.exists(candidate):
-                        config_file = candidate
-                        break
-            
-            if os.path.exists(config_file):
-                registry = cls.from_file(config_file, substitute_env=True)
+            resolved_config_file = resolve_config_file_path(config_file)
+
+            if resolved_config_file:
+                registry = cls.from_file(resolved_config_file, substitute_env=True)
                 if registry:
-                    logger.debug(f"Loaded {len(registry)} providers from {config_file}")
+                    logger.debug(f"Loaded {len(registry)} providers from {resolved_config_file}")
                     return registry
                 else:
-                    logger.warning(f"Config file {config_file} loaded but no providers found")
+                    logger.warning(f"Config file {resolved_config_file} loaded but no providers found")
             else:
                 logger.warning(f"Config file not found: {config_file}")
         

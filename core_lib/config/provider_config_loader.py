@@ -77,9 +77,28 @@ def resolve_config_file_path(config_file: str) -> Optional[str]:
     if os.path.isabs(config_file) and os.path.exists(config_file):
         return config_file
 
+    expanded = os.path.expanduser(config_file)
+    if os.path.exists(expanded):
+        return expanded
+
+    cwd = Path.cwd()
+
+    # Search from cwd and parent directories up to filesystem root.
+    for base in [cwd, *cwd.parents]:
+        candidate = base / config_file
+        if candidate.exists():
+            return str(candidate)
+
+    # If a project root is discoverable from cwd, check there explicitly.
+    for base in [cwd, *cwd.parents]:
+        pyproject = base / "pyproject.toml"
+        if pyproject.exists():
+            candidate = base / config_file
+            if candidate.exists():
+                return str(candidate)
+            break
+
     candidates = [
-        os.path.expanduser(config_file),
-        os.path.join(os.getcwd(), config_file),
         os.path.join(os.path.dirname(__file__), config_file),
         os.path.join("/etc/llm", config_file),
         os.path.expanduser(os.path.join("~/.config/llm", config_file)),

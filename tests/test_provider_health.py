@@ -174,6 +174,33 @@ providers:
         assert registry.providers[0].provider == "openai"
         assert registry.providers[0].api_key == "from-file"
 
+    def test_from_env_with_relative_file_from_subdirectory(self, monkeypatch, tmp_path):
+        """Test from_env resolves relative provider file when cwd is a subdirectory."""
+        project_root = tmp_path / "project"
+        src_dir = project_root / "src"
+        src_dir.mkdir(parents=True)
+
+        # Mark project root discoverable and place config at root
+        (project_root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        yaml_file = project_root / "llm_providers.yaml"
+        yaml_file.write_text(
+            """
+providers:
+  - provider: ollama
+    model: llama3.2
+""".strip(),
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(src_dir)
+        monkeypatch.setenv("LLM_PROVIDERS_FILE", "llm_providers.yaml")
+        monkeypatch.delenv("LLM_PROVIDERS", raising=False)
+
+        registry = ProviderRegistry.from_env()
+
+        assert len(registry) == 1
+        assert registry.providers[0].provider == "ollama"
+
 
 class TestProviderHealthTracker:
     """Tests for provider health tracking."""
