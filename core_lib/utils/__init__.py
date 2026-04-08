@@ -21,6 +21,7 @@ from .language_utils import LanguageUtils
 from .file_utils import create_tempfile, remove_tempfile
 from .health_check import HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check
 from .datetime_utils import utc_now, parse_iso_datetime, to_iso_string
+from .url_utils import normalize_url_with_scheme
 
 __all__ = [
     "AppSettings",
@@ -34,4 +35,5 @@ __all__ = [
     "utc_now",
     "parse_iso_datetime",
     "to_iso_string",
+    "normalize_url_with_scheme",
 ]
