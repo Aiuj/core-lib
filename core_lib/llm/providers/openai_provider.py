@@ -467,42 +467,31 @@ class OpenAIProvider(BaseProvider):
                 "tool_calls": tool_calls or [],
                 "usage": usage,
             }
-        except Exception as e:  # pragma: no cover - network errors
+        except Exception as e:
             import openai as _openai
             # Non-blocking WoL re-raise: propagate cleanly so FallbackLLMClient
             # can route to a secondary provider. Do not log — already logged above.
             if _wol_nonblocking_reraise:
                 raise
+            # For classifiable transient errors (rate limit, timeout, connection),
+            # re-raise directly so FallbackLLMClient can classify the real exception
+            # type, mark the provider unhealthy with the right TTL, and log exactly
+            # once. Swallowing these into error dicts causes double-logging.
+            if isinstance(e, (_openai.RateLimitError, _openai.APITimeoutError, _openai.APIConnectionError)):
+                raise
+            # 404 is a configuration problem (wrong model name or base_url). Log a
+            # helpful diagnostic before re-raising so it is visible in the provider
+            # log without relying on the caller to decode the raw API error.
             if isinstance(e, _openai.NotFoundError):
                 endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
                 logger.error(
-                    "openai.chat: 404 Not Found — model '%s' was not found at endpoint '%s'. "
+                    "openai.chat: model '%s' not found at '%s'. "
                     "Check that the model name and base_url are correct.",
                     self.config.model,
                     endpoint,
                 )
-            elif isinstance(e, (_openai.APITimeoutError, _openai.APIConnectionError)):
-                endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
-                logger.warning(
-                    "openai.chat: transient connectivity issue for model '%s' at '%s': %s",
-                    self.config.model,
-                    endpoint,
-                    str(e),
-                )
-            elif isinstance(e, _openai.RateLimitError):
-                endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
-                logger.warning(
-                    "openai.chat: rate limited for model '%s' at '%s': %s",
-                    self.config.model,
-                    endpoint,
-                    str(e),
-                )
-            else:
-                logger.exception("openai.chat failed")
-            return {
-                "error": str(e),
-                "content": None,
-                "structured": structured_output is not None,
-                "tool_calls": [],
-                "usage": {},
-            }
+                raise
+            # Unexpected / unclassified error — log the full traceback so it is
+            # visible, then re-raise for the caller to handle.
+            logger.exception("openai.chat failed")
+            raise

@@ -403,9 +403,37 @@ def classify_error(error: Exception) -> str:
     Returns:
         Failure reason string for TTL lookup
     """
+    # --- Type-based classification (fast, unambiguous) -----------------------
+    # Check openai SDK types first — they are concrete and reliable. Avoid
+    # importing at module level so this module stays usable without openai.
+    try:
+        import openai as _openai
+        if isinstance(error, _openai.RateLimitError):
+            return "rate_limit"
+        if isinstance(error, _openai.APITimeoutError):
+            return "timeout"
+        if isinstance(error, _openai.APIConnectionError):
+            return "connection_error"
+        if isinstance(error, _openai.AuthenticationError):
+            return "auth_error"
+        if isinstance(error, _openai.NotFoundError):
+            return "configuration_error"
+        if isinstance(error, _openai.APIStatusError):
+            # Catch-all for other HTTP status codes from the openai SDK
+            status = getattr(error, "status_code", 0) or 0
+            if status == 429:
+                return "rate_limit"
+            if status in (500, 502, 503, 504):
+                return "server_error"
+            if status in (401, 403):
+                return "auth_error"
+    except ImportError:
+        pass
+
+    # --- String / type-name based classification (fallback) ------------------
     error_str = str(error).lower()
     error_type = type(error).__name__.lower()
-    
+
     # Rate limit detection
     if any(x in error_str for x in ["rate limit", "rate_limit", "ratelimit", "429", "quota"]):
         if "quota" in error_str:

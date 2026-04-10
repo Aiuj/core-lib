@@ -480,7 +480,6 @@ class FallbackLLMClient:
                     )
                     is_expected_wol_connection_error = (
                         error_reason == "connection_error"
-                        and config.provider == "ollama"
                         and wol_enabled
                     )
 

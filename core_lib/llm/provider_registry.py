@@ -516,6 +516,7 @@ class ProviderConfig:
                 or os.getenv("OPENROUTER_API_KEY")
                 or ""
             )
+            timeout = int(self.extra.get("timeout", 60))
             return OpenAIConfig(
                 api_key=api_key,
                 model=self.model,
@@ -524,6 +525,7 @@ class ProviderConfig:
                 base_url=self.host or "https://openrouter.ai/api/v1",
                 organization=self.organization,
                 project=self.project,
+                timeout=timeout,
             )
         
         else:

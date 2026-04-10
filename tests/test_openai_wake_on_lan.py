@@ -116,6 +116,10 @@ def _make_openai_provider(monkeypatch, wol_config: dict) -> OpenAIProvider:
         AzureOpenAI=lambda **kw: _FakeOpenAIClient(),
         APITimeoutError=TimeoutError,
         APIConnectionError=ConnectionError,
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
@@ -154,9 +158,9 @@ def test_openai_is_in_warmup_true_after_wake(monkeypatch):
     )
     monkeypatch.setattr(provider._wake_on_lan, "_send_magic_packet", lambda _t: None)
 
-    # chat() should fail (connection refused) but fire WoL
-    result = provider.chat(messages=[{"role": "user", "content": "hello"}])
-    assert "error" in result
+    # Non-blocking WoL re-raises so FallbackLLMClient can route to secondary
+    with pytest.raises(RuntimeError, match="connection refused"):
+        provider.chat(messages=[{"role": "user", "content": "hello"}])
 
     assert provider.is_in_warmup() is True
 
@@ -214,6 +218,10 @@ def test_openai_provider_retries_after_wol(monkeypatch):
         AzureOpenAI=lambda **kw: _FakeClient(),
         APITimeoutError=TimeoutError,
         APIConnectionError=ConnectionError,
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
@@ -250,7 +258,7 @@ def test_openai_provider_retries_after_wol(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_openai_provider_reraises_in_nonblocking_wol_mode(monkeypatch):
-    """Non-blocking WoL should re-raise so FallbackLLMClient routes to secondary."""
+    """Non-blocking WoL should re-raise cleanly past the outer except block."""
     import types
     import sys
 
@@ -269,6 +277,10 @@ def test_openai_provider_reraises_in_nonblocking_wol_mode(monkeypatch):
         AzureOpenAI=lambda **kw: _FakeClient(),
         APITimeoutError=TimeoutError,
         APIConnectionError=ConnectionError,
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
@@ -297,7 +309,8 @@ def test_openai_provider_reraises_in_nonblocking_wol_mode(monkeypatch):
 
     monkeypatch.setattr(provider, "_wake_on_lan", _WakeStubNonBlocking())
 
-    # The call should bubble up so FallbackLLMClient can route to secondary
+    # The call must raise — NOT return an error dict — so FallbackLLMClient
+    # can route to a secondary provider cleanly (no spurious warning log).
     with pytest.raises(TimeoutError):
         provider.chat(messages=[{"role": "user", "content": "hello"}])
 
@@ -307,7 +320,7 @@ def test_openai_provider_reraises_in_nonblocking_wol_mode(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_openai_provider_without_wol_no_retry(monkeypatch):
-    """Without WoL config, a connection error must NOT be swallowed/retried."""
+    """Without WoL config, a connection error must be raised (not swallowed)."""
     import types
     import sys
 
@@ -326,6 +339,10 @@ def test_openai_provider_without_wol_no_retry(monkeypatch):
         AzureOpenAI=lambda **kw: _FakeClient(),
         APITimeoutError=TimeoutError,
         APIConnectionError=ConnectionError,
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
@@ -337,7 +354,53 @@ def test_openai_provider_without_wol_no_retry(monkeypatch):
     )
     provider = OpenAIProvider(config)
 
-    # With no WoL configured, the error propagates to the outer except block
-    # and is returned as an error dict (existing graceful handling).
-    result = provider.chat(messages=[{"role": "user", "content": "hello"}])
-    assert "error" in result
+    # With no WoL configured, classifiable errors (timeout, connection) are
+    # re-raised so FallbackLLMClient can classify and route to the next provider.
+    with pytest.raises(TimeoutError):
+        provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+
+def test_openai_provider_rate_limit_raises(monkeypatch):
+    """RateLimitError must be re-raised directly so FallbackLLMClient handles it.
+
+    The provider must NOT swallow it into an error dict. This avoids double-logging
+    and ensures FallbackLLMClient can classify it and mark the provider unhealthy.
+    """
+    import types
+    import sys
+
+    RateLimitError = type("RateLimitError", (Exception,), {})
+
+    class _Completions:
+        def create(self, **kwargs):
+            raise RateLimitError("429 rate limited")
+
+    class _Chat:
+        completions = _Completions()
+
+    class _FakeClient:
+        chat = _Chat()
+
+    fake_openai = types.SimpleNamespace(
+        OpenAI=lambda **kw: _FakeClient(),
+        AzureOpenAI=lambda **kw: _FakeClient(),
+        APITimeoutError=type("APITimeoutError", (Exception,), {}),
+        APIConnectionError=type("APIConnectionError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
+        RateLimitError=RateLimitError,
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    config = OpenAIConfig(
+        api_key="fake-key",
+        model="openrouter/model",
+        base_url="https://openrouter.ai/api/v1",
+        timeout=30,
+    )
+    provider = OpenAIProvider(config)
+
+    # RateLimitError must propagate so FallbackLLMClient can route to the next provider.
+    with pytest.raises(RateLimitError):
+        provider.chat(messages=[{"role": "user", "content": "hello"}])
