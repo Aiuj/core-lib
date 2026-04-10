@@ -27,6 +27,7 @@ from ..llm_config import LLMConfig
 from dataclasses import dataclass
 from typing import Optional
 from core_lib import get_module_logger
+from core_lib.api_utils.wake_on_lan import WakeOnLanStrategy
 from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
 
@@ -43,6 +44,8 @@ class OpenAIConfig(LLMConfig):
     azure_endpoint: Optional[str] = None
     azure_api_version: Optional[str] = None
     thinking_budget: Optional[int] = None
+    timeout: int = 60
+    wake_on_lan: Optional[Dict[str, Any]] = None
 
     def __init__(
         self,
@@ -57,6 +60,8 @@ class OpenAIConfig(LLMConfig):
         project: Optional[str] = None,
         azure_endpoint: Optional[str] = None,
         azure_api_version: Optional[str] = None,
+        timeout: int = 60,
+        wake_on_lan: Optional[Dict[str, Any]] = None,
     ):
         super().__init__("openai", model, temperature, max_tokens, thinking_enabled)
         self.api_key = api_key
@@ -66,6 +71,8 @@ class OpenAIConfig(LLMConfig):
         self.project = project
         self.azure_endpoint = azure_endpoint
         self.azure_api_version = azure_api_version
+        self.timeout = timeout
+        self.wake_on_lan = wake_on_lan
 
     @property
     def is_alibaba(self) -> bool:
@@ -122,6 +129,8 @@ class OpenAIProvider(BaseProvider):
 
     def __init__(self, config: OpenAIConfig) -> None:  # type: ignore[override]
         super().__init__(config)
+        # Narrow the config type so type checkers can see OpenAI-specific fields.
+        self.config: OpenAIConfig = config
         from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
 
         # Instantiate client based on mode using official OpenAI SDK only
@@ -140,6 +149,31 @@ class OpenAIProvider(BaseProvider):
             if config.project:
                 kwargs["project"] = config.project
             self._client = _OpenAI(**kwargs)
+
+        self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
+
+    def is_in_warmup(self) -> bool:
+        """Return True while a non-blocking WoL warmup window is active."""
+        base_url = self.config.base_url or self.config.azure_endpoint or ""
+        return self._wake_on_lan.is_in_warmup(base_url)
+
+    def _is_connection_or_timeout_error(self, error: Exception) -> bool:
+        """Return True when the error indicates the host may be sleeping/unreachable."""
+        import openai as _openai
+        if isinstance(error, (_openai.APITimeoutError, _openai.APIConnectionError)):
+            return True
+        error_str = str(error).lower()
+        indicators = (
+            "connection refused",
+            "failed to connect",
+            "could not connect",
+            "network is unreachable",
+            "timed out",
+            "timeout",
+            "name or service not known",
+            "nodename nor servname",
+        )
+        return any(token in error_str for token in indicators)
 
     def _build_tool_param(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         if not tools:
@@ -278,9 +312,53 @@ class OpenAIProvider(BaseProvider):
                     extra_body["thinking_budget"] = self.config.thinking_budget
                 create_kwargs["extra_body"] = extra_body
 
-            # Call API
+            # Call API — with optional Wake-on-LAN support for local endpoints
+            base_url_for_wol = self.config.base_url or self.config.azure_endpoint or ""
+            default_timeout = float(self.config.timeout)
+            effective_timeout = self._wake_on_lan.maybe_get_initial_timeout(
+                base_url_for_wol,
+                default_timeout,
+            )
+
+            # Flag used to let a non-blocking WoL re-raise escape the outer
+            # try/except without being swallowed or logged as an error.
+            _wol_nonblocking_reraise = False
+
             start = time.perf_counter()
-            completion = self._client.chat.completions.create(**create_kwargs)
+            try:
+                completion = self._client.chat.completions.create(
+                    **create_kwargs,
+                    timeout=effective_timeout,
+                )
+            except Exception as first_error:
+                if self._is_connection_or_timeout_error(first_error):
+                    wake_result = self._wake_on_lan.maybe_wake(base_url_for_wol, first_error)
+                    if wake_result.succeeded:
+                        if wake_result.warmup_seconds:
+                            # Non-blocking mode: WoL packet was sent; re-raise so
+                            # FallbackLLMClient can route to a secondary provider
+                            # while the main server powers on.
+                            logger.info(
+                                "WoL sent to %s (non-blocking) — routing to secondary "
+                                "for %.0fs warmup",
+                                base_url_for_wol,
+                                wake_result.warmup_seconds,
+                            )
+                            _wol_nonblocking_reraise = True
+                            raise
+                        retry_timeout = wake_result.retry_timeout_seconds or default_timeout
+                        logger.info(
+                            "Retrying OpenAI request after WoL wake with timeout=%.0fs",
+                            retry_timeout,
+                        )
+                        completion = self._client.chat.completions.create(
+                            **create_kwargs,
+                            timeout=retry_timeout,
+                        )
+                    else:
+                        raise
+                else:
+                    raise
             latency_ms = (time.perf_counter() - start) * 1000
 
             # Extract message
@@ -390,7 +468,37 @@ class OpenAIProvider(BaseProvider):
                 "usage": usage,
             }
         except Exception as e:  # pragma: no cover - network errors
-            logger.exception("openai.chat failed")
+            import openai as _openai
+            # Non-blocking WoL re-raise: propagate cleanly so FallbackLLMClient
+            # can route to a secondary provider. Do not log — already logged above.
+            if _wol_nonblocking_reraise:
+                raise
+            if isinstance(e, _openai.NotFoundError):
+                endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
+                logger.error(
+                    "openai.chat: 404 Not Found — model '%s' was not found at endpoint '%s'. "
+                    "Check that the model name and base_url are correct.",
+                    self.config.model,
+                    endpoint,
+                )
+            elif isinstance(e, (_openai.APITimeoutError, _openai.APIConnectionError)):
+                endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
+                logger.warning(
+                    "openai.chat: transient connectivity issue for model '%s' at '%s': %s",
+                    self.config.model,
+                    endpoint,
+                    str(e),
+                )
+            elif isinstance(e, _openai.RateLimitError):
+                endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
+                logger.warning(
+                    "openai.chat: rate limited for model '%s' at '%s': %s",
+                    self.config.model,
+                    endpoint,
+                    str(e),
+                )
+            else:
+                logger.exception("openai.chat failed")
             return {
                 "error": str(e),
                 "content": None,

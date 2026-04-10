@@ -449,6 +449,7 @@ class ProviderConfig:
             thinking_budget: Optional[int] = None
             if self.thinking_config and "budget" in self.thinking_config:
                 thinking_budget = int(self.thinking_config["budget"])
+            timeout = int(self.extra.get("timeout", 60))
             return OpenAIConfig(
                 api_key=api_key,
                 model=self.model,
@@ -461,6 +462,8 @@ class ProviderConfig:
                 project=self.project,
                 azure_endpoint=self.azure_endpoint,
                 azure_api_version=self.azure_api_version or "2024-08-01-preview",
+                timeout=timeout,
+                wake_on_lan=self.wake_on_lan,
             )
         
         elif self.provider == "ollama":
