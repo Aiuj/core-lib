@@ -110,7 +110,7 @@ class WakeOnLanStrategy:
             cfg.get("warmup_seconds")
         )
         # Timestamps (host URL → epoch seconds) recording when a WoL was triggered,
-        # used to decide when the warmup window has elapsed.
+        # used to decide when the warmup window has elapsed (both blocking and warmup modes).
         self._waking_timestamps: Dict[str, float] = {}
 
     @staticmethod
@@ -245,6 +245,29 @@ class WakeOnLanStrategy:
         self._woken_hosts.discard(base_url)
         return False
 
+    def _is_still_woken(self, base_url: str) -> bool:
+        """Return True if a recent WoL is still within its re-fire suppression window.
+
+        Cleans up expired ``_woken_hosts`` entries so that future requests can
+        trigger WoL again when the host goes back to sleep.
+        """
+        if base_url not in self._woken_hosts:
+            return False
+        wake_time = self._waking_timestamps.get(base_url)
+        if wake_time is None:
+            # Stale entry with no timestamp — discard so WoL can re-fire.
+            self._woken_hosts.discard(base_url)
+            return False
+        # TTL: warmup window in non-blocking mode; wait_seconds in blocking mode.
+        target = self._find_target()
+        wait = target.wait_seconds if target else 0.0
+        ttl = self.warmup_seconds if (self.warmup_seconds and self.warmup_seconds > 0) else wait
+        if time.time() - wake_time >= ttl:
+            self._woken_hosts.discard(base_url)
+            self._waking_timestamps.pop(base_url, None)
+            return False
+        return True
+
     def maybe_get_initial_timeout(self, base_url: str, default_timeout: float) -> float:
         """Return a short initial timeout for configured sleeping hosts."""
         if not self.enabled:
@@ -254,7 +277,7 @@ class WakeOnLanStrategy:
         if not target:
             return default_timeout
 
-        if base_url in self._woken_hosts:
+        if self._is_still_woken(base_url):
             return default_timeout
 
         if self.initial_timeout_seconds and self.initial_timeout_seconds > 0:
@@ -277,7 +300,7 @@ class WakeOnLanStrategy:
 
         target_host = self._extract_host(base_url)
 
-        if base_url in self._woken_hosts:
+        if self._is_still_woken(base_url):
             return WakeResult(attempted=False, succeeded=False)
 
         is_warmup_mode = bool(self.warmup_seconds and self.warmup_seconds > 0)
@@ -326,6 +349,9 @@ class WakeOnLanStrategy:
                 f"{self.warmup_seconds:.0f}s, routing to secondary"
             )
         else:
+            # Blocking mode: record when WoL was sent so the entry expires after
+            # wait_seconds, allowing WoL to re-fire if the host sleeps again later.
+            self._waking_timestamps[base_url] = time.time()
             if target.wait_seconds > 0:
                 logger.info(
                     f"Waiting {target.wait_seconds:.1f}s for host '{target_host}' to wake"
