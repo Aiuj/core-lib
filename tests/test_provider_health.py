@@ -310,6 +310,14 @@ class TestClassifyError:
         """Test detection of server errors."""
         error = Exception("500 Internal Server Error")
         assert classify_error(error) == "server_error"
+
+    def test_pydantic_extra_forbidden_is_configuration_error(self):
+        """Avoid classifying Pydantic extra_forbidden as auth_error."""
+        error = Exception(
+            "24 validation errors for GenerateContentConfig tools.0.Tool.type "
+            "Extra inputs are not permitted [type=extra_forbidden]"
+        )
+        assert classify_error(error) == "configuration_error"
     
     def test_unknown_error(self):
         """Test that unknown errors are classified as unknown."""

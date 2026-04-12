@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Type
 import os
 import time
 import json
+from contextlib import contextmanager
 
 
 from pydantic import BaseModel
@@ -36,6 +37,45 @@ logger = get_module_logger()
 
 # Global flag to ensure instrumentation happens only once
 _instrumentation_initialized = False
+
+
+@contextmanager
+def _prefer_gemini_api_key_env(api_key: Optional[str]):
+    """Temporarily prefer GEMINI_API_KEY over GOOGLE_API_KEY for google.genai SDK.
+
+    The google.genai SDK currently prefers GOOGLE_API_KEY when both variables are
+    set, even when an explicit `api_key=` is passed to Client(...). To avoid
+    ambiguous runtime behavior, we temporarily remove GOOGLE_API_KEY and force
+    GEMINI_API_KEY to the selected provider key while constructing the client.
+    """
+    if not api_key:
+        yield
+        return
+
+    had_google = "GOOGLE_API_KEY" in os.environ
+    had_gemini = "GEMINI_API_KEY" in os.environ
+    prev_google = os.environ.get("GOOGLE_API_KEY")
+    prev_gemini = os.environ.get("GEMINI_API_KEY")
+
+    try:
+        if had_google and had_gemini and prev_google != prev_gemini:
+            logger.warning(
+                "Both GOOGLE_API_KEY and GEMINI_API_KEY are set with different values. "
+                "Temporarily preferring configured Gemini key for client initialization."
+            )
+        os.environ.pop("GOOGLE_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = api_key
+        yield
+    finally:
+        if had_google:
+            os.environ["GOOGLE_API_KEY"] = prev_google or ""
+        else:
+            os.environ.pop("GOOGLE_API_KEY", None)
+
+        if had_gemini:
+            os.environ["GEMINI_API_KEY"] = prev_gemini or ""
+        else:
+            os.environ.pop("GEMINI_API_KEY", None)
 
 
 def _get_http_timeout_ms() -> int:
@@ -268,10 +308,11 @@ class GoogleGenAIProvider(BaseProvider):
         else:
             # AI Studio (Standard) Mode
             http_timeout_ms = config.http_timeout_ms if config.http_timeout_ms is not None else _get_http_timeout_ms()
-            self._client = genai.Client(
-                api_key=config.api_key,
-                http_options={"timeout": http_timeout_ms, "retry_options": None},  # ms; no SDK-internal retries
-            )
+            with _prefer_gemini_api_key_env(config.api_key):
+                self._client = genai.Client(
+                    api_key=config.api_key,
+                    http_options={"timeout": http_timeout_ms, "retry_options": None},  # ms; no SDK-internal retries
+                )
 
         logger.debug(f"Configured Google GenAI HTTP timeout: {http_timeout_ms}ms")
 
@@ -605,7 +646,7 @@ class GoogleGenAIProvider(BaseProvider):
             cfg["system_instruction"] = system_message
 
         if tools and not cached_content:
-            cfg["tools"] = tools
+            cfg.update(self._build_tools(tools))
 
         # Grounding via Google Search (per official docs)
         # https://ai.google.dev/gemini-api/docs/google-search
@@ -647,11 +688,55 @@ class GoogleGenAIProvider(BaseProvider):
         return result
 
     def _build_tools(self, tools: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
-        # google.genai supports tools and tool_config; for now pass through as-is
-        # when in OpenAI function-call schema. Advanced conversion could be added.
+        """Build google.genai-compatible tools list.
+
+        Accepts tools in OpenAI function-calling format and converts them into
+        `google.genai.types.Tool(function_declarations=[...])` objects.
+        Existing native Tool/callable/session objects are passed through.
+        """
         if not tools:
             return {}
-        return {"tools": tools}
+
+        from google.genai import types  # type: ignore
+
+        normalized_tools: List[Any] = []
+
+        for tool in tools:
+            # Convert OpenAI function-call schema:
+            # {"type":"function", "function": {"name":..., "description":..., "parameters": {...}}}
+            if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                fn = tool.get("function", {})
+                fn_name = fn.get("name")
+
+                if not fn_name:
+                    logger.warning("Skipping tool without function name in OpenAI schema")
+                    continue
+
+                schema = fn.get("parameters") or {"type": "object", "properties": {}}
+                if isinstance(schema, dict):
+                    schema = _clean_schema_for_gemini(schema)
+
+                fn_decl_kwargs: Dict[str, Any] = {
+                    "name": fn_name,
+                    "parameters_json_schema": schema,
+                }
+                if fn.get("description"):
+                    fn_decl_kwargs["description"] = fn.get("description")
+
+                fn_decl = types.FunctionDeclaration(**fn_decl_kwargs)
+                normalized_tools.append(types.Tool(function_declarations=[fn_decl]))
+                continue
+
+            # If already native google.genai Tool object, keep as-is.
+            if isinstance(tool, types.Tool):
+                normalized_tools.append(tool)
+                continue
+
+            # For callables, MCP sessions, or MCP tool objects accepted by SDK union,
+            # pass through as-is and let SDK validate.
+            normalized_tools.append(tool)
+
+        return {"tools": normalized_tools} if normalized_tools else {}
 
     def _acquire_rate_limit(self) -> None:
         """Acquire the rate limiter slot.

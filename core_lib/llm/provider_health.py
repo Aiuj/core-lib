@@ -464,9 +464,22 @@ def classify_error(error: Exception) -> str:
 
     if any(x in error_type for x in ["connection", "network", "socket", "gaierror"]):
         return "connection_error"
+
+    # Pydantic/config validation failures should be treated as configuration errors,
+    # not auth errors (e.g. "extra_forbidden" contains the substring "forbidden").
+    if any(x in error_str for x in [
+        "validation errors for generatecontentconfig",
+        "validation error for generatecontentconfig",
+        "extra_forbidden",
+        "field required",
+        "input should be callable",
+    ]):
+        return "configuration_error"
     
     # Auth errors
-    if any(x in error_str for x in ["auth", "unauthorized", "forbidden", "401", "403", "api key"]):
+    if any(x in error_str for x in ["auth", "unauthorized", "401", "403", "api key"]) or (
+        "forbidden" in error_str and "extra_forbidden" not in error_str
+    ):
         return "auth_error"
 
     # Configuration / resource-not-found errors (404) — permanent, won't self-resolve
