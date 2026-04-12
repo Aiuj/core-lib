@@ -22,7 +22,7 @@ import time
 
 from pydantic import BaseModel
 
-from .base import BaseProvider, normalize_tool_calls
+from .base import BaseProvider, normalize_tool_calls, parse_text_tool_calls
 from ..llm_config import LLMConfig
 from dataclasses import dataclass
 from typing import Optional
@@ -367,6 +367,19 @@ class OpenAIProvider(BaseProvider):
             content_text = getattr(message, "content", None) or (message.get("content") if isinstance(message, dict) else None) or ""
             raw_tool_calls = getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None) or []
             tool_calls = normalize_tool_calls(raw_tool_calls)
+
+            # Fallback: some models (e.g. Qwen on vLLM) emit tool calls as
+            # XML-like tags inside the content text instead of populating the
+            # structured tool_calls field.  Parse them out when tools were
+            # requested but no structured calls were returned.
+            if not tool_calls and tools and "<tool_call>" in content_text:
+                text_tool_calls, content_text = parse_text_tool_calls(content_text)
+                if text_tool_calls:
+                    tool_calls = text_tool_calls
+                    logger.debug(
+                        "Parsed %d text-based tool call(s) from content",
+                        len(tool_calls),
+                    )
             usage = getattr(completion, "usage", {}) or {}
 
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)

@@ -1,8 +1,9 @@
 """Tests for core_lib.llm.providers.base.normalize_tool_calls."""
 
+import json
 from types import SimpleNamespace
 
-from core_lib.llm.providers.base import normalize_tool_calls
+from core_lib.llm.providers.base import normalize_tool_calls, parse_text_tool_calls
 
 
 class TestNormalizeToolCalls:
@@ -88,3 +89,94 @@ class TestNormalizeToolCalls:
         assert len(result) == 2
         assert result[0]["function"]["name"] == "a"
         assert result[1]["function"]["name"] == "b"
+
+
+class TestParseTextToolCalls:
+    """Tests for XML-style tool call parsing from content text."""
+
+    def test_empty_string(self):
+        calls, remaining = parse_text_tool_calls("")
+        assert calls == []
+        assert remaining == ""
+
+    def test_none_input(self):
+        calls, remaining = parse_text_tool_calls(None)
+        assert calls == []
+        assert remaining is None
+
+    def test_no_tool_calls(self):
+        text = "Here is a normal response with no tool calls."
+        calls, remaining = parse_text_tool_calls(text)
+        assert calls == []
+        assert remaining == text
+
+    def test_single_tool_call(self):
+        text = (
+            "<tool_call>\n"
+            "<function=kb_search>\n"
+            "<parameter=query>When was the company created?</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["type"] == "function"
+        assert calls[0]["function"]["name"] == "kb_search"
+        args = json.loads(calls[0]["function"]["arguments"])
+        assert args["query"] == "When was the company created?"
+        assert calls[0]["id"].startswith("call_")
+        assert remaining == ""
+
+    def test_tool_call_with_surrounding_text(self):
+        text = (
+            "Let me search for that.\n"
+            "<tool_call>\n"
+            "<function=kb_search>\n"
+            "<parameter=query>CEO name</parameter>\n"
+            "</function>\n"
+            "</tool_call>\n"
+            "I'll get back to you."
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "kb_search"
+        assert "Let me search" in remaining
+        assert "I'll get back" in remaining
+        assert "<tool_call>" not in remaining
+
+    def test_multiple_parameters(self):
+        text = (
+            "<tool_call>\n"
+            "<function=search>\n"
+            "<parameter=query>test query</parameter>\n"
+            "<parameter=limit>10</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert len(calls) == 1
+        args = json.loads(calls[0]["function"]["arguments"])
+        assert args["query"] == "test query"
+        assert args["limit"] == "10"
+
+    def test_multiple_tool_calls(self):
+        text = (
+            "<tool_call>\n"
+            "<function=search>\n"
+            "<parameter=query>first</parameter>\n"
+            "</function>\n"
+            "</tool_call>\n"
+            "<tool_call>\n"
+            "<function=search>\n"
+            "<parameter=query>second</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert len(calls) == 2
+        args0 = json.loads(calls[0]["function"]["arguments"])
+        args1 = json.loads(calls[1]["function"]["arguments"])
+        assert args0["query"] == "first"
+        assert args1["query"] == "second"
+        # Each gets a unique ID
+        assert calls[0]["id"] != calls[1]["id"]

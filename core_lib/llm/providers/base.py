@@ -25,9 +25,81 @@ Example usage:
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# Text-based tool call parsing
+# ---------------------------------------------------------------------------
+# Some models (e.g. Qwen on vLLM without --tool-call-parser) encode tool
+# invocations directly in the assistant's *content* using XML-like tags
+# instead of populating the structured ``tool_calls`` field.  Supported
+# format:
+#
+#   <tool_call>
+#   <function=function_name>
+#   <parameter=param1>value1</parameter>
+#   <parameter=param2>value2</parameter>
+#   </function>
+#   </tool_call>
+#
+# ``parse_text_tool_calls`` extracts these from the content string,
+# returning both the parsed tool calls (in canonical format) and the
+# remaining content with the tool call blocks removed.
+# ---------------------------------------------------------------------------
+
+_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call>\s*"          # opening tag
+    r"<function=([^>]+)>\s*"   # function name
+    r"(.*?)"                   # parameters block (lazy)
+    r"</function>\s*"          # closing function tag
+    r"</tool_call>",           # closing tool_call tag
+    re.DOTALL,
+)
+
+_PARAMETER_RE = re.compile(
+    r"<parameter=([^>]+)>\s*(.*?)\s*</parameter>",
+    re.DOTALL,
+)
+
+
+def parse_text_tool_calls(content: str) -> Tuple[List[Dict[str, Any]], str]:
+    """Parse XML-style tool calls embedded in content text.
+
+    Returns:
+        Tuple of (tool_calls in canonical format, remaining content with
+        tool call blocks stripped).  If no tool calls are found the list
+        is empty and content is returned unchanged.
+    """
+    if not content or "<tool_call>" not in content:
+        return [], content
+
+    tool_calls: List[Dict[str, Any]] = []
+
+    for match in _TOOL_CALL_BLOCK_RE.finditer(content):
+        func_name = match.group(1).strip()
+        params_block = match.group(2)
+
+        arguments: Dict[str, Any] = {}
+        for pm in _PARAMETER_RE.finditer(params_block):
+            param_name = pm.group(1).strip()
+            param_value = pm.group(2).strip()
+            arguments[param_name] = param_value
+
+        tool_calls.append({
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": json.dumps(arguments),
+            },
+        })
+
+    remaining = _TOOL_CALL_BLOCK_RE.sub("", content).strip()
+    return tool_calls, remaining
 
 
 def normalize_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
