@@ -168,8 +168,9 @@ class FallbackLLMClient:
                 continue
             tier_info = f" [{p.tier}]" if hasattr(p, 'tier') and p.tier else ""
             level_info = f" (IQ{p.min_intelligence_level}-{p.max_intelligence_level})" if p.min_intelligence_level is not None else ""
+            tools_info = " [no-tools]" if not p.supports_tools else ""
             provider_details.append(
-                f"{p.provider}:{p.model}{tier_info}{level_info} #{p.priority}"
+                f"{p.provider}:{p.model}{tier_info}{level_info}{tools_info} #{p.priority}"
             )
         
         logger.info(
@@ -411,9 +412,16 @@ class FallbackLLMClient:
                     if level is not None:
                         set_intelligence_level(level)
                     
+                    # Strip tools for providers that don't support tool calling
+                    effective_tools = tools if config.supports_tools else None
+                    if tools and not config.supports_tools:
+                        logger.debug(
+                            f"Stripping tools for {provider_id} (supports_tools=False)"
+                        )
+
                     response = client.chat(
                         messages=messages,
-                        tools=tools,
+                        tools=effective_tools,
                         structured_output=structured_output,
                         system_message=system_message,
                         use_search_grounding=use_search_grounding,

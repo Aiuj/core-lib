@@ -15,7 +15,7 @@ import json
 
 from pydantic import BaseModel
 
-from .base import BaseProvider
+from .base import BaseProvider, normalize_tool_calls
 from ..llm_config import LLMConfig
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -960,8 +960,8 @@ class GoogleGenAIProvider(BaseProvider):
                             }
                         )
 
-            # Use aggregated values
-            tool_calls = all_tool_calls
+            # Normalize to canonical dict format
+            tool_calls = normalize_tool_calls(all_tool_calls)
             
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)
             try:

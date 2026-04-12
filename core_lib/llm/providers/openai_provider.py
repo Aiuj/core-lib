@@ -22,7 +22,7 @@ import time
 
 from pydantic import BaseModel
 
-from .base import BaseProvider
+from .base import BaseProvider, normalize_tool_calls
 from ..llm_config import LLMConfig
 from dataclasses import dataclass
 from typing import Optional
@@ -365,7 +365,8 @@ class OpenAIProvider(BaseProvider):
             choice = completion.choices[0] if getattr(completion, "choices", []) else None
             message = getattr(choice, "message", {}) if choice else {}
             content_text = getattr(message, "content", None) or (message.get("content") if isinstance(message, dict) else None) or ""
-            tool_calls = getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None) or []
+            raw_tool_calls = getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None) or []
+            tool_calls = normalize_tool_calls(raw_tool_calls)
             usage = getattr(completion, "usage", {}) or {}
 
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)
@@ -478,6 +479,11 @@ class OpenAIProvider(BaseProvider):
             # type, mark the provider unhealthy with the right TTL, and log exactly
             # once. Swallowing these into error dicts causes double-logging.
             if isinstance(e, (_openai.RateLimitError, _openai.APITimeoutError, _openai.APIConnectionError)):
+                raise
+            # 400 bad requests are often expected provider/config mismatches
+            # (for example vLLM tool calling not enabled yet). Do not emit a
+            # traceback here; let the fallback layer classify and log once.
+            if isinstance(e, _openai.BadRequestError):
                 raise
             # 404 is a configuration problem (wrong model name or base_url). Log a
             # helpful diagnostic before re-raising so it is visible in the provider

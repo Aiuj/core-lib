@@ -24,9 +24,62 @@ Example usage:
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel
+
+
+def normalize_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
+    """Convert tool calls from any provider format into canonical plain dicts.
+
+    The canonical format matches the OpenAI Chat Completions schema::
+
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"location": "Boston"}'}
+        }
+
+    Handles:
+    - Plain dicts (passed through with ``arguments`` coerced to JSON string)
+    - OpenAI SDK objects (``ChatCompletionMessageToolCall``)
+    - Ollama-style dicts (missing ``id``/``type``)
+    - Google GenAI ``FunctionCall`` objects
+    """
+    if not tool_calls:
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for tc in tool_calls:
+        if isinstance(tc, dict):
+            fn = tc.get("function", {})
+            args = fn.get("arguments", "{}")
+            if not isinstance(args, str):
+                args = json.dumps(args)
+            normalized.append({
+                "id": tc.get("id", ""),
+                "type": tc.get("type", "function"),
+                "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": args,
+                },
+            })
+        else:
+            # SDK object (OpenAI ChatCompletionMessageToolCall, etc.)
+            fn = getattr(tc, "function", None)
+            args = getattr(fn, "arguments", "{}") if fn else "{}"
+            if not isinstance(args, str):
+                args = json.dumps(args)
+            normalized.append({
+                "id": getattr(tc, "id", "") or "",
+                "type": getattr(tc, "type", "function") or "function",
+                "function": {
+                    "name": getattr(fn, "name", "") if fn else "",
+                    "arguments": args,
+                },
+            })
+    return normalized
 
 from ..llm_config import LLMConfig
 

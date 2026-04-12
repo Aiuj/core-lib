@@ -1,5 +1,5 @@
 """Provider implementations for native LLM SDKs."""
 
-from .base import BaseProvider  # re-export for typing convenience
+from .base import BaseProvider, normalize_tool_calls  # re-export for typing convenience
 
-__all__ = ["BaseProvider"]
+__all__ = ["BaseProvider", "normalize_tool_calls"]

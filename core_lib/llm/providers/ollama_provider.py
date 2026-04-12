@@ -12,7 +12,7 @@ import re
 
 from pydantic import BaseModel
 
-from .base import BaseProvider
+from .base import BaseProvider, normalize_tool_calls
 from ..llm_config import LLMConfig
 from ..json_parser import augment_prompt_for_json
 from dataclasses import dataclass
@@ -403,7 +403,7 @@ class OllamaProvider(BaseProvider):
             message = resp.get("message", {})
             content_text = message.get("content", "")
             thinking_text = message.get("thinking")
-            tool_calls = message.get("tool_calls", []) or []
+            tool_calls = normalize_tool_calls(message.get("tool_calls", []) or [])
 
             usage = resp.get("usage", {}) or {}
             if not usage:

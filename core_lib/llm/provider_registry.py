@@ -166,6 +166,10 @@ class ProviderConfig:
     # Per-provider HTTP timeout override (ms). Gemini-only for now.
     # Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS when set.
     http_timeout_ms: Optional[int] = None
+
+    # Capability flag: set to False to strip tools from requests for this provider.
+    # Useful for OpenAI-compatible endpoints (e.g. vLLM) that don't support tool calling.
+    supports_tools: bool = True
     
     # Provider-specific aliases
     azure_endpoint: Optional[str] = None
@@ -345,6 +349,12 @@ class ProviderConfig:
         )
         if usage is not None:
             normalized["usage"] = usage
+
+        # Tool-calling capability flag
+        supports_tools = data.get("supports_tools", data.get("supportsTools", True))
+        if isinstance(supports_tools, str):
+            supports_tools = supports_tools.lower() in ("true", "1", "yes")
+        normalized["supports_tools"] = bool(supports_tools)
         
         # Collect remaining keys as extra
         known_keys = {
@@ -359,6 +369,7 @@ class ProviderConfig:
             "wake_on_lan", "wakeOnLan", "wol",
             "http_timeout_ms", "httpTimeoutMs", "timeout_ms",
             "usage", "use_case", "usecase", "purpose", "task",
+            "supports_tools", "supportsTools",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra

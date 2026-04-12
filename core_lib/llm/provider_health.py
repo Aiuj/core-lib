@@ -416,6 +416,10 @@ def classify_error(error: Exception) -> str:
             return "connection_error"
         if isinstance(error, _openai.AuthenticationError):
             return "auth_error"
+        if isinstance(error, _openai.BadRequestError):
+            # 400 errors are usually permanent misconfigurations (e.g. vLLM
+            # tool_choice not enabled, unsupported parameter, etc.)
+            return "configuration_error"
         if isinstance(error, _openai.NotFoundError):
             return "configuration_error"
         if isinstance(error, _openai.APIStatusError):
@@ -467,6 +471,12 @@ def classify_error(error: Exception) -> str:
 
     # Configuration / resource-not-found errors (404) — permanent, won't self-resolve
     if "404" in error_str or "not_found" in error_str or "not found" in error_str:
+        return "configuration_error"
+
+    # Bad request errors (400) — usually permanent misconfigurations
+    # (e.g. vLLM tool_choice not enabled, unsupported parameter).
+    # Matches both raw "error code: 400" and wrapped "badrequesterror" strings.
+    if "error code: 400" in error_str or "badrequesterror" in error_str:
         return "configuration_error"
 
     # Server errors
