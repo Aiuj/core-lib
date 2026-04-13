@@ -23,6 +23,37 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## April 2026
+
+### v0.3.8 - Provider Robustness & OCR Enhancements (Apr 13, 2026)
+
+- **Error Handling & Validation**:
+  - Treat Pydantic validation failures as configuration errors for improved error classification
+  - Enhanced OpenAI provider error handling with re-raise of classifiable exceptions
+  - Improved GoogleGenAIProvider error handling for missing/invalid credentials
+- **Tool Call Parsing & Normalization**:
+  - Added XML-style tool call parsing support for improved provider compatibility
+  - Introduced tool normalization utility and enhanced provider configurations for tool support
+- **Wake-on-LAN Enhancements**:
+  - Enhanced Wake-on-LAN strategy with re-fire suppression logic and timestamp management
+  - Implemented Wake-on-LAN support in OpenAI provider with corresponding tests
+  - Added wakeup service strategy for HTTP-based container recovery and Infinity API integration
+- **Provider Diagnostics & Health Checks**:
+  - Added shared provider diagnostics for health endpoints
+  - Added URL tracking to health probe results for embedding and reranker providers
+  - Improved Infinity API client with full-timeout retry mechanism
+  - Enhanced Infinity wakeup service configuration handling
+- **Configuration & Utilities**:
+  - Enhanced config file resolution logic with provider registry improvements
+  - Added URL normalization utility with corresponding tests
+- **OCR Service Improvements**:
+  - Enhanced OCR service logging for Vision LLM warmup state and fallback handling
+  - Implemented OCR service enriched output mode and image optimization features
+  - Improved OCR settings and provider configurations with better cache handling
+- **LLM Enhancements**:
+  - Added usage type tracking for LLM calls with enhanced logging functionality
+  - Added vision max output tokens setting for improved vision model handling
+
 ## March 2026
 
 ### v0.3.7 - Azure OpenAI, OCR Service & Usage-Based Routing (Mar 31, 2026)
