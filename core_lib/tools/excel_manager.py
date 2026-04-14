@@ -364,6 +364,129 @@ class ExcelManager:
         logger.info(f"Combined markdown created for {len(sheet_markdowns)} sheets")
         return combined_md
 
+    # ------------------------------------------------------------------
+    # Header-row detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_header_row(
+        ws,
+        min_row: int,
+        max_row: int,
+        min_col: int,
+        max_col: int,
+        used_cols: set,
+        max_scan: int = 15,
+    ) -> int:
+        """Heuristically find the real header row in a worksheet.
+
+        Many RFx / enterprise Excel files place a merged title, blank rows,
+        or decorative banners above the actual column headers.  This method
+        scans the first *max_scan* rows and picks the best candidate based
+        on simple heuristics:
+
+        1. A header row should have **many distinct non-empty short text
+           values** spread across the used columns.
+        2. It should NOT be a single merged title spanning the full width.
+        3. Header values are typically short labels, not formulas, numbers,
+           or long descriptive text.
+
+        Returns the 1-based row number of the detected header row,
+        defaulting to *min_row* when no better candidate is found.
+        """
+        scan_limit = min(max_row, min_row + max_scan - 1)
+        if scan_limit < min_row:
+            return min_row
+
+        total_cols = max(len(used_cols), 1)
+
+        # Collect row data via iter_rows (works with both read-only and
+        # normal worksheets).
+        rows_data: list = []
+        try:
+            for row_tuple in ws.iter_rows(
+                min_row=min_row,
+                max_row=scan_limit,
+                min_col=min_col,
+                max_col=max_col,
+                values_only=True,
+            ):
+                rows_data.append(row_tuple)
+        except Exception:
+            return min_row
+
+        scored_rows: list = []  # (row_idx, score)
+
+        for offset, row_tuple in enumerate(rows_data):
+            row_idx = min_row + offset
+            non_empty = 0
+            short_label_count = 0  # short text that looks like a header label
+            numeric_count = 0
+            formula_count = 0
+            long_text_count = 0
+            distinct_values: set = set()
+
+            for ci, val in enumerate(row_tuple):
+                if val is None:
+                    continue
+                s = str(val).strip()
+                if s == '':
+                    continue
+                non_empty += 1
+                distinct_values.add(s.lower())
+
+                # Classify cell value
+                if isinstance(val, str) and s.startswith('='):
+                    formula_count += 1
+                elif isinstance(val, (int, float)):
+                    numeric_count += 1
+                elif isinstance(val, str) and len(s) > 80:
+                    long_text_count += 1
+                elif isinstance(val, str) and 1 <= len(s) <= 60:
+                    short_label_count += 1
+
+            if non_empty < 2:
+                continue
+
+            fill_ratio = non_empty / total_cols
+            label_ratio = short_label_count / non_empty
+            distinct_ratio = len(distinct_values) / non_empty
+
+            # Penalise rows with formulas, numbers, or long text
+            # (headers should be mostly short text labels)
+            data_penalty = (formula_count + numeric_count + long_text_count) / non_empty
+
+            # Composite score
+            score = (
+                fill_ratio * 0.30
+                + label_ratio * 0.40
+                + distinct_ratio * 0.15
+                - data_penalty * 0.35
+            )
+
+            scored_rows.append((row_idx, score))
+
+        if not scored_rows:
+            return min_row
+
+        # Find best scoring row
+        scored_rows.sort(key=lambda x: x[1], reverse=True)
+        best_row, best_score = scored_rows[0]
+
+        # Require a minimum absolute score — if no row looks clearly like
+        # a header, fall back to min_row
+        if best_score < 0.45:
+            return min_row
+
+        # Require the best row to stand out from the pack: its score must
+        # beat the average of all candidate scores by a clear margin.
+        if len(scored_rows) > 2:
+            avg_score = sum(s for _, s in scored_rows) / len(scored_rows)
+            if best_score < avg_score * 1.3:
+                return min_row
+
+        return best_row
+
     def to_json_ir(self, filename: str = None, max_rows: int = None) -> dict:
         """
         Build a structured JSON Intermediate Representation (IR) for the loaded workbook.
@@ -467,6 +590,16 @@ class ExcelManager:
                 min_col = min_row = max_col = max_row = 1
                 dim = 'A1:A1'
 
+            # Detect the real header row (may be below title / merged rows)
+            header_row = self._detect_header_row(
+                ws, min_row, max_row, min_col, max_col, used_cols,
+            )
+            if header_row != min_row:
+                logger.info(
+                    f"Sheet '{sheet_name}': detected header row {header_row} "
+                    f"(min_row was {min_row})"
+                )
+
             columns = {}
             headers_for_md = []
             columns_to_include = []  # Track which columns to include in output
@@ -478,7 +611,7 @@ class ExcelManager:
                     _ws_for_header = full_wb[sheet_name] if full_wb is not None else ws
                 except Exception:
                     _ws_for_header = ws
-                raw_header = _ws_for_header.cell(row=min_row, column=col_idx).value
+                raw_header = _ws_for_header.cell(row=header_row, column=col_idx).value
                 header_val = self.clean_cell(raw_header)
                 
                 has_data = col_idx in used_cols
@@ -497,22 +630,22 @@ class ExcelManager:
 
             data_rows = []
             md_rows = []
-            max_data_rows = (max_rows if max_rows is not None else (max_row - min_row))
+            max_data_rows = (max_rows if max_rows is not None else (max_row - header_row))
             current_count = 0
             
             # Use iter_rows for efficient batch reading instead of cell-by-cell access
             # Limit the row range to avoid iterating unnecessarily
-            row_limit = min(max_row, min_row + max_data_rows + 100)  # +100 buffer for empty rows
+            row_limit = min(max_row, header_row + max_data_rows + 100)  # +100 buffer for empty rows
             
             # Build a set of column indices we're including for fast lookup
             columns_to_include_set = set(columns_to_include)
             
             try:
                 for row_idx, row in enumerate(
-                    ws.iter_rows(min_row=min_row + 1, max_row=row_limit,
+                    ws.iter_rows(min_row=header_row + 1, max_row=row_limit,
                                  min_col=min_col, max_col=max_col,
                                  values_only=True),
-                    start=min_row + 1
+                    start=header_row + 1
                 ):
                     if current_count >= max_data_rows:
                         break
@@ -561,7 +694,7 @@ class ExcelManager:
                 "block_id": f"b{len(document['sheets']) + 1}",
                 "type": "table",
                 "range": dim,
-                "header_row": min_row,
+                "header_row": header_row,
                 "columns": columns,
                 "rows": data_rows,
                 "text_md": md_table,
