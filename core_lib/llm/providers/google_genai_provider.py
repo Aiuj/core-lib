@@ -938,10 +938,19 @@ class GoogleGenAIProvider(BaseProvider):
                 if inline_system:
                     effective_system_message = inline_system
 
-            # Determine if this is a single-turn prompt (only one user message, optional system)
+            # Determine if this is a single-turn text-only prompt
+            # (only one user message, optional system, and string content).
+            # Multimodal user content must go through _to_genai_messages so image/text
+            # parts are converted to native GenAI parts.
             user_messages = [m for m in messages if m.get("role") == "user"]
             assistant_messages = [m for m in messages if m.get("role") == "assistant"]
-            is_single_turn = len(user_messages) == 1 and len(assistant_messages) == 0 and len(messages) <= 2
+            single_user_content = user_messages[0].get("content", "") if user_messages else ""
+            is_single_turn_text_only = (
+                len(user_messages) == 1
+                and len(assistant_messages) == 0
+                and len(messages) <= 2
+                and isinstance(single_user_content, str)
+            )
 
             # If using fallback, augment the last user message with JSON schema
             working_messages = messages
@@ -959,7 +968,7 @@ class GoogleGenAIProvider(BaseProvider):
                         break
                 user_messages = [m for m in working_messages if m.get("role") == "user"]
 
-            if is_single_turn:
+            if is_single_turn_text_only:
                 user_text = user_messages[0].get("content", "")
                 extra = self._build_config(
                     structured_output=structured_output if not use_fallback_json else None,

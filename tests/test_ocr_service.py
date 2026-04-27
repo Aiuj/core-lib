@@ -252,3 +252,96 @@ class TestEnrichedMode:
 
         assert len(result.pages) == 1
         assert result.pages[0].source == "llm-vision-enriched"
+
+
+class TestOcrCacheFailureGuards:
+    """Tests that failure OCR results are never cached and stale failures are discarded."""
+
+    def _make_cache(self) -> MagicMock:
+        """Build a simple in-memory mock cache (get/set/delete)."""
+        store: dict = {}
+
+        cache = MagicMock()
+        cache.get.side_effect = lambda key: store.get(key)
+        cache.set.side_effect = lambda key, value, ttl=None: store.__setitem__(key, value)
+        cache._store = store
+        return cache
+
+    def test_failure_source_none_is_not_cached(self, settings, tiny_image):
+        """When OCR fails (source='none'), _cache_set must not write to the cache."""
+        cache = self._make_cache()
+        service = OcrService(settings, cache_client=cache)  # no vision client — instant 'none'
+
+        service.process_images([tiny_image])
+
+        cache.set.assert_not_called()
+
+    def test_failure_source_llm_vision_error_is_not_cached(self, settings, tiny_image):
+        """source='llm-vision-error' must also be excluded from the cache."""
+        cache = self._make_cache()
+        mock_client = MagicMock()
+        mock_client.chat.side_effect = RuntimeError("Pydantic error")
+        service = OcrService(settings, vision_llm_client=mock_client, cache_client=cache)
+
+        service.process_images([tiny_image])
+
+        cache.set.assert_not_called()
+
+    def test_successful_result_is_cached(self, settings, tiny_image):
+        """A successful OCR result must still be written to the cache."""
+        import json as _json
+
+        cache = self._make_cache()
+        service = _make_service(settings, {"content": "Slide text", "error": None})
+        service._cache = cache
+
+        service.process_images([tiny_image])
+
+        cache.set.assert_called_once()
+
+    def test_stale_failure_entry_in_cache_is_discarded(self, settings, tiny_image):
+        """When a stale source='none' entry already sits in cache, _cache_get must return None
+        so process_images retries OCR instead of serving the empty cached result."""
+        import json as _json
+
+        store = {}
+        cache = MagicMock()
+        # Pre-populate cache with a stale failure result (simulates pre-fix run)
+        stale_data = _json.dumps({"page_number": 1, "raw_text": "", "source": "none", "elements": []})
+        key = OcrService._cache_key(tiny_image, enrich=False)
+        store[key] = stale_data
+        cache.get.side_effect = lambda k: store.get(k)
+        cache.set.side_effect = lambda k, v, ttl=None: store.__setitem__(k, v)
+
+        service = _make_service(settings, {"content": "Recovered text after fix", "error": None})
+        service._cache = cache
+
+        result = service.process_images([tiny_image])
+
+        # Cache hit must NOT have been counted — OCR should have run
+        assert result.total_images_cached == 0
+        assert result.total_images_processed == 1
+        assert result.pages[0].raw_text == "Recovered text after fix"
+        assert result.pages[0].source == "llm-vision"
+
+    def test_stale_llm_vision_error_entry_is_discarded(self, settings, tiny_image):
+        """source='llm-vision-error' stale entries are also silently discarded and OCR retried."""
+        import json as _json
+
+        store = {}
+        cache = MagicMock()
+        stale_data = _json.dumps(
+            {"page_number": 1, "raw_text": "", "source": "llm-vision-error", "elements": []}
+        )
+        key = OcrService._cache_key(tiny_image, enrich=False)
+        store[key] = stale_data
+        cache.get.side_effect = lambda k: store.get(k)
+        cache.set.side_effect = lambda k, v, ttl=None: store.__setitem__(k, v)
+
+        service = _make_service(settings, {"content": "Recovered text", "error": None})
+        service._cache = cache
+
+        result = service.process_images([tiny_image])
+
+        assert result.total_images_cached == 0
+        assert result.pages[0].raw_text == "Recovered text"

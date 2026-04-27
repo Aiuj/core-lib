@@ -109,6 +109,52 @@ class TestGeminiJSONModeFallback:
             assert result.get("text") == text_json
             assert result.get("content_json") == text_json
 
+    def test_single_turn_multimodal_uses_chat_path_not_generate_content(self):
+        """Single-turn multimodal input must be sent via chat path after conversion."""
+        config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash")
+
+        with patch('google.genai.Client') as mock_client_class, \
+             patch('openinference.instrumentation.google_genai.GoogleGenAIInstrumentor'):
+
+            provider = GoogleGenAIProvider(config)
+            mock_client = mock_client_class.return_value
+
+            chunk = SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[SimpleNamespace(text="ok")]
+                        )
+                    )
+                ],
+                function_calls=None,
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                ),
+            )
+
+            mock_chat = MagicMock()
+            mock_chat.send_message_stream.return_value = [chunk]
+            mock_client.chats.create.return_value = mock_chat
+
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+                    {"type": "text", "text": "Analyze this image"},
+                ],
+            }]
+
+            with patch.object(provider, "_to_genai_messages", return_value="converted-prompt") as to_genai:
+                result = provider.chat(messages=messages)
+
+            assert result["content"] == "ok"
+            to_genai.assert_called_once()
+            mock_client.models.generate_content_stream.assert_not_called()
+            mock_chat.send_message_stream.assert_called_once()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

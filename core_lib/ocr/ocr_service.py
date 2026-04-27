@@ -492,13 +492,28 @@ class OcrService:
             if raw is None:
                 return None
             data = json.loads(raw) if isinstance(raw, str) else raw
-            return self._deserialize_page(data)
+            page = self._deserialize_page(data)
+            # Discard stale failure entries written before this guard was in place.
+            # Returning None forces a fresh OCR attempt which will also overwrite
+            # the bad cache entry (since _cache_set now skips failure sources).
+            if page.source in self._FAILURE_SOURCES:
+                logger.debug("OCR cache: discarding stale failure entry (source=%s)", page.source)
+                return None
+            return page
         except Exception as exc:
             logger.debug("OCR cache read error: %s", exc)
             return None
 
+    # Sources that represent transient failures — these must never be cached so
+    # the next ingestion attempt re-runs OCR with a working provider.
+    _FAILURE_SOURCES = frozenset({"none", "llm-vision-error"})
+
     def _cache_set(self, key: str, page: OcrPageResult) -> None:
         if self._cache is None:
+            return
+        # Never persist failure results; they are transient (provider down, config
+        # error, etc.) and should be retried on the next ingestion run.
+        if page.source in self._FAILURE_SOURCES:
             return
         try:
             data = self._serialize_page(page)
