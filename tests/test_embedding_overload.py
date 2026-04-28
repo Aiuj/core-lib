@@ -78,9 +78,9 @@ def test_http_503_triggers_overload():
         
         # Primary should be marked as overloaded, not failed
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 0
-        assert stats[0]["cached_overloaded"] is True
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 0
+        assert stats["providers"][0]["cached_overloaded"] is True
 
 
 def test_http_429_triggers_overload():
@@ -98,8 +98,8 @@ def test_http_429_triggers_overload():
         assert result is not None
         
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 0
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 0
 
 
 def test_timeout_triggers_overload():
@@ -116,8 +116,26 @@ def test_timeout_triggers_overload():
         assert result is not None
         
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 0
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 0
+
+
+def test_success_clears_stale_overload_status():
+    """A recovered provider should not remain cached as overloaded."""
+    mock_cache = MockCache()
+    provider1 = create_mock_provider("primary")
+    provider2 = create_mock_provider("secondary")
+
+    provider1._generate_embedding_raw.return_value = [[0.2] * 384]
+
+    with patch('core_lib.embeddings.fallback_client.get_cache', return_value=mock_cache):
+        client = FallbackEmbeddingClient([provider1, provider2], use_health_cache=True)
+        client._mark_provider_overloaded(0)
+        client._last_health_check[0] = time.time() - 31
+        assert client.get_provider_stats()["providers"][0]["cached_overloaded"] is True
+
+        assert client.generate_embedding("test recovered") is not None
+        assert client.get_provider_stats()["providers"][0]["cached_overloaded"] is False
 
 
 def test_connection_pool_exhausted_triggers_overload():
@@ -135,8 +153,8 @@ def test_connection_pool_exhausted_triggers_overload():
         assert result is not None
         
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 0
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 0
 
 
 def test_non_overload_error_triggers_failure():
@@ -154,8 +172,8 @@ def test_non_overload_error_triggers_failure():
         assert result is not None
         
         stats = client.get_provider_stats()
-        assert stats[0]["failures"] == 1
-        assert stats[0]["overloads"] == 0
+        assert stats["providers"][0]["failures"] == 1
+        assert stats["providers"][0]["overloads"] == 0
 
 
 def test_overload_and_failure_tracked_separately():
@@ -176,14 +194,14 @@ def test_overload_and_failure_tracked_separately():
         # First call: overload
         client.generate_embedding("test")
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 0
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 0
         
         # Second call: failure
         client.generate_embedding("test")
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["failures"] == 1
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["failures"] == 1
 
 
 def test_multiple_overloads_increments_counter():
@@ -204,8 +222,8 @@ def test_multiple_overloads_increments_counter():
             client.generate_embedding("test")
         
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 3
-        assert stats[0]["failures"] == 0
+        assert stats["providers"][0]["overloads"] == 3
+        assert stats["providers"][0]["failures"] == 0
 
 
 def test_reset_clears_overload_status():
@@ -224,16 +242,16 @@ def test_reset_clears_overload_status():
         client.generate_embedding("test")
         
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[0]["cached_overloaded"] is True
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][0]["cached_overloaded"] is True
         
         # Reset
         client.reset_failures()
         
         # Should be cleared
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 0
-        assert stats[0]["cached_overloaded"] is False
+        assert stats["providers"][0]["overloads"] == 0
+        assert stats["providers"][0]["cached_overloaded"] is False
 
 
 def test_all_providers_overloaded_returns_none():
@@ -258,5 +276,5 @@ def test_all_providers_overloaded_returns_none():
         
         # Both should be marked as overloaded
         stats = client.get_provider_stats()
-        assert stats[0]["overloads"] == 1
-        assert stats[1]["overloads"] == 1
+        assert stats["providers"][0]["overloads"] == 1
+        assert stats["providers"][1]["overloads"] == 1

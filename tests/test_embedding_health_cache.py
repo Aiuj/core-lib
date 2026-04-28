@@ -115,12 +115,11 @@ def test_health_cache_skips_known_failed_providers():
         result = client.generate_embedding("test")
         assert result is not None
         
-        # Provider 1 and 2 should be marked unhealthy in cache
-        # (their health keys should be deleted)
+        # Provider 1 and 2 should be marked temporarily unhealthy in cache
         provider1_health_key = f"embedding:fallback:{client._client_id}:provider:0:healthy"
         provider2_health_key = f"embedding:fallback:{client._client_id}:provider:1:healthy"
-        assert mock_cache.get(provider1_health_key) is None
-        assert mock_cache.get(provider2_health_key) is None
+        assert mock_cache.get(provider1_health_key) == "0"
+        assert mock_cache.get(provider2_health_key) == "0"
         
         # Provider 3 should be marked healthy
         provider3_health_key = f"embedding:fallback:{client._client_id}:provider:2:healthy"

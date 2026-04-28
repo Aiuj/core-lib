@@ -166,6 +166,17 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
     def _get_preferred_provider_key(self) -> str:
         """Get cache key for preferred (currently healthy) provider index."""
         return f"embedding:fallback:{self._client_id}:preferred_provider"
+
+    def _provider_is_in_warmup(self, provider: BaseEmbeddingClient) -> bool:
+        """Return True when a provider explicitly reports an active warmup."""
+        is_in_warmup = getattr(provider, "is_in_warmup", None)
+        if not callable(is_in_warmup):
+            return False
+        try:
+            return bool(is_in_warmup() is True)
+        except Exception as e:
+            logger.debug(f"Could not read provider warmup state: {e}")
+            return False
     
     def _mark_provider_healthy(self, provider_idx: int):
         """Mark a provider as healthy in cache."""
@@ -174,6 +185,8 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             try:
                 key = self._get_health_cache_key(provider_idx)
                 cache.set(key, "1", ttl=HEALTH_STATUS_TTL)
+                overload_key = self._get_overload_cache_key(provider_idx)
+                cache.delete(overload_key)
                 # Also update preferred provider
                 pref_key = self._get_preferred_provider_key()
                 cache.set(pref_key, str(provider_idx), ttl=HEALTH_STATUS_TTL)
@@ -187,7 +200,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         if cache:
             try:
                 key = self._get_health_cache_key(provider_idx)
-                cache.delete(key)  # Remove healthy status
+                cache.set(key, "0", ttl=FAILURE_STATUS_TTL)
                 logger.debug(f"Marked provider {provider_idx} as unhealthy in cache")
             except Exception as e:
                 logger.debug(f"Could not update health status: {e}")
@@ -600,7 +613,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
 
             # Skip providers that are currently in a WoL warmup window — the
             # host is booting; route to a secondary instead.
-            if provider.is_in_warmup():
+            if self._provider_is_in_warmup(provider):
                 logger.debug(
                     f"Skipping provider {idx} (WoL warmup in progress — host is booting)"
                 )
@@ -669,7 +682,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     is_connection_error = self._is_connection_error(e)
                     is_overload = self._is_overload_error(e)
 
-                    if provider.is_in_warmup():
+                    if self._provider_is_in_warmup(provider):
                         # WoL was fired during this request — host is booting.
                         # Log at debug only; no overload counter increment.
                         logger.debug(
@@ -702,7 +715,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             # All retries for this provider failed
             if not provider_succeeded:
                 # Don't penalise a provider that is intentionally in WoL warmup.
-                if provider.is_in_warmup():
+                if self._provider_is_in_warmup(provider):
                     logger.debug(
                         f"Provider {idx} failed during WoL warmup — skipping health penalty"
                     )
