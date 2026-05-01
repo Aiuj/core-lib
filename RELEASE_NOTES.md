@@ -23,6 +23,23 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## May 2026
+
+### v0.3.9 - Document Classification & Embedding Improvements (May 1, 2026)
+
+- **Document Classification Module**: New LLM-based document classification with RAG-optimised description generation
+  - `DocumentClassifier` class in `core_lib/classification/` using a fast/cheap LLM tier
+  - Classifies documents by filename, type, language, and content excerpt
+  - Generates semantic summaries in the document's detected language for RAG retrieval
+  - Structured output validation with confidence scoring and alternative categories
+  - Added `'general'` category to `DOC_CATEGORIES`
+  - Comprehensive test coverage (`tests/test_classification.py`)
+- **ExcelManager**: Heuristic header row detection for tables without explicit headers
+- **Embedding Warmup Detection**: Added warmup state detection for embedding providers with updated health cache logic
+- **GoogleGenAI Provider**: Distinguish single-turn text-only prompts for optimised routing; improved OCR caching logic
+
+---
+
 ## April 2026
 
 ### v0.3.8 - Provider Robustness & OCR Enhancements (Apr 13, 2026)

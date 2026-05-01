@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='core-lib',
-    version='0.3.8',
+    version='0.3.9',
     description='Shared library for MCP agent tools (internal use only)',
     author='Julien Nadaud',
     author_email='nad.julien@gmail.com',
