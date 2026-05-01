@@ -99,7 +99,16 @@ class DocumentClassifier:
             )
 
             result = response.get("content")
-            if not isinstance(result, DocumentClassificationResult):
+
+            # When structured output succeeds the provider returns content as a
+            # model_dump() dict (not the Pydantic instance itself).  Validate it.
+            if isinstance(result, dict):
+                try:
+                    result = DocumentClassificationResult.model_validate(result)
+                except Exception as exc:
+                    logger.warning(f"Failed to validate structured classification response: {exc}")
+                    return self._default_result()
+            elif not isinstance(result, DocumentClassificationResult):
                 logger.warning(
                     f"Unexpected classification response type: {type(result).__name__}"
                 )

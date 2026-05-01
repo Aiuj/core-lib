@@ -141,6 +141,14 @@ DOC_CATEGORIES = [
         "area": "HR",
         "relationship": "both",
     },
+    {
+        "key": "general",
+        "label": _("General"),
+        "description": _("General documents that do not fit any other specific category."),
+        "icon": "folder",
+        "area": "GENERAL",
+        "relationship": "both",
+    },
 ]
 
 # Fast lookup by key
