@@ -195,6 +195,26 @@ class WakeOnLanStrategy:
     def _find_target(self) -> Optional[WakeTarget]:
         return self._targets[0] if self._targets else None
 
+    @property
+    def has_targets(self) -> bool:
+        """Return True when at least one WoL target is configured."""
+        return bool(self._targets)
+
+    @property
+    def targets(self) -> List[WakeTarget]:
+        """Return the list of configured WoL targets (read-only copy)."""
+        return list(self._targets)
+
+    def send_first_packet(self) -> None:
+        """Send a magic packet to the first configured target.
+
+        Raises ``ValueError`` when no targets are configured.
+        """
+        target = self._find_target()
+        if target is None:
+            raise ValueError("No WoL targets configured")
+        self._send_magic_packet(target)
+
     @staticmethod
     def _build_magic_packet(mac_hex: str) -> bytes:
         mac_bytes = bytes.fromhex(mac_hex)
