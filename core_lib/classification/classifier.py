@@ -27,9 +27,11 @@ Return a JSON object with these fields:
 - category_id: the exact key from the list above that best matches the document
 - confidence: a float between 0.0 and 1.0 indicating how confident you are
 - reasoning: one sentence explaining why this category was chosen
-- description: a 2-4 sentence semantic summary of the document content, written in the \
-document's own language, suitable for RAG retrieval — focus on what the document contains \
-and what questions it can answer
+- description: a 2-4 sentence semantic summary of the document content, suitable for RAG \
+retrieval — focus on what the document contains and what questions it can answer. \
+IMPORTANT: detect the language of the content excerpt and write this description in that \
+exact same language. If the content is in English write in English, if French write in \
+French, etc.
 - alternative_categories: list of up to 2 alternative categories as objects with \
 "category_id" and "confidence" keys; use an empty list when highly confident
 
@@ -161,7 +163,12 @@ class DocumentClassifier:
             file_info += f" ({file_type.upper()} file)"
         lang_part = f", language: {language}" if language and language != "unknown" else ""
         excerpt = content_excerpt or "(no content available)"
-        return f"Document: {file_info}{lang_part}\n\nContent excerpt:\n{excerpt}"
+        lang_reminder = (
+            f"\n\nWrite the description in: {language}"
+            if language and language != "unknown"
+            else "\n\nDetect the language of the content excerpt above and write the description in that same language."
+        )
+        return f"Document: {file_info}{lang_part}\n\nContent excerpt:\n{excerpt}{lang_reminder}"
 
     @staticmethod
     def _default_result() -> DocumentClassificationResult:
