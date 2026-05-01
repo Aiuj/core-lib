@@ -39,6 +39,9 @@ from .config import (
 # OCR services
 from .ocr import OcrService, OcrResult, OcrPageResult, DotsOcrClient
 
+# Document classification
+from .classification import DocumentClassifier, DocumentClassificationResult
+
 # API utilities for time-based authentication
 from .api_utils import (
     generate_time_key, verify_time_key, TimeBasedAuthError,
@@ -185,7 +188,11 @@ __all__ = [
     "OcrResult",
     "OcrPageResult",
     "DotsOcrClient",
-    
+
+    # Classification
+    "DocumentClassifier",
+    "DocumentClassificationResult",
+
     "__version__",
 ]
 

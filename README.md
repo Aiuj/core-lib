@@ -19,6 +19,7 @@
 - LLM client with support for multiple providers (OpenAI, Gemini, Ollama)
 - Excel file processing and markdown conversion
 - Document categorization system
+- **🆕 Document Classifier** - LLM-based document classification into 16 predefined categories with RAG-optimised description generation
 - Language detection utilities
 - Shared data classes and model access logic
 - Easy integration in monorepo and external tools
@@ -702,6 +703,43 @@ for category in DOC_CATEGORIES:
 #### Categories API
 
 - `CATEGORIES_BY_KEY`: Dictionary for fast lookup by category key
+
+### Document Classifier
+
+Classify documents into one of 16 predefined categories and generate a RAG-optimised semantic description in a single LLM call:
+
+```python
+from core_lib.classification import DocumentClassifier, DocumentClassificationResult
+
+classifier = DocumentClassifier()  # Uses cheap/fast LLM tier (intelligence_level=3)
+
+result = classifier.classify(
+    filename="Security_Policy_2026.pdf",
+    content_excerpt="This policy covers data access controls and GDPR obligations...",
+    language="en",
+    file_type="pdf",
+)
+
+print(result.category_id)              # "operations_security_compliance"
+print(result.confidence)               # 0.94
+print(result.description)             # 2-4 sentence RAG-optimised summary
+print(result.detection_method)        # "llm" or "default"
+print(result.alternative_categories)  # [{"category_id": "...", "confidence": ...}]
+```
+
+**How it works:**
+1. Builds a prompt from the filename, file type, language hint, and content excerpt.
+2. Calls the LLM with `structured_output=DocumentClassificationResult` for reliable JSON parsing.
+3. Validates the returned `category_id` against `DOC_CATEGORIES`; substitutes `"general"` for unknown keys.
+4. Falls back gracefully to `category_id="general", confidence=0.0, detection_method="default"` on any error.
+
+**Constructor parameter:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `intelligence_level` | `3` | LLM tier — 3 is cheap/fast, suitable for classification. |
+
+See **[docs/classification.md](docs/classification.md)** for full API reference and category list.
 
 ### Language Utilities
 
