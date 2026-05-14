@@ -159,7 +159,12 @@ class OpenAIProvider(BaseProvider):
         super().__init__(config)
         # Narrow the config type so type checkers can see OpenAI-specific fields.
         self.config: OpenAIConfig = config
-        from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
+        try:
+            # Prefer Langfuse drop-in wrapper so chat/completions are traced.
+            from langfuse.openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
+        except Exception:
+            # Safe fallback when Langfuse wrapper is unavailable.
+            from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
 
         # Instantiate client based on mode using official OpenAI SDK only
         if config.azure_endpoint:
