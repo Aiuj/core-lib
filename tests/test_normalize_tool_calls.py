@@ -180,3 +180,29 @@ class TestParseTextToolCalls:
         assert args1["query"] == "second"
         # Each gets a unique ID
         assert calls[0]["id"] != calls[1]["id"]
+
+    def test_json_style_tool_call_block(self):
+        text = (
+            "<tool_call>\n"
+            '{"name": "search_kb", "arguments": {"query": "largest wind project"}}\n'
+            "</tool_call>"
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "search_kb"
+        args = json.loads(calls[0]["function"]["arguments"])
+        assert args["query"] == "largest wind project"
+        assert remaining == ""
+
+    def test_json_style_tool_call_malformed_payload_is_ignored(self):
+        text = (
+            "prefix\n"
+            "<tool_call>\n"
+            '{"name": "search_kb", "arguments": {"query": "oops"}\n'
+            "</tool_call>\n"
+            "suffix"
+        )
+        calls, remaining = parse_text_tool_calls(text)
+        assert calls == []
+        assert "prefix" in remaining
+        assert "suffix" in remaining

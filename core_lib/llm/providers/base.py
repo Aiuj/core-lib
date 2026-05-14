@@ -65,6 +65,11 @@ _PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 
+_TOOL_CALL_JSON_BLOCK_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    re.DOTALL,
+)
+
 
 def parse_text_tool_calls(content: str) -> Tuple[List[Dict[str, Any]], str]:
     """Parse XML-style tool calls embedded in content text.
@@ -98,7 +103,46 @@ def parse_text_tool_calls(content: str) -> Tuple[List[Dict[str, Any]], str]:
             },
         })
 
-    remaining = _TOOL_CALL_BLOCK_RE.sub("", content).strip()
+    # Alternate format used by some Qwen/vLLM tool-call outputs:
+    #
+    # <tool_call>
+    # {"name": "search_kb", "arguments": {"query": "..."}}
+    # </tool_call>
+    for match in _TOOL_CALL_JSON_BLOCK_RE.finditer(content):
+        json_block = match.group(1).strip()
+        try:
+            payload = json.loads(json_block)
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        func_name = str(payload.get("name", "")).strip()
+        if not func_name:
+            continue
+
+        arguments = payload.get("arguments", {})
+        if isinstance(arguments, str):
+            # Keep string arguments untouched when already JSON text.
+            args_text = arguments
+        elif isinstance(arguments, dict):
+            args_text = json.dumps(arguments)
+        else:
+            # Preserve non-dict argument payloads without failing parsing.
+            args_text = json.dumps({"value": arguments})
+
+        tool_calls.append({
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": args_text,
+            },
+        })
+
+    remaining = _TOOL_CALL_BLOCK_RE.sub("", content)
+    remaining = _TOOL_CALL_JSON_BLOCK_RE.sub("", remaining).strip()
     return tool_calls, remaining
 
 

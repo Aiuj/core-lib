@@ -57,6 +57,26 @@ class _FakeCompletion:
     usage = None
 
 
+class _FakeCompletionReasoningToolCall:
+    """Completion payload where vLLM places a tool call in message.reasoning."""
+
+    class _Choice:
+        class _Message:
+            content = None
+            tool_calls = None
+            reasoning = (
+                "<tool_call>\n"
+                '{"name": "search_kb", "arguments": {"query": "largest wind project"}}\n'
+                "</tool_call>"
+            )
+
+        message = _Message()
+        finish_reason = "stop"
+
+    choices = [_Choice()]
+    usage = None
+
+
 class _FakeOpenAIClient:
     """Stub for openai.OpenAI whose chat.completions.create() we control."""
 
@@ -404,3 +424,64 @@ def test_openai_provider_rate_limit_raises(monkeypatch):
     # RateLimitError must propagate so FallbackLLMClient can route to the next provider.
     with pytest.raises(RateLimitError):
         provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+
+def test_openai_provider_parses_tool_call_from_reasoning(monkeypatch):
+    """Recover tool calls when vLLM returns them in message.reasoning with empty content."""
+    import types
+    import sys
+
+    class _Completions:
+        def create(self, **kwargs):
+            return _FakeCompletionReasoningToolCall()
+
+    class _Chat:
+        completions = _Completions()
+
+    class _FakeClient:
+        chat = _Chat()
+
+    fake_openai = types.SimpleNamespace(
+        OpenAI=lambda **kw: _FakeClient(),
+        AzureOpenAI=lambda **kw: _FakeClient(),
+        APITimeoutError=type("APITimeoutError", (Exception,), {}),
+        APIConnectionError=type("APIConnectionError", (Exception,), {}),
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    provider = OpenAIProvider(
+        OpenAIConfig(
+            api_key="fake-key",
+            model="Qwen/Qwen3-4B-FP8",
+            base_url="http://localhost:8101/v1",
+            thinking_enabled=False,
+            thinking_config={"enabled": False, "level": "off"},
+            timeout=30,
+        )
+    )
+
+    result = provider.chat(
+        messages=[{"role": "user", "content": "find largest wind project"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_kb",
+                    "description": "Search the KB",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert result["content"] == ""
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "search_kb"

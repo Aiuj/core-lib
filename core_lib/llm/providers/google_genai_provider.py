@@ -1054,6 +1054,41 @@ class GoogleGenAIProvider(BaseProvider):
                             }
                         )
 
+                # Streaming responses from google.genai often place function
+                # calls in candidate content parts (part.function_call) rather
+                # than chunk.function_calls. Parse both to maximize reliability.
+                candidates = getattr(chunk, "candidates", []) or []
+                for candidate in candidates:
+                    content_obj = getattr(candidate, "content", None)
+                    if not content_obj:
+                        continue
+                    parts = getattr(content_obj, "parts", []) or []
+                    for part in parts:
+                        function_call = getattr(part, "function_call", None)
+                        if not function_call:
+                            continue
+                        fc_name = (
+                            function_call.get("name")
+                            if isinstance(function_call, dict)
+                            else getattr(function_call, "name", "")
+                        )
+                        fc_args = (
+                            function_call.get("args", {})
+                            if isinstance(function_call, dict)
+                            else getattr(function_call, "args", {})
+                        )
+                        if fc_name:
+                            all_tool_calls.append(
+                                {
+                                    "id": None,
+                                    "function": {
+                                        "name": fc_name,
+                                        "arguments": fc_args,
+                                    },
+                                    "type": "function",
+                                }
+                            )
+
             # Normalize to canonical dict format
             tool_calls = normalize_tool_calls(all_tool_calls)
             

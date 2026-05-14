@@ -44,6 +44,7 @@ class OpenAIConfig(LLMConfig):
     azure_endpoint: Optional[str] = None
     azure_api_version: Optional[str] = None
     thinking_budget: Optional[int] = None
+    thinking_config: Optional[Dict[str, Any]] = None
     timeout: int = 60
     wake_on_lan: Optional[Dict[str, Any]] = None
 
@@ -55,6 +56,7 @@ class OpenAIConfig(LLMConfig):
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
         thinking_budget: Optional[int] = None,
+        thinking_config: Optional[Dict[str, Any]] = None,
         base_url: Optional[str] = None,
         organization: Optional[str] = None,
         project: Optional[str] = None,
@@ -66,6 +68,7 @@ class OpenAIConfig(LLMConfig):
         super().__init__("openai", model, temperature, max_tokens, thinking_enabled)
         self.api_key = api_key
         self.thinking_budget = thinking_budget
+        self.thinking_config = thinking_config or {}
         self.base_url = base_url
         self.organization = organization
         self.project = project
@@ -89,6 +92,31 @@ class OpenAIConfig(LLMConfig):
     def is_openrouter(self) -> bool:
         """True when base_url points to the OpenRouter endpoint."""
         return bool(self.base_url and "openrouter.ai" in self.base_url.lower())
+
+    @property
+    def is_local_compatible(self) -> bool:
+        """True when base_url points to a self-hosted OpenAI-compatible server
+        (e.g. vLLM, LM Studio) that is NOT a known cloud provider."""
+        return bool(
+            self.base_url
+            and not self.is_alibaba
+            and not self.is_openrouter
+            and "openai.com" not in self.base_url.lower()
+        )
+
+    def _thinking_explicitly_disabled(self) -> bool:
+        """Return True when the YAML config explicitly opts out of thinking mode."""
+        cfg = self.thinking_config or {}
+        if not cfg:
+            return False
+        # Check enabled flag
+        if "enabled" in cfg and not cfg["enabled"]:
+            return True
+        # Check level keyword
+        level = str(cfg.get("level", "")).lower().strip()
+        if level in {"off", "none", "disabled", "disable", "0", "false"}:
+            return True
+        return False
 
     @classmethod
     def from_env(cls) -> "OpenAIConfig":
@@ -301,16 +329,21 @@ class OpenAIProvider(BaseProvider):
                 else:
                     create_kwargs["response_format"] = resp_format
 
-            # Thinking mode — Alibaba/Qwen Chat Completions uses extra_body.
-            # We always send enable_thinking explicitly so that thinking: false
-            # actually disables CoT on models (e.g. qwen3.5-flash) that default
-            # to thinking mode ON.
+            # Thinking mode control via extra_body.
+            # - Alibaba/DashScope: {"enable_thinking": bool}
+            # - vLLM / local OpenAI-compatible (e.g. Qwen3 on vLLM): when
+            #   thinking is explicitly disabled in config, send
+            #   {"chat_template_kwargs": {"enable_thinking": false}} so the
+            #   model doesn't emit <think>…</think> blocks that produce empty
+            #   content or swallow tool calls.
             use_thinking = thinking_enabled if thinking_enabled is not None else self.config.thinking_enabled
             if self.config.is_alibaba:
                 extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
                 if use_thinking and self.config.thinking_budget is not None:
                     extra_body["thinking_budget"] = self.config.thinking_budget
                 create_kwargs["extra_body"] = extra_body
+            elif self.config.is_local_compatible and self.config._thinking_explicitly_disabled():
+                create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
             # Call API — with optional Wake-on-LAN support for local endpoints
             base_url_for_wol = self.config.base_url or self.config.azure_endpoint or ""
@@ -365,6 +398,17 @@ class OpenAIProvider(BaseProvider):
             choice = completion.choices[0] if getattr(completion, "choices", []) else None
             message = getattr(choice, "message", {}) if choice else {}
             content_text = getattr(message, "content", None) or (message.get("content") if isinstance(message, dict) else None) or ""
+            reasoning_text = getattr(message, "reasoning", None) or (message.get("reasoning") if isinstance(message, dict) else None) or ""
+
+            # Strip <think>...</think> blocks that some models (e.g. Qwen3 on
+            # vLLM with thinking mode ON) embed in content.  This is the
+            # fallback for cases where chat_template_kwargs didn't reach the
+            # model or the model ignores it.  Extraction must happen before tool
+            # call parsing so tags don't interfere with <tool_call> detection.
+            if content_text and "<think>" in content_text:
+                import re as _re
+                content_text = _re.sub(r"<think>.*?</think>", "", content_text, flags=_re.DOTALL).strip()
+
             raw_tool_calls = getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None) or []
             tool_calls = normalize_tool_calls(raw_tool_calls)
 
@@ -380,6 +424,24 @@ class OpenAIProvider(BaseProvider):
                         "Parsed %d text-based tool call(s) from content",
                         len(tool_calls),
                     )
+
+            # Some vLLM setups emit tool calls (or even full answers) in the
+            # `reasoning` field while leaving `content` empty. Recover tool
+            # calls from reasoning when possible.
+            if not tool_calls and tools and reasoning_text and "<tool_call>" in reasoning_text:
+                text_tool_calls, reasoning_text = parse_text_tool_calls(reasoning_text)
+                if text_tool_calls:
+                    tool_calls = text_tool_calls
+                    logger.debug(
+                        "Parsed %d text-based tool call(s) from reasoning",
+                        len(tool_calls),
+                    )
+
+            # If thinking is disabled but provider still placed the final answer
+            # in `reasoning`, use it as a fallback content channel so callers
+            # do not receive an empty assistant response.
+            if not content_text and not tool_calls and reasoning_text and not bool(use_thinking):
+                content_text = reasoning_text.strip()
             usage = getattr(completion, "usage", {}) or {}
 
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)

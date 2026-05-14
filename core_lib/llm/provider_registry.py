@@ -468,6 +468,7 @@ class ProviderConfig:
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
                 thinking_budget=thinking_budget,
+                thinking_config=self.thinking_config,
                 base_url=self.host,
                 organization=self.organization,
                 project=self.project,
