@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
 import time
+import uuid
 
 from pydantic import BaseModel
 
@@ -118,6 +119,17 @@ class OpenAIConfig(LLMConfig):
             return True
         return False
 
+    def _supports_chat_template_kwargs(self) -> bool:
+        """Return True when model family is known to accept chat_template kwargs.
+
+        Some OpenAI-compatible servers (notably vLLM with Mistral tokenizers)
+        reject requests containing chat-template controls with a 400 error.
+        We therefore only send chat_template kwargs for known model families
+        that commonly expose an ``enable_thinking`` template flag.
+        """
+        model = (self.model or "").lower()
+        return any(token in model for token in ("qwen", "deepseek", "qwq"))
+
     @classmethod
     def from_env(cls) -> "OpenAIConfig":
         import os
@@ -185,6 +197,51 @@ class OpenAIProvider(BaseProvider):
 
         self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
 
+    @staticmethod
+    def _normalize_messages_for_tool_ids(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Return OpenAI chat messages with valid tool call IDs.
+
+        Some OpenAI-compatible backends return assistant tool calls without IDs,
+        but strict backends require every later ``role=tool`` message to include
+        a non-empty ``tool_call_id`` matching an assistant tool call. Normalize
+        defensively here so every core-lib caller gets a valid provider payload.
+        """
+        normalized_messages: List[Dict[str, Any]] = []
+        pending_tool_call_ids: List[str] = []
+
+        for message in messages or []:
+            if not isinstance(message, dict):
+                normalized_messages.append(message)
+                continue
+
+            msg = dict(message)
+            role = msg.get("role")
+
+            if role == "assistant" and msg.get("tool_calls"):
+                tool_calls = normalize_tool_calls(msg.get("tool_calls") or [])
+                msg["tool_calls"] = tool_calls
+                pending_tool_call_ids.extend(
+                    str(tc.get("id") or "").strip()
+                    for tc in tool_calls
+                    if str(tc.get("id") or "").strip()
+                )
+
+            elif role == "tool":
+                tool_call_id = str(msg.get("tool_call_id") or "").strip()
+                if not tool_call_id:
+                    tool_call_id = (
+                        pending_tool_call_ids.pop(0)
+                        if pending_tool_call_ids
+                        else f"call_{uuid.uuid4().hex[:24]}"
+                    )
+                    msg["tool_call_id"] = tool_call_id
+                elif tool_call_id in pending_tool_call_ids:
+                    pending_tool_call_ids.remove(tool_call_id)
+
+            normalized_messages.append(msg)
+
+        return normalized_messages
+
     def is_in_warmup(self) -> bool:
         """Return True while a non-blocking WoL warmup window is active."""
         base_url = self.config.base_url or self.config.azure_endpoint or ""
@@ -246,6 +303,7 @@ class OpenAIProvider(BaseProvider):
                 messages = [{"role": "system", "content": system_message}] + messages[1:]
             else:
                 messages = [{"role": "system", "content": system_message}] + messages
+        messages = self._normalize_messages_for_tool_ids(messages)
 
         try:
             logger.debug(
@@ -347,7 +405,11 @@ class OpenAIProvider(BaseProvider):
                 if use_thinking and self.config.thinking_budget is not None:
                     extra_body["thinking_budget"] = self.config.thinking_budget
                 create_kwargs["extra_body"] = extra_body
-            elif self.config.is_local_compatible and self.config._thinking_explicitly_disabled():
+            elif (
+                self.config.is_local_compatible
+                and self.config._thinking_explicitly_disabled()
+                and self.config._supports_chat_template_kwargs()
+            ):
                 create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
 
             # Call API — with optional Wake-on-LAN support for local endpoints

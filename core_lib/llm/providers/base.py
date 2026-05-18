@@ -173,8 +173,11 @@ def normalize_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
             args = fn.get("arguments", "{}")
             if not isinstance(args, str):
                 args = json.dumps(args)
+            tool_call_id = str(tc.get("id") or "").strip()
+            if not tool_call_id:
+                tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
             normalized.append({
-                "id": tc.get("id", ""),
+                "id": tool_call_id,
                 "type": tc.get("type", "function"),
                 "function": {
                     "name": fn.get("name", ""),
@@ -187,8 +190,11 @@ def normalize_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
             args = getattr(fn, "arguments", "{}") if fn else "{}"
             if not isinstance(args, str):
                 args = json.dumps(args)
+            tool_call_id = str(getattr(tc, "id", "") or "").strip()
+            if not tool_call_id:
+                tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
             normalized.append({
-                "id": getattr(tc, "id", "") or "",
+                "id": tool_call_id,
                 "type": getattr(tc, "type", "function") or "function",
                 "function": {
                     "name": getattr(fn, "name", "") if fn else "",

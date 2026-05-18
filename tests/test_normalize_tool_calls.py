@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from core_lib.llm.providers.base import normalize_tool_calls, parse_text_tool_calls
+from core_lib.llm.providers.openai_provider import OpenAIProvider
 
 
 class TestNormalizeToolCalls:
@@ -39,7 +40,7 @@ class TestNormalizeToolCalls:
         }
         result = normalize_tool_calls([tc])
         assert result[0]["function"]["arguments"] == '{"query": "hello"}'
-        assert result[0]["id"] == ""
+        assert result[0]["id"].startswith("call_")
         assert result[0]["type"] == "function"
 
     def test_sdk_object_style(self):
@@ -75,7 +76,7 @@ class TestNormalizeToolCalls:
         """Minimal dict with just a function name."""
         tc = {"function": {"name": "ping"}}
         result = normalize_tool_calls([tc])
-        assert result[0]["id"] == ""
+        assert result[0]["id"].startswith("call_")
         assert result[0]["type"] == "function"
         assert result[0]["function"]["name"] == "ping"
         assert result[0]["function"]["arguments"] == "{}"
@@ -89,6 +90,28 @@ class TestNormalizeToolCalls:
         assert len(result) == 2
         assert result[0]["function"]["name"] == "a"
         assert result[1]["function"]["name"] == "b"
+
+    def test_openai_message_sanitizer_fills_missing_tool_call_id(self):
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {"name": "kb_search", "arguments": {"query": "CEO"}},
+                    }
+                ],
+            },
+            {"role": "tool", "content": '{"results": []}'},
+        ]
+
+        result = OpenAIProvider._normalize_messages_for_tool_ids(messages)
+
+        tool_call_id = result[1]["tool_calls"][0]["id"]
+        assert tool_call_id.startswith("call_")
+        assert result[2]["tool_call_id"] == tool_call_id
 
 
 class TestParseTextToolCalls:

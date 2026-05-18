@@ -485,3 +485,117 @@ def test_openai_provider_parses_tool_call_from_reasoning(monkeypatch):
     assert result["content"] == ""
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "search_kb"
+
+
+def test_openai_provider_sends_chat_template_kwargs_for_qwen_when_thinking_disabled(monkeypatch):
+    """Local Qwen models should receive chat_template_kwargs to disable thinking tags."""
+    import types
+    import sys
+
+    class _Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return _FakeCompletion()
+
+    completions = _Completions()
+
+    class _Chat:
+        pass
+
+    chat = _Chat()
+    chat.completions = completions
+
+    class _FakeClient:
+        pass
+
+    fake_client = _FakeClient()
+    fake_client.chat = chat
+
+    fake_openai = types.SimpleNamespace(
+        OpenAI=lambda **kw: fake_client,
+        AzureOpenAI=lambda **kw: fake_client,
+        APITimeoutError=type("APITimeoutError", (Exception,), {}),
+        APIConnectionError=type("APIConnectionError", (Exception,), {}),
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
+        BadRequestError=type("BadRequestError", (Exception,), {}),
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    provider = OpenAIProvider(
+        OpenAIConfig(
+            api_key="fake-key",
+            model="qwen3.5:4b",
+            base_url="http://localhost:8101/v1",
+            thinking_enabled=False,
+            thinking_config={"enabled": False, "level": "off"},
+            timeout=30,
+        )
+    )
+
+    provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+    call_kwargs = completions.calls[0]
+    assert call_kwargs.get("extra_body") == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_openai_provider_does_not_send_chat_template_kwargs_for_mistral(monkeypatch):
+    """Mistral tokenizers on vLLM reject chat_template controls; omit them."""
+    import types
+    import sys
+
+    class _Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return _FakeCompletion()
+
+    completions = _Completions()
+
+    class _Chat:
+        pass
+
+    chat = _Chat()
+    chat.completions = completions
+
+    class _FakeClient:
+        pass
+
+    fake_client = _FakeClient()
+    fake_client.chat = chat
+
+    fake_openai = types.SimpleNamespace(
+        OpenAI=lambda **kw: fake_client,
+        AzureOpenAI=lambda **kw: fake_client,
+        APITimeoutError=type("APITimeoutError", (Exception,), {}),
+        APIConnectionError=type("APIConnectionError", (Exception,), {}),
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        NotFoundError=type("NotFoundError", (Exception,), {}),
+        AuthenticationError=type("AuthenticationError", (Exception,), {}),
+        APIStatusError=type("APIStatusError", (Exception,), {}),
+        BadRequestError=type("BadRequestError", (Exception,), {}),
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    provider = OpenAIProvider(
+        OpenAIConfig(
+            api_key="fake-key",
+            model="mistralai/Ministral-3-3B-Instruct-2512",
+            base_url="http://192.168.1.204:8101/v1",
+            thinking_enabled=False,
+            thinking_config={"enabled": False, "level": "off"},
+            timeout=30,
+        )
+    )
+
+    provider.chat(messages=[{"role": "user", "content": "hello"}])
+
+    call_kwargs = completions.calls[0]
+    assert "extra_body" not in call_kwargs

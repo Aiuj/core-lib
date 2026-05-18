@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from core_lib import get_module_logger
@@ -435,6 +436,7 @@ class ConnectivityResult:
     status: str          # "ok", "down", "not_configured", "unknown"
     details: Optional[str] = None
     error: Optional[str] = None
+    host: Optional[str] = None
 
 
 def _http_get(url: str, headers: dict, timeout: int = 8) -> tuple[int, bytes]:
@@ -494,18 +496,43 @@ def _check_gemini(model: str, api_key: str) -> tuple[str, Optional[str], Optiona
 
 
 def _check_openai_compatible(model: str, api_key: str, base_url: str) -> tuple[str, Optional[str], Optional[str]]:
-    """status, details, error — GET /models/{model} (single model lookup)."""
-    url = f"{base_url.rstrip('/')}/models/{model}"
+    """status, details, error.
+
+    Prefer GET /models list lookup for compatibility with OpenAI-like servers
+    (e.g. vLLM/LM Studio) where per-model path lookup may not be supported,
+    and where model IDs can contain '/' characters.
+    """
+    models_url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
     try:
-        _http_get(url, {"Authorization": f"Bearer {api_key}"}, timeout=8)
-        return "ok", None, None
+        _, body = _http_get(models_url, headers, timeout=10)
+        data = json.loads(body.decode()) if body else {}
+        ids = {m.get("id", "") for m in data.get("data", [])}
+        if model in ids:
+            return "ok", f"{len(ids)} model(s) available", None
+        preview = ", ".join(sorted(i for i in ids if i)[:4]) if ids else "none"
+        return "down", None, f"Model '{model}' not found. Available: {preview}"
     except HTTPError as exc:
         msg = _parse_http_error(exc)
-        if exc.code == 404:
-            return "down", None, f"Model '{model}' not found: {msg}"
         if exc.code in (401, 403):
             return "down", None, f"Auth failed: {msg}"
-        return "down", None, msg
+        # Fallback: some providers may expose per-model lookup despite list failures.
+        try:
+            encoded_model = quote(model, safe="")
+            lookup_url = f"{base_url.rstrip('/')}/models/{encoded_model}"
+            _http_get(lookup_url, headers, timeout=8)
+            return "ok", None, None
+        except HTTPError as lookup_exc:
+            lookup_msg = _parse_http_error(lookup_exc)
+            if lookup_exc.code == 404:
+                return "down", None, f"Model '{model}' not found: {lookup_msg}"
+            if lookup_exc.code in (401, 403):
+                return "down", None, f"Auth failed: {lookup_msg}"
+            return "down", None, lookup_msg
+        except URLError as lookup_exc:
+            return "down", None, f"Connection failed: {lookup_exc.reason}"
+        except Exception as lookup_exc:
+            return "down", None, str(lookup_exc)
     except URLError as exc:
         return "down", None, f"Connection failed: {exc.reason}"
     except Exception as exc:
@@ -643,6 +670,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
             status, details, error = _probe_connectivity(provider)
         except Exception as exc:
             status, details, error = "down", None, str(exc)
+        resolved_host, _ = _resolve_provider_endpoint_and_region(provider)
         return ConnectivityResult(
             provider=provider.provider,
             model=provider.model,
@@ -653,6 +681,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
             status=status,
             details=details,
             error=error,
+            host=resolved_host,
         )
 
     results: List[ConnectivityResult] = []
@@ -664,6 +693,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
                     results.append(future.result())
                 except Exception as exc:
                     p = futures[future]
+                    resolved_host, _ = _resolve_provider_endpoint_and_region(p)
                     results.append(ConnectivityResult(
                         provider=p.provider, model=p.model,
                         tier=getattr(p, "tier", "standard"),
@@ -671,10 +701,12 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
                         min_intelligence_level=getattr(p, "min_intelligence_level", 0),
                         max_intelligence_level=getattr(p, "max_intelligence_level", 10),
                         status="down", error=str(exc),
+                        host=resolved_host,
                     ))
         except concurrent.futures.TimeoutError:
             for future, p in futures.items():
                 if not future.done():
+                    resolved_host, _ = _resolve_provider_endpoint_and_region(p)
                     results.append(ConnectivityResult(
                         provider=p.provider, model=p.model,
                         tier=getattr(p, "tier", "standard"),
@@ -682,6 +714,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
                         min_intelligence_level=getattr(p, "min_intelligence_level", 0),
                         max_intelligence_level=getattr(p, "max_intelligence_level", 10),
                         status="unknown", error="Connectivity check timed out",
+                        host=resolved_host,
                     ))
 
     results.sort(key=lambda r: r.priority)

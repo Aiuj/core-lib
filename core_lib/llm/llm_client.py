@@ -220,9 +220,10 @@ class LLMClient:
             result.append({"role": "user", "content": messages})
         else:
             for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                result.append({"role": role, "content": content})
+                # Preserve all message fields (tool_calls, tool_call_id, name, etc.)
+                # so multi-turn tool calling works correctly with strict validators
+                # like mistral_common (vLLM Mistral tokenizer mode).
+                result.append(dict(msg))
         return result
     
     def get_model_info(self) -> Dict[str, Any]:
