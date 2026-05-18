@@ -327,7 +327,7 @@ class WakeOnLanStrategy:
         # In warmup mode the host being asleep is expected — only warn on
         # classic blocking mode where the caller is about to stall.
         if not is_warmup_mode:
-            logger.warning(
+            logger.info(
                 f"Infinity host appears unavailable ({base_url}): {error}. "
                 f"Attempting Wake-on-LAN for host '{target_host}'"
             )
