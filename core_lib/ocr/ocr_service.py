@@ -68,20 +68,31 @@ class OcrService:
         self._cache_prefix = "ocr:"
 
         # Override the vision LLM's timeout and max output tokens.
-        # Vision / OCR requests send large base64 payloads that local models
-        # (Ollama) process much slower than text-only requests — the default
-        # 60 s provider timeout is often insufficient.
-        # The max_tokens cap prevents small models from generating excessively
-        # long (or runaway) output with complex prompts like the enriched one.
         if self._vision_client is not None:
             try:
+                def _update_config(cfg: Any):
+                    if cfg is not None:
+                        if hasattr(cfg, "timeout"):
+                            cfg.timeout = settings.vision_llm_timeout
+                        if settings.vision_max_output_tokens > 0 and hasattr(cfg, "max_tokens"):
+                            cfg.max_tokens = settings.vision_max_output_tokens
+                        # ProviderConfig also holds extra kwargs
+                        if hasattr(cfg, "extra") and isinstance(cfg.extra, dict):
+                            cfg.extra["timeout"] = settings.vision_llm_timeout
+                            
+                # 1. Update directly if FallbackLLMClient registry providers exist
+                if hasattr(self._vision_client, "_registry"):
+                    for p in self._vision_client._registry.providers:
+                        _update_config(p)
+                # 2. Update any cached clients in FallbackLLMClient
+                if hasattr(self._vision_client, "_client_cache"):
+                    for cached_client in self._vision_client._client_cache.values():
+                        prov = getattr(cached_client, "_provider", None)
+                        _update_config(getattr(prov, "config", None))
+                # 3. Update if simple LLMClient
                 provider = getattr(self._vision_client, "_provider", None)
-                config = getattr(provider, "config", None)
-                if config is not None:
-                    if hasattr(config, "timeout"):
-                        config.timeout = settings.vision_llm_timeout
-                    if settings.vision_max_output_tokens > 0 and hasattr(config, "max_tokens"):
-                        config.max_tokens = settings.vision_max_output_tokens
+                if provider is not None:
+                    _update_config(getattr(provider, "config", None))
             except Exception:
                 pass  # Best effort — not all providers expose these attributes
 
@@ -333,11 +344,11 @@ class OcrService:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": data_url}},
                     {
                         "type": "text",
                         "text": prompt_text,
                     },
+                    {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }
         ]
