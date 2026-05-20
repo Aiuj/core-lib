@@ -65,6 +65,12 @@ LLM_PRICING = {
     
     # Local/Self-hosted (free)
     "ollama": {"input": 0.0, "output": 0.0},
+
+    # OVHcloud AI Endpoints
+    # Source: https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/
+    # Prices in EUR; converted to USD at ~1.10 USD/EUR. Last updated: May 2026.
+    "Qwen3.5-9B": {"input": 0.00011, "output": 0.000165},        # 0.10€/$0.15€ per 1M tokens
+    "Qwen3.5-397B-A17B": {"input": 0.00066, "output": 0.00396},  # 0.60€/3.60€ per 1M tokens
 }
 
 

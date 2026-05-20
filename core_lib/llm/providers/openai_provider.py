@@ -95,6 +95,11 @@ class OpenAIConfig(LLMConfig):
         return bool(self.base_url and "openrouter.ai" in self.base_url.lower())
 
     @property
+    def is_ovh(self) -> bool:
+        """True when base_url points to an OVHcloud AI Endpoints endpoint."""
+        return bool(self.base_url and "ovh.net" in self.base_url.lower())
+
+    @property
     def is_local_compatible(self) -> bool:
         """True when base_url points to a self-hosted OpenAI-compatible server
         (e.g. vLLM, LM Studio) that is NOT a known cloud provider."""
@@ -102,6 +107,7 @@ class OpenAIConfig(LLMConfig):
             self.base_url
             and not self.is_alibaba
             and not self.is_openrouter
+            and not self.is_ovh
             and "openai.com" not in self.base_url.lower()
         )
 
@@ -186,7 +192,13 @@ class OpenAIProvider(BaseProvider):
                 api_version=config.azure_api_version,
             )
         else:
-            kwargs: Dict[str, Any] = {"api_key": config.api_key}
+            kwargs: Dict[str, Any] = {
+                "api_key": config.api_key,
+                # Disable SDK-level retries — FallbackLLMClient handles failover.
+                # Without this the SDK retries up to 2× internally, tripling the
+                # wall-clock time before the fallback chain can try the next provider.
+                "max_retries": 0,
+            }
             if config.base_url:
                 kwargs["base_url"] = config.base_url
             if config.organization:
@@ -356,9 +368,17 @@ class OpenAIProvider(BaseProvider):
                 # Alibaba/DashScope has two quirks with structured output:
                 # 1. Requires the word "json" in the messages when response_format is set
                 # 2. Does not enforce json_schema strictly — use json_object + schema instruction
-                if self.config.is_alibaba:
-                    # Use simpler json_object format (Alibaba doesn't enforce json_schema)
-                    create_kwargs["response_format"] = {"type": "json_object"}
+                #
+                # OVH AI Endpoints (Qwen3.5 thinking models) must NOT receive
+                # response_format at all: the combination of thinking mode +
+                # json_object exhausts max_tokens on reasoning and returns empty
+                # content.  We use the same prompt-only approach as Alibaba but
+                # without even setting response_format.
+                if self.config.is_alibaba or self.config.is_ovh:
+                    # For OVH: omit response_format entirely.
+                    # For Alibaba: use simpler json_object format (doesn't enforce json_schema)
+                    if self.config.is_alibaba:
+                        create_kwargs["response_format"] = {"type": "json_object"}
                     # Build a schema hint to guide the model
                     schema_hint = ""
                     if structured_output is not None:
@@ -399,12 +419,27 @@ class OpenAIProvider(BaseProvider):
             #   {"chat_template_kwargs": {"enable_thinking": false}} so the
             #   model doesn't emit <think>…</think> blocks that produce empty
             #   content or swallow tool calls.
+            # - OVH AI Endpoints: neither extra_body nor chat_template_kwargs are
+            #   supported. The only way to minimise thinking tokens is to prepend
+            #   "/no_think" to the system message (Qwen3 soft-disable signal).
             use_thinking = thinking_enabled if thinking_enabled is not None else self.config.thinking_enabled
             if self.config.is_alibaba:
                 extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
                 if use_thinking and self.config.thinking_budget is not None:
                     extra_body["thinking_budget"] = self.config.thinking_budget
                 create_kwargs["extra_body"] = extra_body
+            elif self.config.is_ovh and self.config._thinking_explicitly_disabled():
+                # Inject "/no_think" as a system prompt prefix — the only
+                # mechanism OVH exposes. It cannot fully disable thinking but
+                # reduces reasoning tokens significantly (~50 % in practice).
+                msgs = create_kwargs["messages"]
+                if msgs and msgs[0].get("role") == "system":
+                    existing = msgs[0]["content"] or ""
+                    if "/no_think" not in existing:
+                        msgs = [{"role": "system", "content": "/no_think " + existing}, *msgs[1:]]
+                else:
+                    msgs = [{"role": "system", "content": "/no_think"}] + msgs
+                create_kwargs["messages"] = msgs
             elif (
                 self.config.is_local_compatible
                 and self.config._thinking_explicitly_disabled()

@@ -206,6 +206,11 @@ class ProviderConfig:
             self.provider = "openai-responses"
         elif self.provider in ("open-router", "open_router"):
             self.provider = "openrouter"
+        elif self.provider in ("ovh", "ovhcloud"):
+            # OVHcloud AI Endpoints — OpenAI-compatible Chat Completions API
+            self.provider = "openai"
+            if not self.host:
+                self.host = "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
 
         # Set default base URLs for providers that need them (applies to both
         # canonical names and aliases resolved above)
