@@ -21,6 +21,7 @@ Example:
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from .llm_client import LLMClient
 from .providers.azure_openai_provider import AzureOpenAIConfig
+from .providers.mistral_provider import MistralConfig
 from .factory import (
     LLMFactory,
     create_llm_client,
@@ -33,6 +34,7 @@ from .factory import (
     create_openai_responses_client,
     create_alibaba_client,
     create_openrouter_client,
+    create_mistral_client,
 )
 from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .provider_registry import ProviderConfig, ProviderRegistry, substitute_env_vars
@@ -85,6 +87,7 @@ __all__ = [
     "OpenAIConfig",
     "AzureOpenAIConfig",
     "OpenAIResponsesConfig",
+    "MistralConfig",
     "LLMClient",
     
     # Fallback client (automatic provider failover)
@@ -129,6 +132,7 @@ __all__ = [
     "create_openai_responses_client",
     "create_alibaba_client",
     "create_openrouter_client",
+    "create_mistral_client",
     
     # LangChain adapter (optional - requires langchain-core)
     "CoreLibChatModel",

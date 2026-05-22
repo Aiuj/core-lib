@@ -15,6 +15,7 @@ from core_lib.tracing.service_usage import _llm_usage_type
 from .providers.base import BaseProvider
 from .providers.azure_openai_provider import AzureOpenAIConfig, AzureOpenAIProvider
 from .providers.google_genai_provider import GoogleGenAIProvider
+from .providers.mistral_provider import MistralConfig, MistralProvider
 from .providers.ollama_provider import OllamaProvider
 from .providers.openai_provider import OpenAIProvider
 from .providers.openai_responses_provider import OpenAIResponsesProvider, OpenAIResponsesConfig
@@ -44,6 +45,9 @@ class LLMClient:
         # AzureOpenAIConfig must be checked before OpenAIConfig (it is a subclass)
         if isinstance(self.config, AzureOpenAIConfig):
             return AzureOpenAIProvider(self.config)
+        # MistralConfig must be checked before OpenAIConfig (it is a subclass)
+        if isinstance(self.config, MistralConfig):
+            return MistralProvider(self.config)
         if isinstance(self.config, OpenAIConfig):
             return OpenAIProvider(self.config)
         raise ValueError(f"Unsupported LLM provider: {self.config.provider}")

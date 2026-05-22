@@ -37,7 +37,7 @@ class LLMConfig(ABC):
         raise NotImplementedError()
 
 
-__all__ = ["LLMConfig", "GeminiConfig", "OpenAIConfig", "AzureOpenAIConfig", "OllamaConfig", "OpenAIResponsesConfig"]
+__all__ = ["LLMConfig", "GeminiConfig", "OpenAIConfig", "AzureOpenAIConfig", "OllamaConfig", "OpenAIResponsesConfig", "MistralConfig"]
 
 
 def __getattr__(name: str):
@@ -61,6 +61,10 @@ def __getattr__(name: str):
         from .providers.openai_responses_provider import OpenAIResponsesConfig  # type: ignore
 
         return OpenAIResponsesConfig
+    if name == "MistralConfig":
+        from .providers.mistral_provider import MistralConfig  # type: ignore
+
+        return MistralConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

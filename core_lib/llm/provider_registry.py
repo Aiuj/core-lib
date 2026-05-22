@@ -227,6 +227,7 @@ class ProviderConfig:
                 "ollama": "llama3.2",
                 "openai-responses": "gpt-4.1",
                 "openrouter": "openrouter/auto",
+                "mistral": "mistral-small-latest",
             }
             self.model = defaults.get(self.provider, "")
     
@@ -544,6 +545,23 @@ class ProviderConfig:
                 project=self.project,
                 timeout=timeout,
             )
+
+        elif self.provider == "mistral":
+            from .providers.mistral_provider import MistralConfig
+            api_key = (
+                self.api_key
+                or os.getenv("MISTRAL_API_KEY")
+                or ""
+            )
+            timeout = int(self.extra.get("timeout", 60))
+            return MistralConfig(
+                api_key=api_key,
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                thinking_enabled=self.thinking_enabled,
+                timeout=timeout,
+            )
         
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -613,6 +631,11 @@ class ProviderConfig:
             return (
                 bool(self.api_key)
                 or bool(os.getenv("OPENROUTER_API_KEY"))
+            )
+        elif self.provider == "mistral":
+            return (
+                bool(self.api_key)
+                or bool(os.getenv("MISTRAL_API_KEY"))
             )
         elif self.provider == "ollama":
             # Ollama doesn't require API key

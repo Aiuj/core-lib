@@ -124,6 +124,9 @@ class LLMFactory:
                 base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
                 model=model,
             )
+        elif provider_lc in ("mistral", "mistral-ai", "mistral_ai"):
+            from .providers.mistral_provider import MistralConfig
+            config = MistralConfig.from_env()
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         
@@ -540,6 +543,50 @@ class LLMFactory:
         return LLMClient(config)
 
     @classmethod
+    def mistral(
+        cls,
+        api_key: Optional[str] = None,
+        model: str = "mistral-small-latest",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        thinking_enabled: bool = False,
+        **kwargs,
+    ) -> LLMClient:
+        """Create a client for Mistral AI via the OpenAI-compatible Chat Completions API.
+
+        Mistral's ``/v1/chat/completions`` endpoint is fully OpenAI-compatible,
+        so no extra dependency is needed beyond the ``openai`` package.
+
+        Thinking / reasoning mode is supported only for ``magistral-*`` models
+        via ``reasoning_effort``.  Pass ``thinking_enabled=True`` to activate it.
+
+        Args:
+            api_key:          Mistral API key.  Reads ``MISTRAL_API_KEY`` from
+                              the environment when not provided.
+            model:            Mistral model name (default: ``mistral-small-latest``).
+            temperature:      Sampling temperature (default: 0.7).
+            max_tokens:       Maximum output tokens.
+            thinking_enabled: Enable reasoning mode (magistral-* models only).
+        """
+        from .providers.mistral_provider import MistralConfig
+        resolved_key = api_key or os.environ.get("MISTRAL_API_KEY") or ""
+        if resolved_key:
+            config = MistralConfig(
+                api_key=resolved_key,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                thinking_enabled=thinking_enabled,
+            )
+        else:
+            config = MistralConfig.from_env()
+            config.model = model
+            config.temperature = temperature
+            config.max_tokens = max_tokens
+            config.thinking_enabled = thinking_enabled
+        return LLMClient(config)
+
+    @classmethod
     def _detect_provider_from_env(cls) -> str:
         """Auto-detect the provider from environment variables.
         
@@ -570,6 +617,8 @@ class LLMFactory:
             return provider.lower()
         
         # Try to detect based on available API keys
+        if os.environ.get("MISTRAL_API_KEY"):
+            return "mistral"
         if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY"):
             return "gemini"
         elif os.environ.get("OPENAI_API_KEY"):
@@ -691,3 +740,8 @@ def create_alibaba_client(**kwargs) -> LLMClient:
 def create_openrouter_client(**kwargs) -> LLMClient:
     """Create a client for the OpenRouter gateway (access 300+ models via one API key)."""
     return LLMFactory.openrouter(**kwargs)
+
+
+def create_mistral_client(**kwargs) -> LLMClient:
+    """Create a Mistral AI client via the OpenAI-compatible Chat Completions API."""
+    return LLMFactory.mistral(**kwargs)

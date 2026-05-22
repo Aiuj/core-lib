@@ -283,6 +283,34 @@ class OpenAIProvider(BaseProvider):
         # Assume tools are already in OpenAI format: {type: "function", function: {name, parameters}}
         return tools
 
+    @property
+    def _provider_tracing_name(self) -> str:
+        """Provider name used for tracing and usage logging. Override in subclasses."""
+        return "openai"
+
+    def _apply_thinking_mode(self, create_kwargs: Dict[str, Any], use_thinking: bool) -> None:
+        """Apply thinking mode parameters to create_kwargs. Override in subclasses."""
+        if self.config.is_alibaba:
+            extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
+            if use_thinking and self.config.thinking_budget is not None:
+                extra_body["thinking_budget"] = self.config.thinking_budget
+            create_kwargs["extra_body"] = extra_body
+        elif self.config.is_ovh and self.config._thinking_explicitly_disabled():
+            msgs = create_kwargs["messages"]
+            if msgs and msgs[0].get("role") == "system":
+                existing = msgs[0]["content"] or ""
+                if "/no_think" not in existing:
+                    msgs = [{"role": "system", "content": "/no_think " + existing}, *msgs[1:]]
+            else:
+                msgs = [{"role": "system", "content": "/no_think"}] + msgs
+            create_kwargs["messages"] = msgs
+        elif (
+            self.config.is_local_compatible
+            and self.config._thinking_explicitly_disabled()
+            and self.config._supports_chat_template_kwargs()
+        ):
+            create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
     def _build_response_format(self, structured_output: Optional[Type[BaseModel]]) -> Optional[Dict[str, Any]]:
         if structured_output is None:
             return None
@@ -423,29 +451,7 @@ class OpenAIProvider(BaseProvider):
             #   supported. The only way to minimise thinking tokens is to prepend
             #   "/no_think" to the system message (Qwen3 soft-disable signal).
             use_thinking = thinking_enabled if thinking_enabled is not None else self.config.thinking_enabled
-            if self.config.is_alibaba:
-                extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
-                if use_thinking and self.config.thinking_budget is not None:
-                    extra_body["thinking_budget"] = self.config.thinking_budget
-                create_kwargs["extra_body"] = extra_body
-            elif self.config.is_ovh and self.config._thinking_explicitly_disabled():
-                # Inject "/no_think" as a system prompt prefix — the only
-                # mechanism OVH exposes. It cannot fully disable thinking but
-                # reduces reasoning tokens significantly (~50 % in practice).
-                msgs = create_kwargs["messages"]
-                if msgs and msgs[0].get("role") == "system":
-                    existing = msgs[0]["content"] or ""
-                    if "/no_think" not in existing:
-                        msgs = [{"role": "system", "content": "/no_think " + existing}, *msgs[1:]]
-                else:
-                    msgs = [{"role": "system", "content": "/no_think"}] + msgs
-                create_kwargs["messages"] = msgs
-            elif (
-                self.config.is_local_compatible
-                and self.config._thinking_explicitly_disabled()
-                and self.config._supports_chat_template_kwargs()
-            ):
-                create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            self._apply_thinking_mode(create_kwargs, use_thinking)
 
             # Call API — with optional Wake-on-LAN support for local endpoints
             base_url_for_wol = self.config.base_url or self.config.azure_endpoint or ""
@@ -565,7 +571,7 @@ class OpenAIProvider(BaseProvider):
                         usage["tokens_per_second"] = tokens_per_second
 
                 trace_metadata = {
-                    "gen_ai.system": "openai",
+                    "gen_ai.system": self._provider_tracing_name,
                     "gen_ai.request.model": self.config.model,
                     "gen_ai.usage.input_tokens": input_tokens,
                     "gen_ai.usage.output_tokens": output_tokens,
@@ -580,7 +586,7 @@ class OpenAIProvider(BaseProvider):
                 add_trace_metadata({k: v for k, v in trace_metadata.items() if v is not None})
                 
                 log_llm_usage(
-                    provider="openai",
+                    provider=self._provider_tracing_name,
                     model=self.config.model,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,

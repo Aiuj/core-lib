@@ -71,6 +71,23 @@ LLM_PRICING = {
     # Prices in EUR; converted to USD at ~1.10 USD/EUR. Last updated: May 2026.
     "Qwen3.5-9B": {"input": 0.00011, "output": 0.000165},        # 0.10€/$0.15€ per 1M tokens
     "Qwen3.5-397B-A17B": {"input": 0.00066, "output": 0.00396},  # 0.60€/3.60€ per 1M tokens
+
+    # Mistral AI models
+    # Source: https://mistral.ai/pricing#api (updated May 2026)
+    # Prices per 1M tokens → converted to per 1K by dividing by 1000.
+    # Ministral (edge) models — text + vision + agentic
+    "ministral-3b-latest": {"input": 0.0001, "output": 0.0001},        # $0.10/$0.10 per 1M
+    "ministral-8b-latest": {"input": 0.00015, "output": 0.00015},      # $0.15/$0.15 per 1M
+    "ministral-14b-latest": {"input": 0.0002, "output": 0.0002},       # $0.20/$0.20 per 1M
+    # Mistral Small — multimodal, reasoning, lightweight
+    "mistral-small-latest": {"input": 0.00015, "output": 0.0006},      # $0.15/$0.60 per 1M
+    # Mistral Medium — multimodal, agentic
+    "mistral-medium-latest": {"input": 0.0015, "output": 0.0075},      # $1.50/$7.50 per 1M
+    # Mistral Large — multimodal, flagship
+    "mistral-large-latest": {"input": 0.0005, "output": 0.0015},       # $0.50/$1.50 per 1M
+    # Magistral thinking/reasoning models
+    "magistral-medium-latest": {"input": 0.002, "output": 0.005},      # $2.00/$5.00 per 1M
+    "magistral-small-latest": {"input": 0.0005, "output": 0.0015},     # $0.50/$1.50 per 1M
 }
 
 
