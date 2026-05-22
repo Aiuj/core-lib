@@ -14,6 +14,7 @@ client = create_llm_client()                                          # auto-det
 client = create_llm_client(provider="gemini", model="gemini-2.5-flash")
 client = create_llm_client(provider="ollama", model="qwen3.5:4b")
 client = create_llm_client(provider="openai", model="gpt-4o")
+client = create_llm_client(provider="mistral", model="mistral-large-latest")
 
 response = client.chat("Hello!")
 print(response["content"])
@@ -190,6 +191,32 @@ from core_lib.llm import create_alibaba_client
 
 client = create_alibaba_client(model="qwen3-max", thinking_enabled=True)
 response = client.chat("Solve: 3x + 7 = 22")
+```
+
+### Mistral AI
+```python
+from core_lib.llm import create_mistral_client, LLMFactory
+
+# Standard model
+client = create_mistral_client(model="mistral-large-latest")
+response = client.chat("Summarize this article.")
+
+# Reasoning model (magistral-* only)
+client = LLMFactory.mistral(model="magistral-medium-latest", thinking_enabled=True)
+response = client.chat("Prove P≠NP is hard.")
+```
+
+### OVH AI Endpoints
+```python
+from core_lib.llm import LLMFactory
+
+client = LLMFactory.openai_compatible(
+    base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    api_key="your-ovh-token",
+    model="Qwen3.5-14B",
+    thinking_enabled=False,  # disable /no_think prefix on Qwen3
+)
+response = client.chat("Translate to French: Hello world")
 ```
 
 ### Fallback with Metadata

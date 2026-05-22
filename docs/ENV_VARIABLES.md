@@ -117,6 +117,88 @@ export AZURE_OPENAI_MAX_TOKENS=                       # Max tokens (optional; fa
 export AZURE_OPENAI_ORG=                              # Organisation ID (optional)
 ```
 
+## Mistral AI Configuration
+
+```bash
+export MISTRAL_API_KEY=your-mistral-api-key   # API key (required); get from https://console.mistral.ai
+export MISTRAL_MODEL=mistral-small-latest     # Model name (default: mistral-small-latest)
+export MISTRAL_TEMPERATURE=0.7               # Sampling temperature (default: 0.7)
+export MISTRAL_MAX_TOKENS=                   # Max output tokens (optional)
+export MISTRAL_TIMEOUT=60                    # HTTP timeout in seconds (default: 60)
+```
+
+Usage:
+
+```python
+from core_lib.llm import create_mistral_client, LLMFactory, create_llm_client
+
+# From environment
+client = create_mistral_client()
+
+# Explicit parameters
+client = create_mistral_client(model="mistral-large-latest", temperature=0.3)
+
+# Via factory
+client = LLMFactory.mistral(model="mistral-large-latest")
+
+# Reasoning model (magistral-*)
+client = LLMFactory.mistral(model="magistral-medium-latest", thinking_enabled=True)
+
+# Via create_llm_client (provider= accepts "mistral", "mistral-ai", or "mistral_ai")
+client = create_llm_client(provider="mistral")
+```
+
+**Auto-detection:** `MISTRAL_API_KEY` is checked before `GEMINI_API_KEY` in the provider auto-detection chain. If set, Mistral is selected automatically when `LLM_PROVIDER` is not specified.
+
+## OVH AI Endpoints Configuration
+
+OVH AI Endpoints provides an OpenAI-compatible Chat Completions API. There are no dedicated `OVH_*` env vars — use either `llm_providers.yaml` (recommended for multi-provider setups) or set standard OpenAI env vars pointing to the OVH endpoint.
+
+### Via llm_providers.yaml (Recommended)
+
+```yaml
+# llm_providers.yaml
+providers:
+  - provider: ovh                        # Alias: "ovhcloud"
+    api_key: ${OVH_AI_ENDPOINTS_TOKEN}   # Your OVH AI Endpoints token
+    model: Qwen3.5-14B                   # Model deployed on your endpoint
+    # host: https://oai.endpoints.kepler.ai.cloud.ovh.net/v1  # auto-set for "ovh"
+    thinking:
+      enabled: false                     # Disable Qwen3 thinking tokens (/no_think prefix)
+    priority: 1
+```
+
+```bash
+export OVH_AI_ENDPOINTS_TOKEN=your-token
+export LLM_PROVIDERS_FILE=llm_providers.yaml
+```
+
+### Via Environment Variables (Single-Provider)
+
+```bash
+export OPENAI_API_KEY=your-ovh-token
+export OPENAI_BASE_URL=https://oai.endpoints.kepler.ai.cloud.ovh.net/v1
+export OPENAI_MODEL=Qwen3.5-14B
+export LLM_PROVIDER=openai
+```
+
+### Via Code
+
+```python
+from core_lib.llm import LLMFactory
+
+client = LLMFactory.openai_compatible(
+    base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    api_key="your-ovh-token",
+    model="Qwen3.5-14B",
+    thinking_enabled=False,   # Disable thinking tokens
+)
+```
+
+**OVH-specific behaviours (auto-detected when URL contains `ovh.net`):**
+- `response_format` is **omitted** for structured output; a JSON schema hint is injected into the system message instead.
+- Thinking is disabled via a `/no_think` system message prefix rather than `extra_body`.
+
 Usage:
 
 ```python

@@ -62,6 +62,7 @@ client = create_gemini_client(api_key="your-key", model="gemini-2.5-flash")
 client = create_openai_responses_client(api_key="sk-...", model="gpt-4.1")
 client = create_alibaba_client(model="qwen3-max")      # reads DASHSCOPE_API_KEY
 client = create_azure_openai_client()                   # reads AZURE_OPENAI_* env vars
+client = create_mistral_client(model="mistral-large-latest")  # reads MISTRAL_API_KEY
 ```
 
 **Using the factory class:**
@@ -75,6 +76,8 @@ client = LLMFactory.openai_responses(model="gpt-4.1", reasoning_effort="low")
 client = LLMFactory.alibaba(model="qwen3-max", thinking_enabled=True)
 client = LLMFactory.azure_openai(deployment="gpt-4o")
 client = LLMFactory.openrouter(model="anthropic/claude-3.5-sonnet")
+client = LLMFactory.mistral(model="mistral-large-latest", thinking_enabled=True)  # magistral-* only
+client = LLMFactory.openai_compatible(base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", api_key="...", model="Qwen3.5-14B")
 ```
 
 ---
@@ -290,6 +293,54 @@ response = client.chat("Explain the Renaissance briefly.")
 print(response["content"])
 ```
 
+### Mistral AI
+
+```python
+from core_lib.llm import create_mistral_client, LLMFactory
+
+# Standard model — reads MISTRAL_API_KEY from env
+client = create_mistral_client(model="mistral-large-latest")
+response = client.chat("Summarize the French Revolution.")
+print(response["content"])
+
+# Reasoning model (magistral-*) — activate thinking via reasoning_effort
+client = LLMFactory.mistral(model="magistral-medium-latest", thinking_enabled=True)
+response = client.chat("Prove that there are infinitely many prime numbers.")
+print(response["content"])
+```
+
+Thinking is supported **only for `magistral-*` models** via `reasoning_effort`. Passing `thinking_enabled=True` on a non-magistral model is silently ignored.
+
+### OVH AI Endpoints
+
+OVH AI Endpoints exposes an OpenAI-compatible Chat Completions API. Use `LLMFactory.openai_compatible()` or configure it via `llm_providers.yaml`:
+
+```python
+from core_lib.llm import LLMFactory
+
+# Explicit
+client = LLMFactory.openai_compatible(
+    base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    api_key="your-ovh-token",
+    model="Qwen3.5-14B",
+)
+response = client.chat("Describe the Eiffel Tower.")
+print(response["content"])
+
+# Disable thinking tokens on Qwen3 models hosted on OVH
+# (set thinking=false in llm_providers.yaml or via thinking_config)
+client = LLMFactory.openai_compatible(
+    base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+    api_key="your-ovh-token",
+    model="Qwen3.5-14B",
+    thinking_enabled=False,
+)
+```
+
+**OVH-specific behaviours (auto-detected from the URL):**
+- `response_format` is **omitted entirely** for structured output (Qwen3 thinking + json_object exhausts max_tokens); a JSON schema hint is injected into the system message instead.
+- Thinking is disabled via a `/no_think` prefix on the system message (Qwen3 soft-disable signal), not via `extra_body`.
+
 ### Ollama (Local)
 
 ```python
@@ -310,11 +361,14 @@ response = client.chat("Classify this text: ...")
 
 ### Auto-Detection Priority
 
-1. `LLM_PROVIDER` — explicit: `gemini`, `openai`, `openai-responses`, `openrouter`, `azure`, `ollama`, `alibaba`
-2. `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
-3. `OPENAI_API_KEY` → OpenAI Chat Completions
-4. `AZURE_OPENAI_API_KEY` → Azure OpenAI
-5. Default fallback → Ollama
+1. `LLM_PROVIDER` — explicit: `gemini`, `openai`, `openai-responses`, `openrouter`, `azure`, `ollama`, `alibaba`, `mistral`
+2. `MISTRAL_API_KEY` → Mistral AI
+3. `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` → Gemini
+4. `OPENAI_API_KEY` → OpenAI Chat Completions
+5. `AZURE_OPENAI_API_KEY` → Azure OpenAI
+6. Default fallback → Ollama
+
+> **OVH AI Endpoints** does not use a dedicated `LLM_PROVIDER` value in single-client mode. Configure it via `llm_providers.yaml` (`provider: ovh`) or use `LLMFactory.openai_compatible()` with the OVH base URL directly.
 
 ### Gemini (Developer API)
 | Variable | Default | Description |
@@ -359,6 +413,18 @@ response = client.chat("Classify this text: ...")
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-4o-mini` | Deployment/model name |
 | `AZURE_OPENAI_API_VERSION` | `2024-08-01-preview` | REST API version |
 
+### Mistral AI
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MISTRAL_API_KEY` | — | API key (required) |
+| `MISTRAL_MODEL` | `mistral-small-latest` | Model name |
+| `MISTRAL_TEMPERATURE` | `0.7` | Sampling temperature |
+| `MISTRAL_MAX_TOKENS` | — | Max output tokens |
+| `MISTRAL_TIMEOUT` | `60` | HTTP timeout in seconds |
+
+### OVH AI Endpoints
+OVH uses standard OpenAI env vars — set `OPENAI_BASE_URL` to the OVH endpoint and `OPENAI_API_KEY` to your OVH token, then call `create_llm_client(provider="openai")`. The recommended approach is `llm_providers.yaml` with `provider: ovh` (see [PROVIDER_REGISTRY_QUICK_REFERENCE.md](PROVIDER_REGISTRY_QUICK_REFERENCE.md)).
+
 ### Ollama
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -373,18 +439,18 @@ response = client.chat("Classify this text: ...")
 
 ## Provider Comparison
 
-| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | OpenRouter | Alibaba (Qwen) |
-|---------|--------|--------|---------------|-----------------|------------|----------------|
-| Cost | Free (local) | Paid | Paid | Paid | Paid | Paid |
-| Privacy | Local | Cloud | Cloud | Cloud | Cloud | Cloud |
-| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `response_format` | `text.format` |
-| Tool Calling | Model-dependent | Native | Native | Native | Model-dependent | Native |
-| Vision / Multimodal | qwen3.5, qwen2.5vl | All | GPT-4o+ | GPT-4o+ | Model-dependent | Qwen-VL models |
-| Thinking / Reasoning | qwen3, qwen3.5 | 2.5-series | Not forwarded | o-series | Model-dependent | Qwen3+ |
-| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | Model-dependent | ✅ |
-| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ❌ | ✅ |
-| Rate limiting | None (local) | Auto (model-specific) | None | None | None | None |
-| Auto-retry | None | Exponential backoff | None | None | None | None |
+| Feature | Ollama | Gemini | OpenAI (Chat) | OpenAI Responses | OpenRouter | Alibaba (Qwen) | Mistral | OVH AI Endpoints |
+|---------|--------|--------|---------------|-----------------|------------|----------------|---------|------------------|
+| Cost | Free (local) | Paid | Paid | Paid | Paid | Paid | Paid | Paid |
+| Privacy | Local | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud | Cloud |
+| Structured Output | JSON + Pydantic | `response_schema` | `response_format` | `text.format` | `response_format` | `text.format` | `response_format` | Schema hint (no `response_format`) |
+| Tool Calling | Model-dependent | Native | Native | Native | Model-dependent | Native | Native | Model-dependent |
+| Vision / Multimodal | qwen3.5, qwen2.5vl | All | GPT-4o+ | GPT-4o+ | Model-dependent | Qwen-VL models | pixtral-* models | Model-dependent |
+| Thinking / Reasoning | qwen3, qwen3.5 | 2.5-series | Not forwarded | o-series | Model-dependent | Qwen3+ | magistral-* (`reasoning_effort`) | `/no_think` prefix |
+| Web search grounding | ❌ | ✅ Google Search | ❌ | ✅ `web_search_preview` | Model-dependent | ✅ | ❌ | ❌ |
+| Stateful multi-turn | ❌ | ❌ | ❌ | ✅ `previous_response_id` | ❌ | ✅ | ❌ | ❌ |
+| Rate limiting | None (local) | Auto (model-specific) | None | None | None | None | None | None |
+| Auto-retry | None | Exponential backoff | None | None | None | None | None | None |
 
 ---
 
