@@ -25,6 +25,19 @@ Then commit, push and tag this new version in github and create a release for th
 
 ## May 2026
 
+### v0.3.10 - Provider Expansion & OpenAI Tooling Improvements (May 25, 2026)
+
+- **Mistral AI Support**: Added Mistral AI provider integration with configuration details and usage examples
+- **OVHcloud AI Endpoints**: Added OVH AI Endpoints support in provider registry and pricing metadata
+- **OpenAI Provider Enhancements**:
+  - Added parsing support for reasoning-originated and JSON-style tool calls
+  - Improved tracing integration by preferring Langfuse wrapper with SDK fallback
+  - Improved provider connectivity checks and related robustness
+- **Vision LLM Configuration**: Updated timeout and max output token handling for vision flows
+- **Logging Tuning**: Changed Wake-on-LAN availability message from warning to info level
+
+---
+
 ### v0.3.9 - Document Classification & Embedding Improvements (May 1, 2026)
 
 - **Document Classification Module**: New LLM-based document classification with RAG-optimised description generation
