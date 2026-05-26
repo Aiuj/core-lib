@@ -6,31 +6,39 @@ Update these dictionaries when providers change their pricing.
 Pricing is per 1,000 tokens unless otherwise noted.
 All prices in USD.
 
-Last updated: March 14, 2026
+Last updated: May 26, 2026
 """
 
 # LLM Pricing per 1K tokens (USD)
 # Format: {"model-name": {"input": price_per_1k, "output": price_per_1k}}
 LLM_PRICING = {
     # OpenAI models
-    # Source: https://openai.com/api/pricing/ (updated Oct 2025)
-    # GPT-5 series (flagship models)
-    "gpt-5": {"input": 0.00125, "output": 0.01},  # $1.25/$10.00 per 1M tokens
-    "gpt-5-mini": {"input": 0.00025, "output": 0.002},  # $0.25/$2.00 per 1M tokens
-    "gpt-5-nano": {"input": 0.00005, "output": 0.0004},  # $0.05/$0.40 per 1M tokens
-    "gpt-5-pro": {"input": 0.015, "output": 0.12},  # $15/$120 per 1M tokens
+    # Source: https://developers.openai.com/api/docs/pricing (updated May 26, 2026)
+    # Prices per 1M tokens in API docs, converted to per 1K here.
+    # GPT-5.5 series (flagship models)
+    "gpt-5.5": {"input": 0.005, "output": 0.03},          # $5.00/$30.00 per 1M
+    "gpt-5.5-pro": {"input": 0.03, "output": 0.18},        # $30.00/$180.00 per 1M
+    # GPT-5.4 series
+    "gpt-5.4": {"input": 0.0025, "output": 0.015},         # $2.50/$15.00 per 1M
+    "gpt-5.4-mini": {"input": 0.00075, "output": 0.0045},  # $0.75/$4.50 per 1M
+    "gpt-5.4-nano": {"input": 0.0002, "output": 0.00125},  # $0.20/$1.25 per 1M
+    "gpt-5.4-pro": {"input": 0.03, "output": 0.18},        # $30.00/$180.00 per 1M
+    # GPT-5.3 series
+    "gpt-5.3-codex": {"input": 0.00175, "output": 0.014},  # $1.75/$14.00 per 1M
     # GPT-4.1 series
-    "gpt-4.1": {"input": 0.003, "output": 0.012},  # Fine-tuning prices
+    "gpt-4.1": {"input": 0.003, "output": 0.012},
     "gpt-4.1-mini": {"input": 0.0008, "output": 0.0032},
     "gpt-4.1-nano": {"input": 0.0002, "output": 0.0008},
     # o4 series (reasoning models)
-    "o4-mini": {"input": 0.004, "output": 0.016},
+    "o4-mini": {"input": 0.004, "output": 0.016},          # $4.00/$16.00 per 1M
     
     # Google Gemini models
-    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated March 14, 2026)
+    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated May 26, 2026)
     # Prices per 1M tokens in API docs, converted to per 1K here.
     # Preview variants (e.g. gemini-3.1-pro-preview) are resolved automatically
     # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
+    # Gemini 3.5 models
+    "gemini-3.5-flash": {"input": 0.0015, "output": 0.009},       # $1.50/$9.00 per 1M
     # Gemini 3.1 models
     "gemini-3.1-pro": {"input": 0.002, "output": 0.012},        # $2.00/$12.00 per 1M (<= 200k prompts)
     "gemini-3.1-flash-lite": {"input": 0.00025, "output": 0.0015},  # $0.25/$1.50 per 1M
@@ -49,14 +57,22 @@ LLM_PRICING = {
     "gemma-3n": {"input": 0.0, "output": 0.0},
     
     # Anthropic Claude models
-    # Source: https://docs.claude.com/en/docs/about-claude/models (updated Oct 2025)
-    # Claude 4.5 series (latest)
-    "claude-sonnet-4-5": {"input": 0.003, "output": 0.015},  # $3/$15 per 1M tokens
+    # Source: https://platform.claude.com/docs/en/about-claude/pricing (updated May 26, 2026)
+    # Prices per 1M tokens in API docs, converted to per 1K here.
+    # Claude Opus 4.x series
+    "claude-opus-4-7": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-opus-4-6": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-opus-4-5": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-opus-4-1": {"input": 0.015, "output": 0.075},   # $15/$75 per 1M
+    # Claude Sonnet 4.x series
+    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
+    "claude-sonnet-4-5": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
     "claude-sonnet-4-5-20250929": {"input": 0.003, "output": 0.015},
-    "claude-haiku-4-5": {"input": 0.001, "output": 0.005},  # $1/$5 per 1M tokens
+    # Claude Haiku 4.x series
+    "claude-haiku-4-5": {"input": 0.001, "output": 0.005},  # $1/$5 per 1M
     "claude-haiku-4-5-20251001": {"input": 0.001, "output": 0.005},
-    "claude-opus-4-1": {"input": 0.015, "output": 0.075},  # $15/$75 per 1M tokens
-    "claude-opus-4-1-20250805": {"input": 0.015, "output": 0.075},
+    # Claude Haiku 3.5 (retired, still on Bedrock/Vertex AI)
+    "claude-haiku-3-5": {"input": 0.0008, "output": 0.004}, # $0.80/$4 per 1M
     
     # Azure OpenAI (same as OpenAI pricing)
     "azure-gpt-4": {"input": 0.03, "output": 0.06},
