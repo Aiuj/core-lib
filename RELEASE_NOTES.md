@@ -25,6 +25,12 @@ Then commit, push and tag this new version in github and create a release for th
 
 ## May 2026
 
+### v0.3.11 - AI Service Pricing Data Refresh (May 27, 2026)
+
+- **Pricing Metadata Update**: Refreshed AI service pricing data for OpenAI and Claude model families to keep usage and cost tracking aligned with current provider rates
+
+---
+
 ### v0.3.10 - Provider Expansion & OpenAI Tooling Improvements (May 25, 2026)
 
 - **Mistral AI Support**: Added Mistral AI provider integration with configuration details and usage examples
