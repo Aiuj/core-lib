@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import get_module_logger
 from ..config.ocr_settings import OcrSettings
+from ..tracing import set_llm_purpose, set_llm_usage_type
 from .dots_ocr_client import DotsOcrClient, DEFAULT_MODE
 from .models import LayoutElement, OcrPageResult, OcrResult
 
@@ -354,6 +355,10 @@ class OcrService:
         ]
 
         try:
+            # Observability tagging for vision/OCR calls.
+            # This appears as gen_ai.purpose / gen_ai.usage_type in OTEL logs.
+            set_llm_purpose("ocr_enrich" if enrich else "ocr_vision")
+            set_llm_usage_type("ocr")
             response = self._vision_client.chat(messages=messages)
             # LLM clients may swallow exceptions internally and return
             # {"content": None, "error": "..."} instead of raising.
