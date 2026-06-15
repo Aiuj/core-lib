@@ -483,3 +483,110 @@ def test_convert_messages_mixed_plain_and_multimodal():
     assert result[0] == {"role": "system", "content": "Be concise."}
     assert result[1]["content"] == "What is this?"
     assert result[1]["images"] == [raw_b64]
+
+
+# ---------------------------------------------------------------------------
+# Text-based tool-call recovery
+# ---------------------------------------------------------------------------
+
+def test_ollama_parses_text_tool_calls_from_content_when_structured_missing(monkeypatch):
+    """If message.tool_calls is empty, provider should parse <tool_call> blocks in content."""
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            self.host = host
+
+        def chat(self, **payload):
+            return {
+                "message": {
+                    "content": (
+                        '<tool_call>{"name":"list_documents","arguments":{"limit":5}}</tool_call>'
+                    ),
+                    "tool_calls": [],
+                },
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+    fake_module = types.SimpleNamespace(Client=FakeClient)
+    monkeypatch.setitem(sys.modules, "ollama", fake_module)
+
+    provider = OllamaProvider(
+        OllamaConfig(
+            model="ministral-3",
+            base_url="http://localhost:11434",
+            timeout=30,
+        )
+    )
+
+    result = provider.chat(
+        messages=[{"role": "user", "content": "Liste moi tous les documents"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_documents",
+                    "description": "List documents",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer"}},
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "list_documents"
+    assert result["tool_calls"][0]["function"]["arguments"] == '{"limit": 5}'
+    # Tool-call markup should be removed from returned content
+    assert result["content"] == ""
+
+
+def test_convert_messages_tool_call_arguments_string_to_dict():
+    """Outbound assistant tool calls must use dict arguments for Ollama Message validation."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "list_documents",
+                        "arguments": '{"limit": 10}',
+                    },
+                }
+            ],
+        }
+    ]
+
+    converted = OllamaProvider._convert_messages_to_ollama_format(messages)
+    args = converted[0]["tool_calls"][0]["function"]["arguments"]
+    assert isinstance(args, dict)
+    assert args == {"limit": 10}
+
+
+def test_convert_messages_tool_call_arguments_invalid_json_kept_as_string():
+    """If arguments JSON is invalid, keep original string instead of destructive mutation."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "list_documents",
+                        "arguments": "{invalid-json}",
+                    },
+                }
+            ],
+        }
+    ]
+
+    converted = OllamaProvider._convert_messages_to_ollama_format(messages)
+    args = converted[0]["tool_calls"][0]["function"]["arguments"]
+    assert isinstance(args, str)
+    assert args == "{invalid-json}"

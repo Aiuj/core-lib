@@ -9,10 +9,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Type
 import time
 import re
+import json
 
 from pydantic import BaseModel
 
-from .base import BaseProvider, normalize_tool_calls
+from .base import BaseProvider, normalize_tool_calls, parse_text_tool_calls
 from ..llm_config import LLMConfig
 from ..json_parser import augment_prompt_for_json
 from dataclasses import dataclass
@@ -167,6 +168,50 @@ class OllamaProvider(BaseProvider):
         return self.config.model
 
     @staticmethod
+    def _normalize_tool_calls_for_ollama(
+        tool_calls: Any,
+    ) -> Any:
+        """Normalize outbound tool calls to Ollama's expected schema.
+
+        Ollama's Pydantic `Message` model expects:
+          tool_calls[].function.arguments -> dict
+
+        Some upstream callers (OpenAI-style) store arguments as a JSON string.
+        Convert those strings to dicts when possible to avoid payload validation
+        errors in ollama.Client.chat().
+        """
+        if not isinstance(tool_calls, list):
+            return tool_calls
+
+        normalized: List[Dict[str, Any]] = []
+        for entry in tool_calls:
+            if not isinstance(entry, dict):
+                normalized.append(entry)
+                continue
+
+            entry_copy: Dict[str, Any] = dict(entry)
+            function_obj = entry_copy.get("function")
+            if isinstance(function_obj, dict):
+                function_copy = dict(function_obj)
+                arguments = function_copy.get("arguments")
+                if isinstance(arguments, str):
+                    stripped = arguments.strip()
+                    if stripped:
+                        try:
+                            parsed = json.loads(stripped)
+                            if isinstance(parsed, dict):
+                                function_copy["arguments"] = parsed
+                        except Exception:
+                            # Leave as-is when parsing fails; better to preserve
+                            # original value than silently mutate to wrong shape.
+                            pass
+                entry_copy["function"] = function_copy
+
+            normalized.append(entry_copy)
+
+        return normalized
+
+    @staticmethod
     def _convert_messages_to_ollama_format(
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
@@ -185,9 +230,15 @@ class OllamaProvider(BaseProvider):
 
         result: List[Dict[str, Any]] = []
         for msg in messages:
+            msg_for_ollama: Dict[str, Any] = dict(msg)
+            if "tool_calls" in msg_for_ollama:
+                msg_for_ollama["tool_calls"] = OllamaProvider._normalize_tool_calls_for_ollama(
+                    msg_for_ollama.get("tool_calls")
+                )
+
             content = msg.get("content")
             if not isinstance(content, list):
-                result.append(msg)
+                result.append(msg_for_ollama)
                 continue
 
             # OpenAI multimodal format — extract text parts and image parts
@@ -219,7 +270,7 @@ class OllamaProvider(BaseProvider):
                     images.append(b64_data)
 
             new_msg: Dict[str, Any] = {
-                **{k: v for k, v in msg.items() if k != "content"},
+                **{k: v for k, v in msg_for_ollama.items() if k != "content"},
                 "content": " ".join(text_parts),
             }
             if images:
@@ -404,6 +455,32 @@ class OllamaProvider(BaseProvider):
             content_text = message.get("content", "")
             thinking_text = message.get("thinking")
             tool_calls = normalize_tool_calls(message.get("tool_calls", []) or [])
+
+            # Debug: log raw Ollama response to diagnose tool-call recovery
+            if tools:
+                logger.debug(
+                    "ollama chat response: content_len=%d tool_calls=%d has_markup=%s",
+                    len(content_text or ""),
+                    len(tool_calls),
+                    "<tool_call>" in (content_text or ""),
+                )
+                if content_text and len(content_text) < 500:
+                    logger.debug("ollama raw content: %s", content_text[:200])
+
+            # Fallback: some models emit tool calls as text blocks in content
+            # instead of populating message.tool_calls. Recover these when tools
+            # were provided and structured tool calls are absent.
+            if not tool_calls and tools and isinstance(content_text, str) and "<tool_call>" in content_text:
+                logger.info("ollama: attempting to parse text-based tool calls from content")
+                text_tool_calls, content_text = parse_text_tool_calls(content_text)
+                if text_tool_calls:
+                    tool_calls = text_tool_calls
+                    logger.info(
+                        "ollama: successfully parsed %d text-based tool call(s) from content",
+                        len(tool_calls),
+                    )
+                else:
+                    logger.warning("ollama: found <tool_call> markup but parse_text_tool_calls returned empty")
 
             usage = resp.get("usage", {}) or {}
             if not usage:
