@@ -176,6 +176,38 @@ class FallbackLLMClient:
         logger.info(
             f"Initialized FallbackLLMClient with {len(provider_details)} providers: {', '.join(provider_details)}"
         )
+
+    @classmethod
+    def _create_unconfigured_client(
+        cls,
+        reason: str,
+        intelligence_level: Optional[int] = None,
+        usage: Optional[str] = None,
+        http_timeout_ms: Optional[int] = None,
+    ) -> "FallbackLLMClient":
+        """Create a lightweight client that returns structured errors instead of raising.
+
+        Used by factory paths when no provider is configured, so callers can keep
+        using ``chat()`` and handle ``{"error": ...}`` gracefully.
+        """
+        client = cls.__new__(cls)
+        client._registry = ProviderRegistry()
+        client._health_tracker = get_health_tracker()
+        client._max_retries = 1
+        client._default_intelligence_level = intelligence_level
+        client._default_usage = usage
+        client._http_timeout_ms = http_timeout_ms
+        client.last_used_provider = None
+        client.last_used_model = None
+        client.last_was_fallback = False
+        client.last_attempts = 0
+        client._client_cache = {}
+        client._unconfigured_reason = reason
+        logger.warning(
+            "Initialized FallbackLLMClient in unconfigured mode: %s",
+            reason,
+        )
+        return client
     
     def _get_client(self, config: ProviderConfig) -> LLMClient:
         """Get or create a cached LLMClient for a provider config."""
@@ -343,6 +375,37 @@ class FallbackLLMClient:
         Raises:
             RuntimeError: If all providers fail
         """
+        if not self._registry.providers:
+            error_msg = getattr(
+                self,
+                "_unconfigured_reason",
+                "No LLM providers are configured.",
+            )
+            logger.warning("FallbackLLMClient chat skipped: %s", error_msg)
+            if return_fallback_result:
+                return FallbackResult(
+                    content=None,
+                    provider="",
+                    model="",
+                    was_fallback=False,
+                    attempts=0,
+                    usage={},
+                    error=error_msg,
+                )
+            return {
+                "content": "",
+                "usage": {},
+                "tool_calls": [],
+                "structured": False,
+                "error": error_msg,
+                "_fallback_metadata": {
+                    "provider": "",
+                    "model": "",
+                    "was_fallback": False,
+                    "attempts": 0,
+                },
+            }
+
         last_error: Optional[Exception] = None
         attempts = 0
         providers_tried: List[str] = []
@@ -605,6 +668,7 @@ class FallbackLLMClient:
         usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
+        graceful_if_unconfigured: bool = True,
     ) -> "FallbackLLMClient":
         """Create from an existing ProviderRegistry.
         
@@ -614,10 +678,21 @@ class FallbackLLMClient:
             usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
+            graceful_if_unconfigured: When True, returns an unconfigured client
+                that yields structured ``error`` responses instead of raising when
+                the registry has no providers.
             
         Returns:
             FallbackLLMClient instance
         """
+        if graceful_if_unconfigured and (not registry or not registry.providers):
+            return cls._create_unconfigured_client(
+                reason="No LLM providers are configured. Please configure at least one provider.",
+                intelligence_level=intelligence_level,
+                usage=usage,
+                http_timeout_ms=http_timeout_ms,
+            )
+
         return cls(
             registry=registry,
             intelligence_level=intelligence_level,
@@ -635,6 +710,7 @@ class FallbackLLMClient:
         usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
+        graceful_if_unconfigured: bool = True,
     ) -> "FallbackLLMClient":
         """Create from environment configuration.
         
@@ -650,6 +726,9 @@ class FallbackLLMClient:
             usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
+            graceful_if_unconfigured: When True, returns an unconfigured client
+                that yields structured ``error`` responses instead of raising when
+                no providers are available from environment.
             
         Returns:
             FallbackLLMClient instance
@@ -661,6 +740,7 @@ class FallbackLLMClient:
             usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
+            graceful_if_unconfigured=graceful_if_unconfigured,
         )
     
     @classmethod
@@ -671,6 +751,7 @@ class FallbackLLMClient:
         usage: Optional[str] = None,
         max_retries: int = 1,
         http_timeout_ms: Optional[int] = None,
+        graceful_if_unconfigured: bool = True,
     ) -> "FallbackLLMClient":
         """Create from a list of provider configuration dictionaries.
         
@@ -680,6 +761,9 @@ class FallbackLLMClient:
             usage: Default usage tag filter (e.g. "rag", "chat", "quality_analysis")
             max_retries: Retries per provider
             http_timeout_ms: Optional HTTP timeout override (ms) for Google GenAI providers.
+            graceful_if_unconfigured: When True, returns an unconfigured client
+                that yields structured ``error`` responses instead of raising when
+                the provided config list is empty.
             
         Returns:
             FallbackLLMClient instance
@@ -699,6 +783,7 @@ class FallbackLLMClient:
             usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
+            graceful_if_unconfigured=graceful_if_unconfigured,
         )
 
 
@@ -709,6 +794,7 @@ def create_fallback_llm_client(
     usage: Optional[str] = None,
     max_retries: int = 1,
     http_timeout_ms: Optional[int] = None,
+    graceful_if_unconfigured: bool = True,
 ) -> FallbackLLMClient:
     """Create a FallbackLLMClient from config or environment.
     
@@ -722,6 +808,9 @@ def create_fallback_llm_client(
             "translation", "classify", "extract", "agent", "vision", "ocr").
             Providers without a usage tag match any usage.
         max_retries: Retries per provider before fallback
+        graceful_if_unconfigured: When True, return an unconfigured client that
+            yields structured ``error`` responses instead of raising when no
+            providers are configured.
         
     Returns:
         Configured FallbackLLMClient
@@ -748,10 +837,12 @@ def create_fallback_llm_client(
             usage=usage,
             max_retries=max_retries,
             http_timeout_ms=http_timeout_ms,
+            graceful_if_unconfigured=graceful_if_unconfigured,
         )
     return FallbackLLMClient.from_env(
         intelligence_level=intelligence_level,
         usage=usage,
         max_retries=max_retries,
         http_timeout_ms=http_timeout_ms,
+        graceful_if_unconfigured=graceful_if_unconfigured,
     )
