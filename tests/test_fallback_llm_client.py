@@ -307,6 +307,27 @@ class TestFallbackLLMClientFactoryMethods:
         
         assert len(client._registry.providers) == 1
         mock_from_env.assert_called_once()
+
+    @patch('core_lib.llm.provider_registry.ProviderRegistry.from_env')
+    def test_from_env_returns_unconfigured_client_when_registry_empty(self, mock_from_env):
+        """Empty env registry should return a graceful client that reports structured errors."""
+        mock_from_env.return_value = ProviderRegistry()
+
+        client = FallbackLLMClient.from_env()
+        response = client.chat("hello")
+
+        assert response.get("error")
+        assert "no llm providers" in response["error"].lower()
+        assert response.get("content") == ""
+
+    def test_from_registry_can_still_raise_when_graceful_disabled(self):
+        """Callers can opt into strict behavior for empty registries."""
+        empty_registry = ProviderRegistry()
+        with pytest.raises(ValueError, match="at least one configured provider"):
+            FallbackLLMClient.from_registry(
+                registry=empty_registry,
+                graceful_if_unconfigured=False,
+            )
     
     def test_from_registry(self, mock_registry):
         """Test creating from existing registry."""
@@ -730,7 +751,7 @@ class TestFallbackLLMClientUsageFiltering:
         registry = ProviderRegistry()
         registry.add(ProviderConfig(provider="gemini", api_key="k", model="m"))
 
-        client = FallbackLLMClient.from_registry(registry, usage="chat", health_tracker=mock_health_tracker)
+        client = FallbackLLMClient.from_registry(registry, usage="chat")
 
         assert client._default_usage == "chat"
 
