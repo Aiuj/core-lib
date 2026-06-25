@@ -495,6 +495,50 @@ def _check_gemini(model: str, api_key: str) -> tuple[str, Optional[str], Optiona
         return "down", None, str(exc)
 
 
+def _check_vertex(model: str, project: str, location: str, service_account_file: str) -> tuple[str, Optional[str], Optional[str]]:
+    """status, details, error — probes Vertex AI model availability using service account credentials."""
+    try:
+        from google import genai
+        from google.oauth2 import service_account
+        
+        normalized_path = str(service_account_file).strip().strip('"').strip("'")
+        expanded_path = os.path.expanduser(normalized_path)
+        
+        if not os.path.isfile(expanded_path):
+            return "down", None, f"Service account file not found: {expanded_path}"
+            
+        scopes = ['https://www.googleapis.com/auth/cloud-platform']
+        credentials = service_account.Credentials.from_service_account_file(
+            expanded_path, scopes=scopes
+        )
+        
+        client = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            credentials=credentials,
+        )
+        
+        available_models = list(client.models.list())
+        available_ids = [m.name.split("/")[-1] for m in available_models]
+        
+        found = False
+        for model_id in available_ids:
+            if model_id == model or model in model_id:
+                found = True
+                break
+                
+        if found:
+            return "ok", "Vertex AI model verified", None
+            
+        preview = ", ".join(available_ids[:4]) if available_ids else "none"
+        return "down", None, f"Model '{model}' not found in Vertex AI. Available: {preview}"
+        
+    except Exception as exc:
+        return "down", None, f"Vertex AI probe failed: {exc}"
+
+
+
 def _check_openai_compatible(model: str, api_key: str, base_url: str) -> tuple[str, Optional[str], Optional[str]]:
     """status, details, error.
 
@@ -596,7 +640,7 @@ def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
     if p == "ollama":
         return _check_ollama(provider.host or "http://localhost:11434", provider.model)
 
-    if p in ("gemini", "vertex"):
+    if p == "gemini":
         api_key = (
             provider.api_key
             or os.getenv("GEMINI_API_KEY")
@@ -606,6 +650,20 @@ def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
         if not api_key:
             return "not_configured", None, "No API key"
         return _check_gemini(provider.model, api_key)
+
+    if p == "vertex":
+        try:
+            resolved = provider.to_llm_config()
+            project = resolved.project
+            location = resolved.location
+            service_account_file = resolved.service_account_file
+        except Exception as exc:
+            return "not_configured", None, f"Failed to build configuration: {exc}"
+
+        if not project or not location or not service_account_file:
+            return "not_configured", None, "Missing project, location, or service_account_file"
+        return _check_vertex(provider.model, project, location, service_account_file)
+
 
     if p == "openrouter":
         api_key = provider.api_key or os.getenv("OPENROUTER_API_KEY") or ""

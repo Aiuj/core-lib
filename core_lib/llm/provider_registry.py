@@ -395,6 +395,9 @@ class ProviderConfig:
         if self.provider == "gemini":
             from .providers.google_genai_provider import GeminiConfig
             api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
+            service_account = self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if service_account:
+                service_account = os.path.expanduser(str(service_account).strip().strip('"').strip("'"))
             return GeminiConfig(
                 api_key=api_key,
                 model=self.model,
@@ -405,12 +408,15 @@ class ProviderConfig:
                 base_url=self.host or "https://generativelanguage.googleapis.com",
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
-                service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                service_account_file=service_account,
                 http_timeout_ms=self.http_timeout_ms,
             )
 
         elif self.provider == "vertex":
             from .providers.google_genai_provider import GeminiConfig
+            service_account = self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            if service_account:
+                service_account = os.path.expanduser(str(service_account).strip().strip('"').strip("'"))
             return GeminiConfig(
                 api_key=None,
                 model=self.model,
@@ -421,7 +427,7 @@ class ProviderConfig:
                 base_url=self.host or "https://generativelanguage.googleapis.com",
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_PROJECT_ID"),
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
-                service_account_file=self.service_account_file or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+                service_account_file=service_account,
                 http_timeout_ms=self.http_timeout_ms,
             )
         
