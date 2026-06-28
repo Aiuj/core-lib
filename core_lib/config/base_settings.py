@@ -55,33 +55,40 @@ class DotEnvLoader:
     @staticmethod
     def load_dotenv_files(
         search_paths: Optional[List[Union[str, Path]]] = None,
-        filename: str = ".env"
+        filenames: Union[str, List[str]] = ".env",
     ) -> bool:
         """Load environment variables from .env files.
-        
+
         Args:
             search_paths: Directories to search for .env files. If None, searches:
                          1. Current working directory
                          2. Project root (if pyproject.toml found)
                          3. User home directory
-            filename: Name of the env file (default: ".env")
-            
+            filename: Name(s) of the env file(s) to load. Defaults to ".env".
+                      Can be a single filename or a list of filenames (e.g.
+                      [".env", ".env.secrets"]). Files are loaded in order;
+                      later files do not override already-set variables.
+
         Returns:
             True if at least one .env file was loaded, False otherwise
         """
         if not HAS_DOTENV:
             return False
-            
+
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
         if search_paths is None:
             search_paths = DotEnvLoader._get_default_search_paths()
-        
+
         loaded = False
-        for path in search_paths:
-            env_file = Path(path) / filename
-            if env_file.exists():
-                load_dotenv(env_file, override=False)  # Don't override existing env vars
-                loaded = True
-                
+        for filename in filenames:
+            for path in search_paths:
+                env_file = Path(path) / filename
+                if env_file.exists():
+                    load_dotenv(env_file, override=False)  # Don't override existing env vars
+                    loaded = True
+
         return loaded
     
     @staticmethod
@@ -279,13 +286,23 @@ class BaseSettings(ABC):
     
     @classmethod
     def _load_dotenv_if_requested(
-        cls, 
-        load_dotenv: bool, 
-        dotenv_paths: Optional[List[Union[str, Path]]]
+        cls,
+        load_dotenv: bool,
+        dotenv_paths: Optional[List[Union[str, Path]]],
+        filenames: Optional[Union[str, List[str]]] = None,
     ) -> bool:
-        """Load .env files if requested."""
+        """Load .env files if requested.
+
+        Args:
+            load_dotenv: Whether to load .env files.
+            dotenv_paths: Custom search paths for .env files.
+            filenames: Name(s) of env file(s) to load. Defaults to
+                      [".env", ".env.secrets"] when load_dotenv is True.
+        """
         if load_dotenv:
-            return DotEnvLoader.load_dotenv_files(dotenv_paths)
+            if filenames is None:
+                filenames = [".env", ".env.secrets"]
+            return DotEnvLoader.load_dotenv_files(dotenv_paths, filenames=filenames)
         return False
 
 

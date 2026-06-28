@@ -1062,11 +1062,17 @@ class ProviderRegistry:
         
         # Apply environment variable substitution if enabled
         if substitute_env:
-            # Attempt to load .env silently before substituting so vars set there
-            # are available even if load_dotenv() hasn't been called yet at startup.
+            # Attempt to load .env files silently before substituting so vars set
+            # there are available even if load_dotenv() hasn't been called yet at
+            # startup.  Load both ".env" and ".env.secrets" so that secrets (API
+            # keys, etc.) are available for substitution.
             try:
+                from pathlib import Path as _Path
                 from dotenv import load_dotenv as _load_dotenv
-                _load_dotenv(override=False)
+                for _env_file in (".env.secrets", ".env"):
+                    _env_path = _Path(".") / _env_file
+                    if _env_path.exists():
+                        _load_dotenv(_env_path, override=False)
             except ImportError:
                 pass
             data = substitute_env_vars(data)
