@@ -340,7 +340,6 @@ class OcrService:
         data_url = f"data:{mime_type};base64,{b64}"
 
         prompt_text = self._ENRICHED_PROMPT if enrich else self._OCR_ONLY_PROMPT
-
         messages = [
             {
                 "role": "user",
@@ -379,6 +378,65 @@ class OcrService:
         # Strip markdown code fences that some LLMs add around their output
         # (e.g. ```html\n<table>...</table>\n```) even when not asked to.
         raw_text = self._strip_code_fences(raw_text)
+
+        if enrich:
+            desc = ""
+            terms = ""
+            content = raw_text
+
+            has_headers = False
+            if "## description" in raw_text.lower() or "## text content" in raw_text.lower():
+                has_headers = True
+
+            if has_headers:
+                parts = re.split(r"\n##\s+", "\n" + raw_text)
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+                    lines = part.split("\n", 1)
+                    header = lines[0].strip().lower()
+                    body = lines[1].strip() if len(lines) > 1 else ""
+
+                    if "description" in header:
+                        desc = body
+                    elif "search terms" in header or "keywords" in header:
+                        terms = body
+                    elif "text content" in header or "extracted text" in header:
+                        content = body
+
+            # Validate description:
+            # 1. Must be decent and long enough (e.g. >= 15 chars)
+            # 2. Must not be a generic placeholder (like "plain text document page", "none", etc.)
+            # 3. Must not be a duplication of the OCR text (substring or high word overlap)
+            is_valid_desc = False
+            if desc and len(desc.strip()) >= 15:
+                lower_desc = desc.strip().lower()
+                is_placeholder = any(p in lower_desc for p in [
+                    "plain text", "no text", "none", "n/a", "no visual", "text only", "untitled", "document page"
+                ])
+                if not is_placeholder:
+                    # Check duplication and overlap
+                    lower_content = content.lower()
+                    if lower_desc not in lower_content and lower_content not in lower_desc:
+                        # Check word overlap ratio
+                        desc_words = set(re.findall(r"\w+", lower_desc))
+                        content_words = set(re.findall(r"\w+", lower_content))
+                        if desc_words and content_words:
+                            common = desc_words.intersection(content_words)
+                            overlap_ratio = len(common) / min(len(desc_words), len(content_words))
+                            if overlap_ratio < 0.6:  # Less than 60% overlap
+                                is_valid_desc = True
+                        else:
+                            is_valid_desc = True
+
+            extra_parts = []
+            if is_valid_desc:
+                extra_parts.append(f"\n\n*Image Description:* {desc.strip()}")
+                if terms:
+                    extra_parts.append(f"\n*Search Terms:* {terms.strip()}")
+
+            raw_text = content.strip() + "".join(extra_parts)
 
         source = "llm-vision-enriched" if enrich else "llm-vision"
         return OcrPageResult(

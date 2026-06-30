@@ -179,22 +179,69 @@ class TestEnrichedMode:
     """Tests for the enrich=True mode that produces description + search terms + OCR."""
 
     def test_enriched_returns_enriched_source(self, settings, tiny_image):
-        """When enrich=True, the source should be 'llm-vision-enriched'."""
+        """When enrich=True, the source should be 'llm-vision-enriched' and parse headers correctly."""
         enriched_content = (
             "## Description\n"
             "A bar chart showing quarterly revenue growth.\n\n"
             "## Search Terms\n"
-            "revenue, quarterly, bar chart, growth, financial performance\n\n"
+            "revenue, quarterly, bar chart, growth\n\n"
             "## Text Content\n"
-            "Q1: $1.2M  Q2: $1.5M  Q3: $1.8M  Q4: $2.1M"
+            "Q1: $1.2M  Q2: $1.5M"
         )
         service = _make_service(settings, {"content": enriched_content, "error": None})
         page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
 
         assert page.source == "llm-vision-enriched"
-        assert "## Description" in page.raw_text
-        assert "## Search Terms" in page.raw_text
-        assert "## Text Content" in page.raw_text
+        assert "*Image Description:* A bar chart showing quarterly revenue growth." in page.raw_text
+        assert "*Search Terms:* revenue, quarterly, bar chart, growth" in page.raw_text
+        assert "Q1: $1.2M  Q2: $1.5M" in page.raw_text
+        assert "## Text Content" not in page.raw_text
+
+    def test_enriched_discards_duplication_and_placeholders(self, settings, tiny_image):
+        """Verify that duplicate descriptions (identical/similar to OCR text) or placeholders are discarded."""
+        # Case 1: Trivial placeholder description
+        placeholder_content = (
+            "## Description\n"
+            "Plain text document page.\n\n"
+            "## Search Terms\n"
+            "text, document\n\n"
+            "## Text Content\n"
+            "PowerVault: Intelligent Energy Storage (BESS)"
+        )
+        service = _make_service(settings, {"content": placeholder_content, "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+        assert "Plain text document page" not in page.raw_text
+        assert "text, document" not in page.raw_text
+        assert page.raw_text == "PowerVault: Intelligent Energy Storage (BESS)"
+
+        # Case 2: Duplicate description (identical to OCR content)
+        duplicate_content = (
+            "## Description\n"
+            "PowerVault: Intelligent Energy Storage (BESS)\n\n"
+            "## Search Terms\n"
+            "PowerVault\n\n"
+            "## Text Content\n"
+            "PowerVault: Intelligent Energy Storage (BESS)"
+        )
+        service = _make_service(settings, {"content": duplicate_content, "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+        assert page.raw_text == "PowerVault: Intelligent Energy Storage (BESS)"
+
+        # Case 3: High overlap duplication (paraphrased OCR text)
+        overlap_content = (
+            "## Description\n"
+            "PowerVault Intelligent BESS Energy Storage.\n\n"
+            "## Search Terms\n"
+            "PowerVault\n\n"
+            "## Text Content\n"
+            "PowerVault: Intelligent Energy Storage (BESS)"
+        )
+        service = _make_service(settings, {"content": overlap_content, "error": None})
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+        # Description words: {"powervault", "intelligent", "bess", "energy", "storage"} (5 words)
+        # Content words: {"powervault", "intelligent", "energy", "storage", "bess"} (5 words)
+        # Overlap: 5/5 = 100% -> must be discarded
+        assert page.raw_text == "PowerVault: Intelligent Energy Storage (BESS)"
 
     def test_non_enriched_returns_standard_source(self, settings, tiny_image):
         """When enrich=False (default), the source should be 'llm-vision'."""
@@ -204,16 +251,17 @@ class TestEnrichedMode:
         assert page.source == "llm-vision"
 
     def test_enriched_prompt_used_in_chat_call(self, settings, tiny_image):
-        """Verify that enrich=True sends the enriched prompt to the LLM."""
+        """Verify that enrich=True sends the enriched prompt in a single call."""
         mock_client = MagicMock()
         mock_client.chat.return_value = {"content": "enriched output", "error": None}
         service = OcrService(settings, vision_llm_client=mock_client)
 
         service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
 
+        assert mock_client.chat.call_count == 1
         call_args = mock_client.chat.call_args
         messages = call_args[1].get("messages") or call_args[0][0]
-        prompt_text = messages[0]["content"][1]["text"]
+        prompt_text = messages[0]["content"][0]["text"]
         assert "## Description" in prompt_text
         assert "## Search Terms" in prompt_text
         assert "## Text Content" in prompt_text
