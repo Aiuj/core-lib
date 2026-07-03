@@ -170,7 +170,7 @@ class FallbackLLMClient:
             level_info = f" (IQ{p.min_intelligence_level}-{p.max_intelligence_level})" if p.min_intelligence_level is not None else ""
             tools_info = " [no-tools]" if not p.supports_tools else ""
             provider_details.append(
-                f"{p.provider}:{p.model}{tier_info}{level_info}{tools_info} #{p.priority}"
+                f"{p.name}{tier_info}{level_info}{tools_info}"
             )
         
         logger.info(
@@ -421,7 +421,7 @@ class FallbackLLMClient:
                 for p in sorted(eligible_providers, key=lambda x: x.priority):
                     tier = f" [{p.tier}]" if hasattr(p, 'tier') and p.tier else ""
                     eligible_details.append(
-                        f"{p.provider}:{p.model}{tier} #{p.priority}"
+                        f"{p.name}{tier}"
                     )
                 logger.debug(
                     f"IQ{level}: Eligible providers: "
@@ -435,7 +435,7 @@ class FallbackLLMClient:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
         for config, is_fallback in self._iter_providers(level, usage=effective_usage):
-            provider_id = f"{config.provider}:{config.model}"
+            provider_id = config.name or f"{config.provider}:{config.model}"
 
             # Skip providers whose WoL warmup window is still active.
             # After a non-blocking WoL wake the server needs time to power on;

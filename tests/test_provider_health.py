@@ -109,6 +109,27 @@ class TestSubstituteEnvVars:
 
 class TestProviderRegistryFromFile:
     """Tests for loading provider config from files."""
+
+    def test_provider_name_defaults_to_provider_model_and_priority(self):
+        """Provider configs should derive a readable name when none is provided."""
+        config = ProviderConfig.from_dict(
+            {"provider": "gemini", "model": "gemini-2.5-flash", "priority": 7}
+        )
+
+        assert config.name == "gemini:gemini-2.5-flash #7"
+
+    def test_provider_name_uses_explicit_name_when_provided(self):
+        """An explicit name should override the generated fallback name."""
+        config = ProviderConfig.from_dict(
+            {
+                "provider": "gemini",
+                "model": "gemini-2.5-flash",
+                "priority": 7,
+                "name": "custom-gemini",
+            }
+        )
+
+        assert config.name == "custom-gemini"
     
     def test_from_yaml_file(self, monkeypatch, tmp_path):
         """Test loading providers from YAML file."""

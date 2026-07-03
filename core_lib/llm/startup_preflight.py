@@ -255,7 +255,7 @@ async def run_llm_startup_preflight() -> StartupValidationSummary:
                 break
 
             live_attempted += 1
-            provider_label = f"{provider.provider}:{provider.model}"
+            provider_label = provider.name or f"{provider.provider}:{provider.model}"
             error = await asyncio.to_thread(_probe_provider, provider)
             if error:
                 live_failed += 1

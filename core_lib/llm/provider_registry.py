@@ -147,6 +147,7 @@ class ProviderConfig:
     """
     provider: str
     model: str = ""
+    name: Optional[str] = None
     api_key: Optional[str] = None
     host: Optional[str] = None
     temperature: float = 0.7
@@ -230,6 +231,16 @@ class ProviderConfig:
                 "mistral": "mistral-small-latest",
             }
             self.model = defaults.get(self.provider, "")
+
+        if not self.name:
+            self.name = self._build_default_name()
+
+    def _build_default_name(self) -> str:
+        """Create a readable identifier for logging and error messages."""
+        provider = self.provider or "unknown"
+        model = self.model or "unknown"
+        priority = self.priority if self.priority is not None else "?"
+        return f"{provider}:{model} #{priority}"
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProviderConfig":
@@ -245,6 +256,10 @@ class ProviderConfig:
         
         # Model
         normalized["model"] = data.get("model", data.get("model_name", ""))
+
+        # Optional display name for logging / error identification.
+        if "name" in data:
+            normalized["name"] = str(data["name"]).strip() or None
         
         # API Key (multiple possible key names)
         normalized["api_key"] = data.get("api_key") or data.get("apiKey") or data.get("key")
