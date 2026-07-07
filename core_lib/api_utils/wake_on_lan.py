@@ -374,9 +374,32 @@ class WakeOnLanStrategy:
             self._waking_timestamps[base_url] = time.time()
             if target.wait_seconds > 0:
                 logger.info(
-                    f"Waiting {target.wait_seconds:.1f}s for host '{target_host}' to wake"
+                    f"Waiting up to {target.wait_seconds:.1f}s for host '{target_host}' to wake"
                 )
-                time.sleep(target.wait_seconds)
+                import requests
+
+                initial_wait = min(20.0, target.wait_seconds)
+                logger.info(f"Sleeping initial {initial_wait:.1f}s before probing health")
+                time.sleep(initial_wait)
+
+                elapsed = initial_wait
+                while elapsed < target.wait_seconds:
+                    try:
+                        health_url = f"{base_url.rstrip('/')}/health"
+                        logger.info(f"Probing health of {base_url} to see if host is awake...")
+                        resp = requests.get(health_url, timeout=2.0)
+                        if resp.status_code == 200:
+                            logger.info(f"Host '{target_host}' is awake and healthy! Resuming early.")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Health probe to {base_url} failed: {e}")
+
+                    next_sleep = min(10.0, target.wait_seconds - elapsed)
+                    if next_sleep <= 0:
+                        break
+                    logger.info(f"Host not ready yet. Sleeping {next_sleep:.1f}s more...")
+                    time.sleep(next_sleep)
+                    elapsed += next_sleep
 
         self._woken_hosts.add(base_url)
         return WakeResult(
