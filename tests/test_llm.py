@@ -1,7 +1,7 @@
 """Tests for LLM functionality."""
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from pydantic import BaseModel
 from typing import Optional
 
@@ -203,6 +203,64 @@ class TestLLMClient:
             client.close()
             client.close()
             assert mock_provider.close.call_count == 1
+
+    @patch("core_lib.llm.llm_client.propagate_attributes")
+    @patch("core_lib.llm.llm_client.get_current_logging_context")
+    @patch("core_lib.llm.llm_client.OllamaProvider")
+    def test_chat_propagates_langfuse_session_id_when_present(
+        self,
+        mock_provider_cls,
+        mock_get_current_logging_context,
+        mock_propagate_attributes,
+    ):
+        config = OllamaConfig(model="llama3.2")
+        mock_provider = mock_provider_cls.return_value
+        mock_provider.chat.return_value = {
+            "content": "ok",
+            "structured": False,
+            "tool_calls": [],
+            "usage": {},
+        }
+
+        mock_get_current_logging_context.return_value = {"session_id": "sess-123"}
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = None
+        mock_ctx.__exit__.return_value = False
+        mock_propagate_attributes.return_value = mock_ctx
+
+        client = LLMClient(config)
+        response = client.chat("hello")
+
+        assert response["content"] == "ok"
+        mock_propagate_attributes.assert_called_once_with(session_id="sess-123")
+        mock_provider.chat.assert_called_once()
+
+    @patch("core_lib.llm.llm_client.propagate_attributes")
+    @patch("core_lib.llm.llm_client.get_current_logging_context")
+    @patch("core_lib.llm.llm_client.OllamaProvider")
+    def test_chat_does_not_propagate_invalid_session_id(
+        self,
+        mock_provider_cls,
+        mock_get_current_logging_context,
+        mock_propagate_attributes,
+    ):
+        config = OllamaConfig(model="llama3.2")
+        mock_provider = mock_provider_cls.return_value
+        mock_provider.chat.return_value = {
+            "content": "ok",
+            "structured": False,
+            "tool_calls": [],
+            "usage": {},
+        }
+
+        mock_get_current_logging_context.return_value = {"session_id": " " * 201}
+
+        client = LLMClient(config)
+        response = client.chat("hello")
+
+        assert response["content"] == "ok"
+        mock_propagate_attributes.assert_not_called()
+        mock_provider.chat.assert_called_once()
 
 
 class TestUtilityFunctions:

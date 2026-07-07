@@ -5,11 +5,14 @@ provider classes under ``core_lib.llm.providers``.
 """
 
 import json
+from contextlib import nullcontext
 from typing import List, Dict, Any, Optional, Union, Type
 
+from langfuse import propagate_attributes
 from pydantic import BaseModel
 
 from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
+from core_lib.tracing.logging_context import get_current_logging_context
 from core_lib.tracing.tracing import setup_tracing
 from core_lib.tracing.service_usage import _llm_usage_type
 from .providers.base import BaseProvider
@@ -128,14 +131,26 @@ class LLMClient:
 
             # Delegate to the provider (handles structured output and tools natively)
             try:
-                result = self._provider.chat(
-                    messages=formatted_messages,
-                    tools=tools,
-                    structured_output=structured_output,
-                    system_message=system_message,
-                    use_search_grounding=use_search_grounding,
-                    thinking_enabled=thinking_enabled,
-                )
+                session_context = nullcontext()
+                try:
+                    context_session_id = get_current_logging_context().get("session_id")
+                    if isinstance(context_session_id, str):
+                        context_session_id = context_session_id.strip()
+                        if 0 < len(context_session_id) <= 200:
+                            session_context = propagate_attributes(session_id=context_session_id)
+                except Exception:
+                    # Session propagation should never break the chat flow
+                    pass
+
+                with session_context:
+                    result = self._provider.chat(
+                        messages=formatted_messages,
+                        tools=tools,
+                        structured_output=structured_output,
+                        system_message=system_message,
+                        use_search_grounding=use_search_grounding,
+                        thinking_enabled=thinking_enabled,
+                    )
 
                 # Post-call tracing metadata
                 try:

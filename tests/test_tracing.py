@@ -137,15 +137,16 @@ class TestTracingManager(unittest.TestCase):
             os.environ.pop("APP_NAME", None)
     
     @patch('core_lib.tracing.tracing.trace')
-    @patch('core_lib.tracing.tracing.get_client')
-    def test_setup_already_initialized_tracer(self, mock_get_client, mock_trace):
+    @patch('core_lib.tracing.tracing.Langfuse')
+    def test_setup_already_initialized_tracer(self, mock_langfuse, mock_trace):
         """Test setup when tracer is already initialized."""
-        # Mock that TracerProvider is already set
-        mock_trace.get_tracer_provider.return_value = Mock()  # Not ProxyTracerProvider
-        mock_trace.ProxyTracerProvider.return_value = Mock()
+        # Mock that TracerProvider is already set (type name is not 'ProxyTracerProvider')
+        mock_provider = Mock()
+        type(mock_provider).__name__ = "TracerProvider"
+        mock_trace.get_tracer_provider.return_value = mock_provider
         
         mock_langfuse_client = Mock()
-        mock_get_client.return_value = mock_langfuse_client
+        mock_langfuse.return_value = mock_langfuse_client
         
         manager = TracingManager("test-service")
         provider = manager.setup()
@@ -154,7 +155,11 @@ class TestTracingManager(unittest.TestCase):
         self.assertIsInstance(provider, LangfuseTracingProvider)
         self.assertEqual(provider._client, mock_langfuse_client)
         self.assertTrue(manager._initialized)
-        mock_get_client.assert_called_once()
+        mock_langfuse.assert_called_once_with(
+            public_key=manager.settings.langfuse_public_key,
+            secret_key=manager.settings.langfuse_secret_key,
+            base_url=manager.settings.langfuse_host,
+        )
     
     @patch('core_lib.tracing.tracing.trace')
     @patch('core_lib.tracing.tracing.TracerProvider')
@@ -165,8 +170,8 @@ class TestTracingManager(unittest.TestCase):
         """Test setup with fresh initialization."""
         # Mock that TracerProvider is not set (ProxyTracerProvider)
         proxy_provider = Mock()
+        type(proxy_provider).__name__ = "ProxyTracerProvider"
         mock_trace.get_tracer_provider.return_value = proxy_provider
-        mock_trace.ProxyTracerProvider.return_value = proxy_provider
         
         # Set up mocks
         mock_resource_instance = Mock()
@@ -201,11 +206,8 @@ class TestTracingManager(unittest.TestCase):
         
         # Verify Langfuse setup
         mock_langfuse.assert_called_once_with(
-            x_langfuse_sdk_name="Langfuse Python SDK",
-            x_langfuse_sdk_version="1.0.0",
-            x_langfuse_public_key="test_public_key",
-            username="test_secret_key",
-            password="",
+            public_key="test_public_key",
+            secret_key="test_secret_key",
             base_url="http://test.langfuse.com",
         )
         
@@ -403,8 +405,8 @@ class TestTracingIntegration(unittest.TestCase):
         """Test complete workflow from setup to usage."""
         # Setup mocks
         proxy_provider = Mock()
+        type(proxy_provider).__name__ = "ProxyTracerProvider"
         mock_trace.get_tracer_provider.return_value = proxy_provider
-        mock_trace.ProxyTracerProvider.return_value = proxy_provider
         
         mock_langfuse_client = Mock()
         mock_langfuse.return_value = mock_langfuse_client

@@ -136,9 +136,13 @@ class TracingManager:
             return self._provider
         
         # Check if TracerProvider is already set
-        if trace.get_tracer_provider() is not trace.ProxyTracerProvider():
+        if type(trace.get_tracer_provider()).__name__ != 'ProxyTracerProvider':
             # Tracing already initialized, just return Langfuse client
-            langfuse_client = get_client()
+            langfuse_client = Langfuse(
+                public_key=self.settings.langfuse_public_key,
+                secret_key=self.settings.langfuse_secret_key,
+                base_url=self.settings.langfuse_host,
+            )
             self._provider = LangfuseTracingProvider(langfuse_client)
             self._initialized = True
             return self._provider
@@ -164,11 +168,8 @@ class TracingManager:
         
         # Configure Langfuse
         langfuse_client = Langfuse(
-            x_langfuse_sdk_name="Langfuse Python SDK",
-            x_langfuse_sdk_version="1.0.0",
-            x_langfuse_public_key=self.settings.langfuse_public_key,
-            username=self.settings.langfuse_secret_key,
-            password="",
+            public_key=self.settings.langfuse_public_key,
+            secret_key=self.settings.langfuse_secret_key,
             base_url=self.settings.langfuse_host,
         )
         
