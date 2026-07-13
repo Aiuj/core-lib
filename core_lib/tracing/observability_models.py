@@ -51,23 +51,26 @@ INTELLIGENCE_LEVEL_DESCRIPTION = """Intelligence level (0-10) controlling search
 
 Higher levels use more sophisticated retrieval and analysis:
 
-| Level | Name | Search Methods | QA Cache | Query Expansion | Context | Reranking | Search Quality |
-|---|---|---|---|---|---|---|---|
-| 0 | Minimal | Lexical only | No | None | 1 chunk | No | No |
-| 1 | Mini | Lexical only | Direct | None | 2 chunks | No | No |
-| 2 | Basic (Low) | Lexical + semantic QA | Direct + context | None | 3 chunks | No | No |
-| 3 | Basic | Lexical + semantic QA | Direct + context | Keywords | 4 chunks | No | No |
-| 4 | Standard (Low) | Hybrid + chunks | Direct + context | Keywords | 5 chunks | No | No |
-| 5 | Standard (Default) | Hybrid + chunks | Direct + context | Hybrid | 8 chunks | No | No |
-| 6 | High (Low) | Hybrid + chunks | Direct + context | Hybrid | 10 chunks | No | No |
-| 7 | High | Hybrid + chunks | Direct + context | LLM | 12 chunks | Conditional | Yes |
-| 8 | Max (Low) | Hybrid + chunks | Context only* | LLM | 15 chunks | Always | Yes |
-| 9 | Max | Hybrid + chunks | Context only* | LLM | 20 chunks | Always | Yes |
-| 10 | Ultimate | Hybrid + chunks | Context only* | LLM | 30 chunks | Always | Yes |
+| Level | Name | Search Methods | QA Cache | Query Expansion | Context | LLM | Credits | Reranking | Search Quality |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | Minimal | Lexical only | No | None | 1 chunk | IQ 0 | 0.3x | No | No |
+| 1 | Mini | Lexical only | Direct | None | 2 chunks | IQ 1 | 0.3x | No | No |
+| 2 | Basic (Low) | Lexical + semantic QA | Direct + context | None | 3 chunks | IQ 2 | 0.3x | No | No |
+| 3 | Basic | Lexical + semantic QA | Direct + context | Keywords | 4 chunks | IQ 3 | 1x | No | No |
+| 4 | Standard (Low, Default) | Hybrid + chunks | Direct + context | Keywords | 5 chunks / 3.5k retrieved tokens | IQ 4 | 1x | No | No |
+| 5 | Standard | Hybrid + chunks | Direct + context | Hybrid | 8 chunks / 7k retrieved tokens | IQ 5 | 2x | No | No |
+| 6 | High (Low) | Hybrid + chunks | Direct + context | Hybrid | 10 chunks / 7k retrieved tokens | IQ 6 | 2x | No | No |
+| 7 | High | Hybrid + chunks | Direct + context | LLM | 12 chunks / 7k retrieved tokens | IQ 7 | 5x | Conditional | Yes |
+| 8 | Max (Low) | Hybrid + chunks | Context only* | LLM | 15 chunks / 7k retrieved tokens | IQ 8 | 5x | Always | Yes |
+| 9 | Max | Hybrid + chunks | Context only* | LLM | 20 chunks / 7k retrieved tokens | IQ 9 | 5x | Always | Yes |
+| 10 | Ultimate | Hybrid + chunks | Context only* | LLM | 30 chunks / 7k retrieved tokens | IQ 10 | 5x | Always | Yes |
 
 *Levels 8-10 don't use QA cache for direct answers, but QA pairs are still used as context.
 
-Default: 5 (Standard). Higher levels = better quality but slower and more expensive.
+Default: 4 (Standard Low). QA pairs and document chunks are limited to 3.5k tokens
+at level 4 and 7k tokens above level 4. Questions, instructions, system prompts, and
+conversation context are additional and are not included in these limits.
+Higher levels = better quality but slower and more expensive.
 Lower levels = faster and cheaper but may miss nuanced information."""
 
 
