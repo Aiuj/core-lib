@@ -58,6 +58,8 @@ _llm_purpose: ContextVar[Optional[str]] = ContextVar('llm_purpose', default=None
 _llm_usage_type: ContextVar[Optional[str]] = ContextVar('llm_usage_type', default=None)
 _embedding_purpose: ContextVar[Optional[str]] = ContextVar('embedding_purpose', default=None)
 _intelligence_level: ContextVar[Optional[int]] = ContextVar('intelligence_level', default=None)
+_llm_selection_label: ContextVar[Optional[str]] = ContextVar('llm_selection_label', default=None)
+_llm_selection_kind: ContextVar[Optional[str]] = ContextVar('llm_selection_kind', default=None)
 
 
 def set_llm_purpose(purpose: str) -> None:
@@ -96,12 +98,25 @@ def set_intelligence_level(level: int) -> None:
     _intelligence_level.set(level)
 
 
+def set_llm_selection(label: Optional[str], kind: Optional[str] = None) -> None:
+    """Set fallback-selection context for the current LLM call.
+
+    Args:
+        label: Human-readable selected provider label, e.g. "Ministral-3 (Ollama) [standard] #3"
+        kind: Selection kind, e.g. "selected" or "fallback"
+    """
+    _llm_selection_label.set(label)
+    _llm_selection_kind.set(kind)
+
+
 def clear_purposes() -> None:
     """Clear both LLM and embedding purposes from context."""
     _llm_purpose.set(None)
     _llm_usage_type.set(None)
     _embedding_purpose.set(None)
     _intelligence_level.set(None)
+    _llm_selection_label.set(None)
+    _llm_selection_kind.set(None)
 
 
 class ServiceType(str, Enum):
@@ -235,6 +250,8 @@ def log_llm_usage(
     effective_purpose = purpose or _llm_purpose.get()
     effective_usage_type = usage_type or _llm_usage_type.get()
     effective_intelligence_level = intelligence_level if intelligence_level is not None else _intelligence_level.get()
+    effective_selection_label = _llm_selection_label.get()
+    effective_selection_kind = _llm_selection_kind.get()
     
     # Build structured event
     event = {
@@ -244,6 +261,7 @@ def log_llm_usage(
         "gen_ai.request.model": model,  # OpenTelemetry semantic convention
         "gen_ai.system": provider,
         "gen_ai.usage.cost": round(cost, 6),
+        "cost_usd": round(cost, 6),
     }
     
     if host:
@@ -261,18 +279,27 @@ def log_llm_usage(
     
     if effective_intelligence_level is not None:
         event["gen_ai.intelligence_level"] = effective_intelligence_level
+
+    if effective_selection_label:
+        event["gen_ai.selection.label"] = effective_selection_label
+    if effective_selection_kind:
+        event["gen_ai.selection.kind"] = effective_selection_kind
     
     if input_tokens is not None:
         event["gen_ai.usage.input_tokens"] = input_tokens
+        event["tokens.input"] = input_tokens
 
     if output_tokens is not None:
         event["gen_ai.usage.output_tokens"] = output_tokens
+        event["tokens.output"] = output_tokens
 
     if total_tokens is not None:
         event["tokens.total"] = total_tokens
+        event["gen_ai.usage.total_tokens"] = total_tokens
     
     if latency_ms is not None:
         event["gen_ai.response.latency_ms"] = latency_ms
+        event["latency_ms"] = latency_ms
         # Calculate tokens per second if we have the data
         if total_tokens and latency_ms > 0:
             event["tokens_per_second"] = (total_tokens / latency_ms) * 1000
@@ -302,8 +329,19 @@ def log_llm_usage(
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     usage_type_str = f" <{effective_usage_type}>" if effective_usage_type else ""
     iq_str = f" IQ{effective_intelligence_level}" if effective_intelligence_level is not None else ""
+    selection_str = ""
+    if effective_selection_label:
+        if effective_selection_kind:
+            selection_str = f", {effective_selection_kind}={effective_selection_label}"
+        else:
+            selection_str = f", selected={effective_selection_label}"
+    if input_tokens is not None or output_tokens is not None:
+        token_summary = f"{total_tokens or 0} tokens ({input_tokens or 0} in/{output_tokens or 0} out)"
+    else:
+        token_summary = f"{total_tokens or 0} tokens"
+
     logger.info(
-        f"LLM usage{purpose_str}{usage_type_str}: {provider}/{model}{host_str}{iq_str} - {total_tokens or 0} tokens, ${cost:.6f}",
+        f"LLM usage{purpose_str}{usage_type_str}: {provider}/{model}{host_str}{iq_str} - {token_summary}, ${cost:.6f}{selection_str}",
         extra={"extra_attrs": event}
     )
 

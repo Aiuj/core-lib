@@ -44,7 +44,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 from pydantic import BaseModel
 
 from core_lib.tracing.logger import get_module_logger
-from core_lib.tracing.service_usage import set_intelligence_level
+from core_lib.tracing.service_usage import set_intelligence_level, set_llm_selection
 
 from .llm_client import LLMClient
 from .provider_health import classify_error, get_health_tracker, ProviderHealthTracker
@@ -474,6 +474,14 @@ class FallbackLLMClient:
                     # Set intelligence level in context for usage logging
                     if level is not None:
                         set_intelligence_level(level)
+
+                    # Set selected provider metadata in context so provider-level
+                    # usage logging can emit a single merged INFO line.
+                    selection_label = provider_id
+                    if hasattr(config, 'tier') and config.tier:
+                        selection_label = f"{selection_label} [{config.tier}]"
+                    selection_label = f"{selection_label} #{config.priority}"
+                    set_llm_selection(selection_label, "fallback" if is_fallback else "selected")
                     
                     # Strip tools for providers that don't support tool calling
                     effective_tools = tools if config.supports_tools else None
@@ -509,13 +517,13 @@ class FallbackLLMClient:
                     level_info = f" IQ{level}" if level is not None else ""
                     
                     if is_fallback:
-                        logger.info(
+                        logger.debug(
                             f"✓ Fallback{level_info}: {provider_id}{tier_info} #{config.priority} "
                             f"succeeded in {elapsed_ms:.0f}ms (attempt {attempts}, "
                             f"tried: {', '.join(providers_tried)})"
                         )
                     else:
-                        logger.info(
+                        logger.debug(
                             f"✓ Selected{level_info}: {provider_id}{tier_info} #{config.priority} "
                             f"({elapsed_ms:.0f}ms)"
                         )
