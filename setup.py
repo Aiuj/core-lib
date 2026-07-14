@@ -10,7 +10,6 @@ setup(
     packages=find_packages(),
     install_requires=[
         'fast-langdetect>=1.0.0',
-        'fastmcp>=2.10.6',
         'fastapi>=0.120.2',
         'google-genai>=0.6.0',
         'ollama>=0.3.1',
@@ -26,6 +25,9 @@ setup(
         'pyjwt>=2.10.1',
 
     ],
+    extras_require={
+        'mcp': ['fastmcp>=3.4.4,<4'],
+    },
     python_requires='>=3.12',
     classifiers=[
         'Development Status :: 4 - Beta',

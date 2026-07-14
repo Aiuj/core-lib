@@ -372,7 +372,6 @@ dependencies = [
     { name = "babel" },
     { name = "fast-langdetect" },
     { name = "fastapi" },
-    { name = "fastmcp" },
     { name = "google-genai" },
     { name = "langfuse" },
     { name = "markdown" },
@@ -401,6 +400,9 @@ dev = [
 langchain = [
     { name = "langchain-core" },
 ]
+mcp = [
+    { name = "fastmcp" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -416,7 +418,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
     { name = "fast-langdetect", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.120.2" },
-    { name = "fastmcp", specifier = ">=2.10.6" },
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.4.4,<4" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.2.0" },
     { name = "google-genai", specifier = ">=0.6.0" },
@@ -438,7 +440,7 @@ requires-dist = [
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "valkey", specifier = ">=6.0.0" },
 ]
-provides-extras = ["langchain", "dev"]
+provides-extras = ["mcp", "langchain", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

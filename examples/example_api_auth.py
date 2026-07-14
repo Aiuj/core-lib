@@ -93,13 +93,13 @@ def example_fastapi_dependency():
 
 
 # =============================================================================
-# Example 3: FastMCP v2 Server with Authentication
+# Example 3: FastMCP v3 Server with Authentication
 # =============================================================================
 
 def example_fastmcp_server():
-    """Example: Protect FastMCP v2 server with authentication."""
+    """Example: Protect a FastMCP v3 server with authentication."""
     try:
-        from mcp import FastMCP
+        from fastmcp import FastMCP
         from core_lib.api_utils.fastmcp_auth import create_auth_middleware
         from core_lib.config import AuthSettings
         
@@ -110,7 +110,7 @@ def example_fastmcp_server():
         settings = AuthSettings.from_env()
         
         # Add authentication middleware
-        # Note: Actual middleware integration depends on FastMCP v2 API
+        # Note: Attach the returned middleware using FastMCP v3's middleware API.
         auth_middleware = create_auth_middleware(settings)
         # mcp.add_middleware(auth_middleware)  # Uncomment when supported
         

@@ -21,7 +21,6 @@ classifiers = [
 ]
 dependencies = [
     "fast-langdetect>=1.0.0",
-    "fastmcp>=2.10.6",
     "google-genai>=0.6.0",
     "ollama>=0.3.1",
     "langfuse>=3.2.1",
@@ -39,6 +38,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "fastmcp>=3.4.4,<4",
+]
 langchain = [
     "langchain-core>=0.3.0",
 ]
