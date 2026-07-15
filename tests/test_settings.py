@@ -153,7 +153,7 @@ class TestDotEnvLoader(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
     
     @patch('core_lib.config.base_settings.HAS_DOTENV', True)
-    @patch('core_lib.config.base_settings.load_dotenv')
+    @patch('core_lib.config.base_settings.load_dotenv', create=True)
     def test_load_dotenv_files_success(self, mock_load_dotenv):
         """Test successful .env file loading."""
         # Create .env file
