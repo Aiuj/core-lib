@@ -1,4 +1,4 @@
-﻿"""Centralized logging utilities for core-lib.
+"""Centralized logging utilities for core-lib.
 
 Capabilities:
  - One-time global logging initialization that can be triggered from an application entrypoint
@@ -98,6 +98,18 @@ class AppMetadataFilter(logging.Filter):
         
         if self.app_version:
             record.extra_attrs['client.app.version'] = self.app_version
+
+        # Add plane (control vs region) and core domain metadata
+        deployment_mode = os.getenv("DEPLOYMENT_MODE")
+        if deployment_mode:
+            plane_name = "control" if "control" in deployment_mode else ("region" if "region" in deployment_mode else deployment_mode)
+            record.extra_attrs['client.app.plane'] = plane_name
+            record.extra_attrs['deployment.plane'] = plane_name
+            
+        site_domain = os.getenv("SITE_DOMAIN")
+        if site_domain:
+            record.extra_attrs['client.app.domain'] = site_domain
+            record.extra_attrs['deployment.domain'] = site_domain
         
         return True
 
