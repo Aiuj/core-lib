@@ -25,8 +25,8 @@ class SampleResponse(BaseModel):
 class TestGeminiWarningsFix:
     """Test fixes for Gemini provider warnings."""
 
-    @patch("core_lib.llm.providers.google_genai_provider.genai")
-    @patch("core_lib.llm.providers.google_genai_provider.GoogleGenAIInstrumentor")
+    @patch("google.genai", create=True)
+    @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
     def test_instrumentation_called_once_only(self, mock_instrumentor, mock_genai):
         """Verify instrumentation is only called once even with multiple provider instances."""
         # Setup mocks
@@ -51,8 +51,8 @@ class TestGeminiWarningsFix:
         assert mock_instrumentor.call_count == 1  # Still 1
         assert mock_instrumentor_instance.instrument.call_count == 1  # Still 1
 
-    @patch("core_lib.llm.providers.google_genai_provider.genai")
-    @patch("core_lib.llm.providers.google_genai_provider.GoogleGenAIInstrumentor")
+    @patch("google.genai", create=True)
+    @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
     def test_extract_text_from_response_with_thinking_parts(self, mock_instrumentor, mock_genai):
         """Verify _extract_text_from_response handles thinking parts correctly."""
         # Setup mocks
@@ -90,8 +90,8 @@ class TestGeminiWarningsFix:
         # Verify only text parts were concatenated
         assert result == "This is the answer to the question."
 
-    @patch("core_lib.llm.providers.google_genai_provider.genai")
-    @patch("core_lib.llm.providers.google_genai_provider.GoogleGenAIInstrumentor")
+    @patch("google.genai", create=True)
+    @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
     def test_extract_text_fallback_when_no_candidates(self, mock_instrumentor, mock_genai):
         """Verify _extract_text_from_response falls back to .text when needed."""
         # Setup mocks
@@ -112,8 +112,8 @@ class TestGeminiWarningsFix:
         # Verify fallback was used
         assert result == "Fallback text"
 
-    @patch("core_lib.llm.providers.google_genai_provider.genai")
-    @patch("core_lib.llm.providers.google_genai_provider.GoogleGenAIInstrumentor")
+    @patch("google.genai", create=True)
+    @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
     def test_extract_text_handles_empty_parts(self, mock_instrumentor, mock_genai):
         """Verify _extract_text_from_response handles empty parts gracefully."""
         # Setup mocks

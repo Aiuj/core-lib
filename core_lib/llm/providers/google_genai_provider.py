@@ -447,6 +447,9 @@ class GoogleGenAIProvider(BaseProvider):
                             text_parts.append(part_text)
                     if text_parts:
                         return "".join(text_parts)
+                    if not parts:
+                        return getattr(resp, "text", "")
+                    return ""
             # Fallback to .text attribute if candidates approach fails
             # This may trigger the warning but ensures we always get content
             return getattr(resp, "text", "")

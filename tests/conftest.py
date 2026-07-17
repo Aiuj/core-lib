@@ -29,7 +29,7 @@ def pytest_pyfunc_call(pyfuncitem):  # type: ignore
     """
     # If pytest-asyncio plugin present, defer to it
     if any(name.startswith("pytest_asyncio") for name, _ in pyfuncitem.config.pluginmanager.list_name_plugin()):
-        return False  # let plugin handle
+        return None  # let plugin handle
 
     if "asyncio" in pyfuncitem.keywords and inspect.iscoroutinefunction(pyfuncitem.obj):
         # Get the function signature to determine which arguments it actually accepts
@@ -43,4 +43,4 @@ def pytest_pyfunc_call(pyfuncitem):  # type: ignore
         }
         asyncio.run(pyfuncitem.obj(**filtered_kwargs))
         return True  # indicate we handled invocation
-    return False
+    return None
