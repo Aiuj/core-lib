@@ -60,12 +60,12 @@ Higher levels use more sophisticated retrieval and analysis:
 | 4 | Standard (Low, Default) | Hybrid + chunks | Direct + context | Keywords | 5 chunks / 3.5k retrieved tokens | IQ 4 | 1x | No | No |
 | 5 | Standard | Hybrid + chunks | Direct + context | Hybrid | 8 chunks / 7k retrieved tokens | IQ 5 | 2x | No | No |
 | 6 | High (Low) | Hybrid + chunks | Direct + context | Hybrid | 10 chunks / 7k retrieved tokens | IQ 6 | 2x | No | No |
-| 7 | High | Hybrid + chunks | Direct + context | LLM | 12 chunks / 7k retrieved tokens | IQ 7 | 5x | Conditional | Yes |
+| 7 | High | Hybrid + chunks | Context only* | LLM | 12 chunks / 7k retrieved tokens | IQ 7 | 5x | Conditional | Yes |
 | 8 | Max (Low) | Hybrid + chunks | Context only* | LLM | 15 chunks / 7k retrieved tokens | IQ 8 | 5x | Always | Yes |
 | 9 | Max | Hybrid + chunks | Context only* | LLM | 20 chunks / 7k retrieved tokens | IQ 9 | 5x | Always | Yes |
 | 10 | Ultimate | Hybrid + chunks | Context only* | LLM | 30 chunks / 7k retrieved tokens | IQ 10 | 5x | Always | Yes |
 
-*Levels 8-10 don't use QA cache for direct answers, but QA pairs are still used as context.
+*Levels 7-10 don't use QA pairs for direct answers; QA pairs remain primary LLM context. IQ 7 may reuse Redis only for strictly identical query text and answer-affecting parameters. IQ 8-10 always generate with the LLM. Higher-IQ generations replace equivalent lower-IQ knowledge-cache pairs.
 
 Default: 4 (Standard Low). QA pairs and document chunks are limited to 3.5k tokens
 at level 4 and 7k tokens above level 4. Questions, instructions, system prompts, and
