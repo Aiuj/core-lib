@@ -50,6 +50,7 @@ class TestDocumentClassificationResultSchema:
         assert result.confidence == 0.88
         assert result.detection_method == "llm"
         assert result.alternative_categories == []
+        assert result.primary_topics == []
 
     def test_default_detection_method_is_llm(self):
         result = DocumentClassificationResult(
@@ -172,12 +173,16 @@ class TestDocumentClassifierClassifyHappyPath:
             reasoning="Contains technical API docs.",
             description="A detailed API reference guide.",
             alternative_categories=alts,
+            primary_topics=["REST APIs"],
+            product_areas=["Developer platform"],
+            capabilities=["API integration"],
         )
         clf = self._classifier_with_result(expected)
         result = clf.classify(filename="api_guide.pdf", content_excerpt="REST endpoints")
         assert result.reasoning == "Contains technical API docs."
         assert result.description == "A detailed API reference guide."
         assert result.alternative_categories == alts
+        assert result.primary_topics == ["REST APIs"]
 
     def test_calls_chat_with_system_and_user_messages(self):
         clf = self._classifier_with_result(_make_result())
@@ -342,8 +347,8 @@ class TestBuildUserMessage:
 class TestDocCategoriesIntegration:
     """Ensure the classifier is consistent with DOC_CATEGORIES."""
 
-    def test_all_16_categories_present(self):
-        assert len(DOC_CATEGORIES) == 16
+    def test_all_categories_present(self):
+        assert len(DOC_CATEGORIES) == 17
 
     def test_every_category_has_required_fields(self):
         required = {"key", "label", "description"}
@@ -361,9 +366,7 @@ class TestDocCategoriesIntegration:
                 f"Category key '{cat['key']}' missing from classifier prompt"
             )
 
-    def test_valid_keys_set_includes_general(self):
-        """'general' is the fallback — it must NOT be in DOC_CATEGORIES (it's a synthetic key)."""
+    def test_valid_keys_include_general(self):
+        """The general category is a valid low-specificity classification."""
         keys = {cat["key"] for cat in DOC_CATEGORIES}
-        assert "general" not in keys, (
-            "'general' should not be in DOC_CATEGORIES; it is only used as a fallback"
-        )
+        assert "general" in keys

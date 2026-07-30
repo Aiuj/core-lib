@@ -34,6 +34,9 @@ exact same language. If the content is in English write in English, if French wr
 French, etc.
 - alternative_categories: list of up to 2 alternative categories as objects with \
 "category_id" and "confidence" keys; use an empty list when highly confident
+- primary_topics: precise open-vocabulary subjects covered by the document
+- product_areas: named products, modules, optional features, or business processes
+- capabilities: concrete capabilities or questions this document can support
 
 Use only the category_id values from the list above. Be precise."""
 
@@ -130,6 +133,9 @@ class DocumentClassifier:
                     description=result.description,
                     detection_method="llm",
                     alternative_categories=result.alternative_categories,
+                    primary_topics=result.primary_topics,
+                    product_areas=result.product_areas,
+                    capabilities=result.capabilities,
                 )
 
             return result

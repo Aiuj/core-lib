@@ -17,9 +17,12 @@ Example usage::
 """
 
 from .classifier import DocumentClassifier
-from .schemas import DocumentClassificationResult
+from .questionnaire_classifier import QuestionnaireTopicClassifier
+from .schemas import DocumentClassificationResult, TopicProfile
 
 __all__ = [
     "DocumentClassifier",
     "DocumentClassificationResult",
+    "QuestionnaireTopicClassifier",
+    "TopicProfile",
 ]
