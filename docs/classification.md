@@ -1,6 +1,6 @@
 # Document Classification (`core_lib.classification`)
 
-`core_lib.classification` provides LLM-based document classification into one of 16 predefined categories, plus simultaneous generation of a RAG-optimised semantic description of the document.
+`core_lib.classification` provides LLM-based document classification into the configured categories, plus semantic topic profiles for documents and RFx worksheets.
 
 ---
 
@@ -8,9 +8,10 @@
 
 ```
 core_lib/classification/
-├── __init__.py      # Exports DocumentClassifier, DocumentClassificationResult
+├── __init__.py      # Public classifiers and schemas
 ├── classifier.py    # DocumentClassifier implementation
-└── schemas.py       # DocumentClassificationResult Pydantic model
+├── questionnaire_classifier.py # Worksheet-level topic classifier
+└── schemas.py       # Classification and TopicProfile models
 ```
 
 ---
@@ -32,7 +33,23 @@ result = classifier.classify(
 print(result.category_id)    # "business_financial_reports"
 print(result.confidence)     # 0.94
 print(result.description)    # "This annual financial report covers Q4 2024..."
+print(result.primary_topics) # ["quarterly financial performance"]
 ```
+
+## Questionnaire topic profiles
+
+```python
+from core_lib.classification import QuestionnaireTopicClassifier
+
+profile = QuestionnaireTopicClassifier().classify(
+    workbook_name="customer-rfx.xlsx",
+    sheet_name="eProcurement",
+    questions=["Can purchase requisition forms be customized?"],
+    language="en",
+)
+```
+
+The result contains an open-vocabulary description, topics, product areas, capabilities, confidence, and a deterministic fingerprint. Question sampling is distributed across the full worksheet instead of using only its first rows.
 
 Top-level import also works:
 

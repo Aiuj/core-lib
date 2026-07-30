@@ -19,7 +19,7 @@
 - LLM client with support for multiple providers (OpenAI, Gemini, Ollama)
 - Excel file processing and markdown conversion
 - Document categorization system
-- **🆕 Document Classifier** - LLM-based document classification into 16 predefined categories with RAG-optimised description generation
+- **Document and Questionnaire Topic Classifiers** - LLM-based document classification plus worksheet-level semantic profiles with stable fingerprints for topic-aware RAG
 - Language detection utilities
 - Shared data classes and model access logic
 - Easy integration in monorepo and external tools
@@ -740,6 +740,20 @@ print(result.alternative_categories)  # [{"category_id": "...", "confidence": ..
 | `intelligence_level` | `3` | LLM tier — 3 is cheap/fast, suitable for classification. |
 
 See **[docs/classification.md](docs/classification.md)** for full API reference and category list.
+
+Worksheet-level RFx scope profiles use the same inexpensive `classify` model tier:
+
+```python
+from core_lib.classification import QuestionnaireTopicClassifier
+
+profile = QuestionnaireTopicClassifier().classify(
+    workbook_name="customer-rfx.xlsx",
+    sheet_name="eProcurement",
+    questions=["Can purchase requisition forms be customized?"],
+    language="en",
+)
+print(profile.primary_topics, profile.fingerprint)
+```
 
 ### Language Utilities
 

@@ -40,7 +40,12 @@ from .config import (
 from .ocr import OcrService, OcrResult, OcrPageResult, DotsOcrClient
 
 # Document classification
-from .classification import DocumentClassifier, DocumentClassificationResult
+from .classification import (
+    DocumentClassifier,
+    DocumentClassificationResult,
+    QuestionnaireTopicClassifier,
+    TopicProfile,
+)
 
 # API utilities for time-based authentication
 from .api_utils import (
@@ -192,6 +197,8 @@ __all__ = [
     # Classification
     "DocumentClassifier",
     "DocumentClassificationResult",
+    "QuestionnaireTopicClassifier",
+    "TopicProfile",
 
     "__version__",
 ]

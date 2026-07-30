@@ -1,8 +1,78 @@
 """Pydantic models for document classification results."""
 
+import hashlib
+import json
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class TopicProfile(BaseModel):
+    """Semantic scope profile shared by questionnaires and knowledge documents."""
+
+    description: str = Field(
+        default="",
+        description="Retrieval-oriented summary of the subject and questions the source can answer",
+    )
+    primary_topics: List[str] = Field(default_factory=list)
+    product_areas: List[str] = Field(default_factory=list)
+    capabilities: List[str] = Field(default_factory=list)
+    document_category: Optional[str] = None
+    language: str = "unknown"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasoning: str = ""
+    detection_method: Literal["llm", "derived", "provided", "default"] = "llm"
+    classifier_version: str = "topic-profile-v1"
+    fingerprint: str = ""
+
+    @field_validator("primary_topics", "product_areas", "capabilities", mode="before")
+    @classmethod
+    def _clean_terms(cls, value: Any) -> List[str]:
+        if not value:
+            return []
+        if not isinstance(value, list):
+            value = [value]
+        cleaned: List[str] = []
+        seen = set()
+        for item in value:
+            term = " ".join(str(item).split()).strip()
+            key = term.casefold()
+            if term and key not in seen:
+                cleaned.append(term)
+                seen.add(key)
+        return cleaned[:20]
+
+    @model_validator(mode="after")
+    def _set_fingerprint(self) -> "TopicProfile":
+        # Never trust a caller- or model-supplied fingerprint: cache identity
+        # must match the normalized semantic fields in this profile.
+        self.fingerprint = self.compute_fingerprint()
+        return self
+
+    def compute_fingerprint(self) -> str:
+        payload = {
+            "description": " ".join(self.description.split()).casefold(),
+            "primary_topics": [v.casefold() for v in self.primary_topics],
+            "product_areas": [v.casefold() for v in self.product_areas],
+            "capabilities": [v.casefold() for v in self.capabilities],
+            "document_category": self.document_category,
+            "language": self.language,
+            "classifier_version": self.classifier_version,
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def to_reranker_text(self) -> str:
+        parts = []
+        if self.description:
+            parts.append(f"Description: {self.description}")
+        if self.primary_topics:
+            parts.append("Topics: " + ", ".join(self.primary_topics))
+        if self.product_areas:
+            parts.append("Product areas: " + ", ".join(self.product_areas))
+        if self.capabilities:
+            parts.append("Capabilities: " + ", ".join(self.capabilities))
+        return "\n".join(parts)
 
 
 class DocumentClassificationResult(BaseModel):
@@ -36,3 +106,20 @@ class DocumentClassificationResult(BaseModel):
             "'confidence' keys; empty list when classification is highly confident"
         ),
     )
+    primary_topics: List[str] = Field(default_factory=list)
+    product_areas: List[str] = Field(default_factory=list)
+    capabilities: List[str] = Field(default_factory=list)
+
+    def to_topic_profile(self, language: str = "unknown") -> TopicProfile:
+        return TopicProfile(
+            description=self.description,
+            primary_topics=self.primary_topics,
+            product_areas=self.product_areas,
+            capabilities=self.capabilities,
+            document_category=self.category_id,
+            language=language or "unknown",
+            confidence=self.confidence,
+            reasoning=self.reasoning,
+            detection_method="llm" if self.detection_method == "llm" else "default",
+            classifier_version="document-topic-v1",
+        )
