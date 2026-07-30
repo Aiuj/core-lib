@@ -1,4 +1,4 @@
-﻿"""core_lib.utils - Utility functions and classes.
+"""core_lib.utils - Utility functions and classes.
 
 This package provides utility functionality for the core_lib library including:
 - LanguageUtils: Language detection, text manipulation, and NLP utilities
@@ -18,7 +18,7 @@ in the package to keep the public API small and predictable.
 """
 
 from .language_utils import LanguageUtils
-from .file_utils import create_tempfile, remove_tempfile
+from .file_utils import create_tempfile, remove_tempfile, sanitize_filename_component, build_safe_download_filename
 from .health_check import HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check
 from .datetime_utils import utc_now, parse_iso_datetime, to_iso_string
 from .url_utils import normalize_url_with_scheme
@@ -28,6 +28,8 @@ __all__ = [
     "LanguageUtils",
     "create_tempfile",
     "remove_tempfile",
+    "sanitize_filename_component",
+    "build_safe_download_filename",
     "HealthChecker",
     "HealthCheckResult",
     "HealthStatus",

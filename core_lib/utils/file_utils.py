@@ -126,3 +126,113 @@ def save_fileobj_to_tempfile(fileobj: IO[bytes], suffix: Optional[str] = None, p
     """
     content = fileobj.read()
     return save_bytes_to_tempfile(content, suffix=suffix, prefix=prefix)
+
+
+def sanitize_filename_component(name: str, max_length: int = 150) -> str:
+    """Sanitize a string component for Linux and Windows file naming compatibility.
+
+    Rules applied:
+    - Replaces invalid characters (< > : " / \\ | ? * and ASCII control chars 0x00-0x1F) with '_'.
+    - Collapses consecutive whitespace and underscores into single underscores.
+    - Strips leading and trailing dots, underscores, and whitespace.
+    - Resolves Windows reserved filenames (CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9) by suffixing with '_doc'.
+    - Truncates length to max_length.
+
+    Args:
+        name: Raw string component (e.g. document title or version).
+        max_length: Maximum allowed length for the sanitized component.
+
+    Returns:
+        Sanitized string safe for use in Linux and Windows filenames.
+    """
+    if not name:
+        return ""
+
+    import re
+
+    # Replace invalid characters for Windows and Linux with '_'
+    sanitized = re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', name)
+
+    # Collapse multiple whitespace and underscores
+    sanitized = re.sub(r'[\s_]+', '_', sanitized)
+
+    # Strip leading/trailing dots, spaces, underscores
+    sanitized = sanitized.strip('._ ')
+
+    # Check Windows reserved filenames
+    reserved_names = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    }
+    if sanitized.upper() in reserved_names:
+        sanitized = f"{sanitized}_doc"
+
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip('._ ')
+
+    return sanitized
+
+
+def build_safe_download_filename(
+    title: Optional[str],
+    version: Optional[str | int] = None,
+    extension_or_filename: Optional[str] = None,
+    prefix: Optional[str] = None,
+    default_title: str = "document",
+) -> str:
+    """Combine document/questionnaire title and version into a cross-platform safe filename.
+
+    Format: [prefix_]Title_vVersion.ext
+
+    Args:
+        title: Title of the document or questionnaire.
+        version: Version number or version string (e.g. 1, 2, "1.0", "v1").
+        extension_or_filename: Original filename or extension (e.g., "example.xlsx" or ".pdf").
+        prefix: Optional prefix (e.g., "answered", "clean", "compared").
+        default_title: Fallback title if title is empty.
+
+    Returns:
+        Sanitized filename string compatible with Windows and Linux.
+    """
+    raw_title = (title or "").strip()
+    if not raw_title and extension_or_filename:
+        base = os.path.basename(extension_or_filename)
+        raw_title, _ = os.path.splitext(base)
+
+    clean_title = sanitize_filename_component(raw_title) or default_title
+
+    version_part = ""
+    if version is not None and str(version).strip() != "":
+        v_str = str(version).strip()
+        if not v_str.lower().startswith("v"):
+            v_str = f"v{v_str}"
+        version_part = sanitize_filename_component(v_str)
+
+    ext = ""
+    if extension_or_filename:
+        base = os.path.basename(extension_or_filename)
+        _, ext_part = os.path.splitext(base)
+        if ext_part:
+            ext = ext_part
+        elif extension_or_filename.startswith("."):
+            ext = extension_or_filename
+
+    prefix_part = ""
+    if prefix:
+        p_clean = sanitize_filename_component(prefix)
+        if p_clean:
+            prefix_part = p_clean.rstrip("_")
+
+    components = []
+    if prefix_part:
+        components.append(prefix_part)
+    components.append(clean_title)
+    if version_part:
+        components.append(version_part)
+
+    stem = "_".join(components)
+    safe_stem = sanitize_filename_component(stem) or default_title
+
+    return f"{safe_stem}{ext}"
+
