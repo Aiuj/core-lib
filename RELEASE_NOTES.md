@@ -27,10 +27,20 @@ Then commit, push and tag this new version in github and create a release for th
 
 ### v0.4.0 - Questionnaire Topic Profiles (Jul 30, 2026)
 
+#### Topic-aware retrieval foundations
+
 - **Shared TopicProfile contract**: Added normalized, fingerprinted topic profiles for both ingested documents and complete RFx worksheets, including descriptions, topics, product areas, capabilities, category, language, and confidence.
 - **Questionnaire classifier**: Added a worksheet-level classifier that reuses the lightweight document-classification model tier while preserving named products/modules and stable profile fingerprints.
 - **Profile hardening**: Normalized merged explicit product names within the 20-term bound, made small-limit question sampling safe, and made fingerprints invariant to equivalent list ordering, case, whitespace, category, and language formatting.
 - **Integration and tests**: Exposed the new classifier through the public package API and added focused coverage for profile construction, normalization, and backwards-compatible classifier behavior.
+
+#### Provider, OCR, and observability platform
+
+- **Configurable provider registry**: Added environment-aware provider configuration, startup connectivity preflight checks, explicit provider names, and automatic health-aware fallback routing.
+- **Google GenAI structured output**: Added Google GenAI support with Pydantic structured-output handling and schema-cleaning utilities.
+- **OCR service**: Added reusable OCR orchestration with vision-LLM error detection, sanitization, and observability for vision/OCR calls.
+- **Tracing improvements**: Added plane/domain attributes, LLM-selection context, and documented intelligence-level cost boundaries for more actionable telemetry.
+- **Operational compatibility**: Made FastMCP v3 optional, added PyYAML as a required dependency, and improved Wake-on-LAN health-probe timing.
 
 ---
 
