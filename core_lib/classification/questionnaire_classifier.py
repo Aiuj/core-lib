@@ -1,7 +1,7 @@
 """LLM classifier for worksheet-level questionnaire topic profiles."""
 from __future__ import annotations
 
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 from core_lib.llm import create_fallback_llm_client
 from core_lib.tracing import get_module_logger
@@ -65,9 +65,10 @@ class QuestionnaireTopicClassifier:
             content.detection_method = "llm"
             content.classifier_version = "questionnaire-topic-v1"
             explicit_products = self.extract_explicit_product_names(questions)
-            existing = {value.casefold() for value in content.product_areas}
-            content.product_areas.extend(
-                value for value in explicit_products if value.casefold() not in existing
+            # Reuse the TopicProfile term normalization after merging. Explicit names
+            # come first so they are retained when the profile reaches its 20-term cap.
+            content.product_areas = TopicProfile.normalize_terms(
+                [*explicit_products, *content.product_areas]
             )
             content.fingerprint = content.compute_fingerprint()
             return content
@@ -86,8 +87,12 @@ class QuestionnaireTopicClassifier:
     @staticmethod
     def sample_questions(questions: Sequence[str], limit: int = 40) -> list[str]:
         cleaned = [" ".join(str(q).split()).strip() for q in questions if str(q).strip()]
+        if limit <= 0:
+            return []
         if len(cleaned) <= limit:
             return cleaned
+        if limit == 1:
+            return [cleaned[0]]
         # Even sampling covers the beginning, middle, and end while remaining deterministic.
         indices = {round(i * (len(cleaned) - 1) / (limit - 1)) for i in range(limit)}
         return [cleaned[i] for i in sorted(indices)]

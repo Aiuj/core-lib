@@ -23,6 +23,17 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## July 2026
+
+### v0.4.0 - Questionnaire Topic Profiles (Jul 30, 2026)
+
+- **Shared TopicProfile contract**: Added normalized, fingerprinted topic profiles for both ingested documents and complete RFx worksheets, including descriptions, topics, product areas, capabilities, category, language, and confidence.
+- **Questionnaire classifier**: Added a worksheet-level classifier that reuses the lightweight document-classification model tier while preserving named products/modules and stable profile fingerprints.
+- **Profile hardening**: Normalized merged explicit product names within the 20-term bound, made small-limit question sampling safe, and made fingerprints invariant to equivalent list ordering, case, whitespace, category, and language formatting.
+- **Integration and tests**: Exposed the new classifier through the public package API and added focused coverage for profile construction, normalization, and backwards-compatible classifier behavior.
+
+---
+
 ## May 2026
 
 ### v0.3.11 - AI Service Pricing Data Refresh (May 27, 2026)

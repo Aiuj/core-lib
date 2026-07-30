@@ -25,9 +25,9 @@ class TopicProfile(BaseModel):
     classifier_version: str = "topic-profile-v1"
     fingerprint: str = ""
 
-    @field_validator("primary_topics", "product_areas", "capabilities", mode="before")
-    @classmethod
-    def _clean_terms(cls, value: Any) -> List[str]:
+    @staticmethod
+    def normalize_terms(value: Any, max_terms: int = 20) -> List[str]:
+        """Normalize, deduplicate, and bound profile term lists consistently."""
         if not value:
             return []
         if not isinstance(value, list):
@@ -40,7 +40,12 @@ class TopicProfile(BaseModel):
             if term and key not in seen:
                 cleaned.append(term)
                 seen.add(key)
-        return cleaned[:20]
+        return cleaned[:max_terms]
+
+    @field_validator("primary_topics", "product_areas", "capabilities", mode="before")
+    @classmethod
+    def _clean_terms(cls, value: Any) -> List[str]:
+        return cls.normalize_terms(value)
 
     @model_validator(mode="after")
     def _set_fingerprint(self) -> "TopicProfile":
@@ -50,14 +55,22 @@ class TopicProfile(BaseModel):
         return self
 
     def compute_fingerprint(self) -> str:
+        def normalized_scalar(value: Any, default: str = "") -> str:
+            normalized = " ".join(str(value or "").split()).casefold()
+            return normalized or default
+
+        def normalized_terms(values: List[str]) -> List[str]:
+            normalized_values = (normalized_scalar(value) for value in values)
+            return sorted({value for value in normalized_values if value})
+
         payload = {
-            "description": " ".join(self.description.split()).casefold(),
-            "primary_topics": [v.casefold() for v in self.primary_topics],
-            "product_areas": [v.casefold() for v in self.product_areas],
-            "capabilities": [v.casefold() for v in self.capabilities],
-            "document_category": self.document_category,
-            "language": self.language,
-            "classifier_version": self.classifier_version,
+            "description": normalized_scalar(self.description),
+            "primary_topics": normalized_terms(self.primary_topics),
+            "product_areas": normalized_terms(self.product_areas),
+            "capabilities": normalized_terms(self.capabilities),
+            "document_category": normalized_scalar(self.document_category),
+            "language": normalized_scalar(self.language, default="unknown"),
+            "classifier_version": normalized_scalar(self.classifier_version),
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

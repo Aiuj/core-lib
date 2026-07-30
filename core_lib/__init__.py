@@ -1,6 +1,6 @@
 ﻿"""core-lib: Shared library for MCP agent tools."""
 
-__version__ = "0.3.8"
+__version__ = "0.4.0"
 
 from .cache import (
     create_cache, 

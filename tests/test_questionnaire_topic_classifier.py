@@ -17,6 +17,27 @@ def test_topic_profile_fingerprint_is_stable_for_equivalent_whitespace():
     assert first.fingerprint == second.fingerprint
 
 
+def test_topic_profile_fingerprint_is_order_and_case_independent():
+    first = TopicProfile(
+        description="Purchase requisition forms",
+        primary_topics=["Approvals", "Purchase Requisitions"],
+        product_areas=["eProcurement", "CloudSync Enterprise"],
+        capabilities=["Custom Forms", "Workflow Rules"],
+        document_category=" Product Documentation ",
+        language=" EN ",
+    )
+    second = TopicProfile(
+        description=" purchase   requisition forms ",
+        primary_topics=["purchase requisitions", "approvals"],
+        product_areas=["cloudsync enterprise", "eprocurement"],
+        capabilities=["workflow rules", "custom forms"],
+        document_category="product documentation",
+        language="en",
+    )
+
+    assert first.fingerprint == second.fingerprint
+
+
 def test_topic_profile_fingerprint_changes_with_scope():
     requisitions = TopicProfile(description="Purchase requisitions")
     invoicing = TopicProfile(description="E-invoicing")
@@ -29,6 +50,13 @@ def test_even_question_sampling_covers_complete_sheet():
     assert sampled[0] == "Question 0"
     assert sampled[-1] == "Question 99"
     assert any(item in sampled for item in ("Question 49", "Question 50"))
+
+
+def test_question_sampling_handles_small_limits_without_dividing_by_zero():
+    questions = ["First", "Second", "Third"]
+
+    assert QuestionnaireTopicClassifier.sample_questions(questions, limit=1) == ["First"]
+    assert QuestionnaireTopicClassifier.sample_questions(questions, limit=0) == []
 
 
 def test_classifier_returns_structured_profile():
@@ -92,3 +120,26 @@ def test_classifier_preserves_explicit_product_name_when_llm_generalizes_it():
     )
 
     assert "CloudSync Enterprise" in result.product_areas
+
+
+def test_classifier_re_normalizes_product_areas_after_merging_explicit_names():
+    client = MagicMock()
+    client.chat.return_value = {
+        "content": TopicProfile(
+            description="CloudSync Enterprise questionnaire.",
+            product_areas=[f"Area {index}" for index in range(20)],
+            confidence=0.9,
+        ).model_dump()
+    }
+    classifier = QuestionnaireTopicClassifier()
+    classifier._client = client
+
+    result = classifier.classify(
+        "rfx.xlsx",
+        "Cloud",
+        ["For CloudSync Enterprise, describe migration capabilities."],
+    )
+
+    assert result.product_areas[0] == "CloudSync Enterprise"
+    assert len(result.product_areas) == 20
+    assert len({value.casefold() for value in result.product_areas}) == len(result.product_areas)
