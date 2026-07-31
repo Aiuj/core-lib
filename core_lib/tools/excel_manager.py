@@ -114,10 +114,21 @@ class ExcelManager:
         """
         from datetime import datetime as _dt, date as _date
         rows = []
-        for row in ws.iter_rows():
+        try:
+            source_rows = ws.iter_rows()
+            iterator = iter(source_rows)
+        except (AttributeError, TypeError):
+            # Lightweight worksheet doubles (and older worksheet adapters)
+            # expose raw values instead of openpyxl Cell objects.
+            source_rows = getattr(ws, 'values', ())
+            iterator = iter(source_rows)
+
+        for row in iterator:
             row_vals = []
             for cell in row:
-                val = cell.value
+                # Raw ``ws.values`` rows contain values directly; openpyxl
+                # rows contain cells with formatting metadata.
+                val = getattr(cell, 'value', cell)
                 if isinstance(val, (_dt, _date)):
                     nf = getattr(cell, 'number_format', '') or ''
                     row_vals.append(self._format_excel_date(val, nf))

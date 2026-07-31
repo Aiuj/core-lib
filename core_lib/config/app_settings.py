@@ -45,13 +45,14 @@ class AppSettings(BaseSettings):
         
         # Resolve project root
         project_root = overrides.get("project_root")
+        explicit_project_root = project_root is not None
         resolved_root = cls._resolve_project_root(project_root)
         
         # Resolve app name
         app_name = overrides.get("app_name")
         if app_name is None:
             # Try pyproject.toml
-            if resolved_root:
+            if explicit_project_root and resolved_root:
                 pyproject = resolved_root / "pyproject.toml"
                 if pyproject.exists():
                     data = cls._read_pyproject_data(pyproject)

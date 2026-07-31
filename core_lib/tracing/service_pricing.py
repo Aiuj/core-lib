@@ -30,6 +30,12 @@ LLM_PRICING = {
     "gpt-5.3-codex": {"input": 0.00175, "output": 0.014},  # $1.75/$14.00 per 1M
     # o4 series (reasoning models)
     "o4-mini": {"input": 0.004, "output": 0.016},          # $4.00/$16.00 per 1M
+    # Legacy models retained for usage records from existing applications.
+    "gpt-4": {"input": 0.03, "output": 0.06},
+    "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+    "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     
     # Google Gemini models
     # Source: https://ai.google.dev/gemini-api/docs/pricing (updated July 31, 2026)
@@ -216,9 +222,14 @@ def get_llm_pricing(model: str) -> dict:
 
     # 5. Forward prefix: known model key is a prefix of the requested name
     #    e.g. "gemini-2.5-flash" matches "gemini-2.5-flash-thinking-exp"
+    best_prefix = None
     for known_model, pricing in LLM_PRICING.items():
-        if model_key.startswith(known_model):
-            return pricing
+        if model_key.startswith(known_model) and (
+            best_prefix is None or len(known_model) > len(best_prefix[0])
+        ):
+            best_prefix = (known_model, pricing)
+    if best_prefix is not None:
+        return best_prefix[1]
 
     # 6. Reverse prefix: requested name is a prefix of a known model key
     #    e.g. "gemini-3.1-pro" matches "gemini-3.1-pro-preview"

@@ -109,6 +109,11 @@ class InfinityRerankerClient(BaseRerankerClient):
         """Last Infinity server URL used (updated after each request for failover visibility)."""
         return self._last_used_url
 
+    @property
+    def base_url(self) -> Optional[str]:
+        """Compatibility alias for the currently selected Infinity server."""
+        return self._last_used_url
+
     def _rerank_raw(
         self,
         query: str,

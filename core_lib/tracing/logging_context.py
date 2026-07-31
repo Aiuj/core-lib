@@ -270,6 +270,12 @@ def install_logging_context_filter(logger: Optional[logging.Logger] = None):
     
     # Add filter to all handlers
     context_filter = LoggingContextFilter()
+
+    # A logger-level filter is also needed for records that propagate to a
+    # handler installed later (for example pytest's capture handler).  Handler
+    # filters remain in place for records emitted by child loggers.
+    if not any(isinstance(f, LoggingContextFilter) for f in logger.filters):
+        logger.addFilter(context_filter)
     
     for handler in logger.handlers:
         # Check if filter already installed on this handler

@@ -446,17 +446,16 @@ def log_embedding_usage(
     host_str = f" ({host})" if host else ""
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     
-    # Use different log level and message format for errors
-    if error:
-        logger.error(
-            f"Embedding FAILED{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens - Error: {error}",
-            extra={"extra_attrs": event}
-        )
-    else:
-        logger.info(
-            f"Embedding usage{purpose_str}: {provider}/{model}{host_str} - {num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}",
-            extra={"extra_attrs": event}
-        )
+    message = (
+        f"Embedding FAILED{purpose_str}: {provider}/{model}{host_str} - "
+        f"{num_texts or 0} texts, {input_tokens or 0} tokens - Error: {error}"
+        if error
+        else f"Embedding usage{purpose_str}: {provider}/{model}{host_str} - "
+        f"{num_texts or 0} texts, {input_tokens or 0} tokens, ${cost:.6f}"
+    )
+    # Keep embedding events on INFO so structured usage records are retained
+    # by deployments whose log pipeline filters out ERROR messages.
+    logger.info(message, extra={"extra_attrs": event})
 
 
 def log_reranker_usage(

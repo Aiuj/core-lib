@@ -66,6 +66,13 @@ class AuthSettings(BaseSettings):
     auth_private_keys: FrozenSet[str] = field(default_factory=frozenset)  # All private keys
     auth_static_keys: FrozenSet[str] = field(default_factory=frozenset)  # Static API keys
     auth_key_header_name: str = "x-auth-key"
+    _raise_validation_errors: bool = field(default=True, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Preserve direct-construction errors while keeping ``from_env`` inspectable."""
+        super().__post_init__()
+        if self._raise_validation_errors and self._validation_errors:
+            raise SettingsError(self._validation_errors[0])
     
     @classmethod
     def from_env(
@@ -126,6 +133,9 @@ class AuthSettings(BaseSettings):
             overrides["auth_static_keys"] = _parse_keys(overrides["auth_static_keys"])
         
         settings_dict.update(overrides)
+        # Environment loading historically returns an object whose validation
+        # state can be inspected through ``is_valid``/``validation_errors``.
+        settings_dict["_raise_validation_errors"] = False
         return cls(**settings_dict)
     
     def validate(self) -> None:
@@ -135,16 +145,17 @@ class AuthSettings(BaseSettings):
             SettingsError: If auth is enabled but no valid keys are configured
         """
         if self.auth_enabled:
-            has_private_keys = bool(self.auth_private_keys)
+            private_keys = self.auth_private_keys or _parse_keys(self.auth_private_key)
+            has_private_keys = bool(private_keys)
             has_static_keys = bool(self.auth_static_keys)
             
             if not has_private_keys and not has_static_keys:
                 raise SettingsError(
-                    "AUTH_PRIVATE_KEY and/or AUTH_STATIC_KEYS must be set when AUTH_ENABLED is True"
+                    "AUTH_PRIVATE_KEY must be set when AUTH_ENABLED is True"
                 )
             
             # Validate private key length for security
-            for key in self.auth_private_keys:
+            for key in private_keys:
                 if len(key) < 16:
                     raise SettingsError(
                         "AUTH_PRIVATE_KEY entries should be at least 16 characters for security"
@@ -175,7 +186,7 @@ class AuthSettings(BaseSettings):
     
     def has_hmac_auth(self) -> bool:
         """Check if time-based HMAC authentication is configured."""
-        return bool(self.auth_private_keys)
+        return bool(self.auth_private_keys or _parse_keys(self.auth_private_key))
     
     def has_static_auth(self) -> bool:
         """Check if static API key authentication is configured."""

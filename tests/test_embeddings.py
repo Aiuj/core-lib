@@ -293,6 +293,9 @@ class TestBaseEmbeddingClient:
             use_l2_norm=False, 
             cache_duration_seconds=0
         )
+        # The lightweight test double does not forward arbitrary constructor
+        # kwargs to BaseEmbeddingClient, so set the cache policy explicitly.
+        client.cache_duration_seconds = 0
         
         # Test single embedding - cache should not be checked or set
         embedding = client.generate_embedding_single("test text")

@@ -116,8 +116,9 @@ class FallbackRerankerClient(BaseRerankerClient):
         provider_info = []
         for provider in self.providers:
             info = f"{type(provider).__name__}"
-            if hasattr(provider, '_api_client') and hasattr(provider._api_client, 'base_urls'):
-                info += f":{','.join(provider._api_client.base_urls)}"
+            base_urls = getattr(getattr(provider, '_api_client', None), 'base_urls', None)
+            if isinstance(base_urls, (list, tuple)):
+                info += f":{','.join(base_urls)}"
             elif hasattr(provider, 'base_url'):
                 info += f":{provider.base_url}"
             elif hasattr(provider, 'api_key'):

@@ -23,6 +23,12 @@ from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
 
+
+def get_cache():
+    """Resolve the shared cache lazily for compatibility and low import cost."""
+    from core_lib.cache import get_cache as _get_cache
+    return _get_cache()
+
 # Default TTLs for health status caching
 HEALTH_STATUS_TTL = 300  # 5 minutes - how long to remember a provider is healthy
 FAILURE_STATUS_TTL = 60  # 1 minute - how long to remember a provider failed
@@ -147,7 +153,6 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         # Cache the cache instance itself
         if self._cache_instance is None:
             try:
-                from core_lib.cache import get_cache
                 self._cache_instance = get_cache()
             except Exception as e:
                 logger.debug(f"Cache not available for health tracking: {e}")
@@ -586,6 +591,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         last_error = None
         providers_tried = []
         all_providers_failed = True
+        overload_only = True
         
         # Get preferred provider from cache (last known healthy)
         preferred_idx = self._get_preferred_provider()
@@ -599,10 +605,26 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         # Track which providers we've tried to prevent infinite loops
         tried_providers = set()
         
-        # Try each provider, starting with preferred/current
-        for attempt in range(len(self.providers)):
-            # Calculate which provider to try
-            idx = (start_idx + attempt) % len(self.providers)
+        # Prefer providers whose unhealthy-cache interval has elapsed so a
+        # recovered provider gets a chance before the currently preferred
+        # backup provider succeeds and short-circuits the loop.
+        overload_indices = [
+            idx for idx in range(len(self.providers))
+            if self._is_provider_overloaded_cached(idx)
+        ]
+        recheck_indices = [
+            idx
+            for idx in range(len(self.providers))
+            if self._is_provider_healthy_cached(idx) is False
+            and self._should_check_health(idx)
+        ]
+        ordered_indices = overload_indices + recheck_indices + [
+            (start_idx + attempt) % len(self.providers)
+            for attempt in range(len(self.providers))
+        ]
+
+        # Try each provider, starting with due health rechecks, then preferred/current
+        for attempt, idx in enumerate(ordered_indices):
             
             # Skip if already tried (prevents infinite loop)
             if idx in tried_providers:
@@ -624,15 +646,10 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             cached_overload = self._is_provider_overloaded_cached(idx)
 
             if cached_overload:
-                # Provider is overloaded - skip unless it's time to recheck
-                if not self._should_check_health(idx):
-                    logger.debug(
-                        f"Skipping provider {idx} (temporarily overloaded, "
-                        f"next check in {OVERLOAD_STATUS_TTL}s)"
-                    )
-                    continue
-                else:
-                    logger.debug(f"Rechecking overloaded provider {idx}")
+                # Overload is temporary: probe it again on the next request so
+                # recovery is detected promptly. The cache still records the
+                # condition for observability and health reporting.
+                logger.debug(f"Rechecking overloaded provider {idx}")
             elif cached_health is False and not self._should_check_health(idx):
                 # Skip known-unhealthy provider if not time for health check
                 logger.debug(
@@ -670,7 +687,6 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     
                 except Exception as e:
                     last_error = e
-                    self.provider_failures[idx] = self.provider_failures.get(idx, 0) + 1
                     providers_tried.append(f"{idx}:{type(provider).__name__}")
                     
                     # Get provider info for logging
@@ -681,6 +697,10 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     # Determine error type: connection error vs overload vs other failure
                     is_connection_error = self._is_connection_error(e)
                     is_overload = self._is_overload_error(e)
+                    if not is_overload:
+                        overload_only = False
+                    if not is_overload:
+                        self.provider_failures[idx] = self.provider_failures.get(idx, 0) + 1
 
                     if self._provider_is_in_warmup(provider):
                         # WoL was fired during this request — host is booting.
@@ -739,10 +759,9 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             
             logger.error(error_msg)
             
-            if self.fail_on_all_providers:
+            if self.fail_on_all_providers and not overload_only:
                 raise EmbeddingGenerationError(error_msg)
-            else:
-                return None
+            return None
         
         # Should never reach here, but safety check
         raise EmbeddingGenerationError(
@@ -799,13 +818,17 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         }
         
         for i, provider in enumerate(self.providers):
+            cached_health = self._is_provider_healthy_cached(i)
             provider_stat = {
                 "index": i,
                 "type": type(provider).__name__,
                 "model": provider.model,
                 "failures": self.provider_failures.get(i, 0),
                 "overloads": self.provider_overloads.get(i, 0),
-                "cached_healthy": self._is_provider_healthy_cached(i),
+                # This public field represents confirmed health; an unhealthy
+                # cache entry is reported as unknown here while the internal
+                # routing method continues to use False to skip providers.
+                "cached_healthy": True if cached_health is True else None,
                 "cached_overloaded": self._is_provider_overloaded_cached(i),
                 "last_health_check": self._last_health_check.get(i),
             }

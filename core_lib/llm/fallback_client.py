@@ -229,7 +229,7 @@ class FallbackLLMClient:
         contacted yet (warmup is triggered on first connection attempt).
         """
         for client in self._client_cache.values():
-            if client.is_in_warmup():
+            if client.is_in_warmup() is True:
                 return True
         return False
 
@@ -441,8 +441,8 @@ class FallbackLLMClient:
             # After a non-blocking WoL wake the server needs time to power on;
             # we route to secondary providers during this period and return to
             # the main once the window elapses (without marking it unhealthy).
-            _warmup_client = self._get_client(config)
-            if _warmup_client.is_in_warmup():
+            client = self._get_client(config)
+            if client.is_in_warmup() is True:
                 logger.info(
                     f"Skipping {provider_id}: WoL warmup in progress — routing to next provider"
                 )
@@ -468,7 +468,6 @@ class FallbackLLMClient:
                     )
                 
                 try:
-                    client = self._get_client(config)
                     start_time = time.time()
                     
                     # Set intelligence level in context for usage logging
@@ -578,7 +577,7 @@ class FallbackLLMClient:
                     # we don't permanently demote it in the health tracker.
                     if retry == self._max_retries - 1:
                         client_for_wol_check = self._get_client(config)
-                        if client_for_wol_check.is_in_warmup():
+                        if client_for_wol_check.is_in_warmup() is True:
                             logger.info(
                                 f"{provider_id} is in WoL warmup — skipping health demotion; "
                                 f"will retry after warmup window"

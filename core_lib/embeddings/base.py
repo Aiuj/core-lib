@@ -175,6 +175,12 @@ class BaseEmbeddingClient:
         # Generate new embedding
         embeddings = self._generate_embedding_raw([text])
         latency_ms = (time.time() - start_time) * 1000
+
+        # Fallback clients may be configured to return ``None`` instead of
+        # raising when every provider fails. Preserve that documented result
+        # rather than treating it as an iterable of embeddings.
+        if embeddings is None:
+            return None
         
         # NOTE: We do not log usage here because concrete implementations of _generate_embedding_raw 
         # are expected to log usage themselves (often with more accurate token counts).

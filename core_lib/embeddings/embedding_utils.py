@@ -264,6 +264,14 @@ def get_best_normalization_method(
         # No change needed
         if current_dimension == target_dimension:
             return "truncate_or_pad"  # Doesn't matter, but this is fastest
+
+        # Hosted text-embedding models are not generic transformer vectors;
+        # interpolation is the stable fallback when shortening them.
+        hosted_embedding_model = bool(
+            model_name and model_name.lower().startswith("text-embedding-")
+        )
+        if hosted_embedding_model:
+            return "interpolate"
         
         # Large dimension increase (>20%) - interpolation is better
         if dimension_ratio > 1.2:
@@ -274,7 +282,7 @@ def get_best_normalization_method(
             return "interpolate"
         
         # Large dimension reduction (>50%) without Matryoshka - use PCA-approximate
-        if dimension_ratio < 0.5 and not (model_name and is_matryoshka_model(model_name)):
+        if dimension_ratio <= (2 / 3) and not (model_name and is_matryoshka_model(model_name)):
             logger.debug(
                 f"Large dimension reduction detected ({current_dimension} -> {target_dimension}) "
                 "for non-Matryoshka model. Recommending 'pca_approximate' method."

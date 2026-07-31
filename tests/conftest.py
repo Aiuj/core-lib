@@ -11,6 +11,50 @@ import logging
 from typing import Any
 import pytest
 
+from freezegun import configure as configure_freezegun
+
+
+# Langfuse exposes some Pydantic types through lazy module attributes.  Letting
+# freezegun inspect those modules while entering a frozen-time context can
+# trigger schema generation with freezegun's temporary datetime type.
+configure_freezegun(extend_ignore_list=["langfuse"])
+
+
+@pytest.fixture(autouse=True)
+def clear_embedding_client_cache():
+    """Keep environment-mutating tests independent of factory caching.
+
+    The production factory deliberately caches clients by explicit arguments.
+    Tests that change embedding environment variables must not inherit a client
+    created by an earlier test with the same argument-based cache key.
+    """
+    from core_lib.embeddings import factory
+
+    factory._embedding_client_cache.clear()
+    yield
+    factory._embedding_client_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolate_provider_health_from_external_cache(monkeypatch):
+    """Keep unit tests independent from persisted Valkey/Redis health state."""
+    from core_lib.llm.provider_health import ProviderHealthTracker
+
+    monkeypatch.setattr(
+        ProviderHealthTracker,
+        "_get_cache",
+        lambda tracker: tracker._cache_client,
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolate_embedding_results_from_external_cache(monkeypatch):
+    """Prevent persisted Valkey/Redis embeddings from masking provider tests."""
+    from core_lib.embeddings import base
+
+    monkeypatch.setattr(base, "cache_get", lambda _key: None)
+    monkeypatch.setattr(base, "cache_set", lambda *_args, **_kwargs: None)
+
 logger = logging.getLogger("core_lib.tests")
 
 

@@ -420,13 +420,23 @@ def parse_structured_output(
 
     # ── Inner helper: validate a candidate dict, with literal coercion on fail ─
     def _try_validate(candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        def _normalise_result(value: Dict[str, Any]) -> Dict[str, Any]:
+            # Compliance categories are identifiers, not free-form text. Keep
+            # their public representation stable even when a schema declares
+            # the field as ``str`` rather than a Literal/Enum.
+            category = value.get("compliance_category")
+            if isinstance(category, str):
+                value = dict(value)
+                value["compliance_category"] = category.strip().lower()
+            return value
+
         try:
-            return schema.model_validate(candidate).model_dump()
+            return _normalise_result(schema.model_validate(candidate).model_dump())
         except ValidationError as exc:
             coerced = _coerce_literal_fields(candidate, exc.errors())
             if coerced != candidate:
                 try:
-                    return schema.model_validate(coerced).model_dump()
+                    return _normalise_result(schema.model_validate(coerced).model_dump())
                 except ValidationError:
                     pass
         except Exception as exc:

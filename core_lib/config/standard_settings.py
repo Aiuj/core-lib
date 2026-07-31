@@ -80,7 +80,8 @@ class StandardSettings(ApiSettings):
         api_overrides = {
             k: v for k, v in overrides.items()
             if k in ["app", "cache", "tracing", "logger", "mcp_server", "fastapi_server", 
-                     "enable_cache", "enable_tracing", "enable_logger", "enable_mcp_server", "enable_fastapi_server"]
+                     "enable_cache", "enable_tracing", "enable_logger", "enable_mcp_server", "enable_fastapi_server",
+                     "app_name", "version", "environment", "log_level", "project_root"]
         }
         api_settings = ApiSettings.from_env(load_dotenv=False, **api_overrides)
         
@@ -152,7 +153,9 @@ class StandardSettings(ApiSettings):
         }
         
         # Apply overrides
-        settings_dict.update(overrides)
+        settings_dict.update(
+            {key: value for key, value in overrides.items() if key in cls.__dataclass_fields__}
+        )
         
         return cls(**settings_dict)
     

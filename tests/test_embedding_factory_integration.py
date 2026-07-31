@@ -111,7 +111,7 @@ class TestEndToEndNormalization:
         mock_response = {
             'embeddings': [[0.1] * 768]
         }
-        mock_ollama.embed.return_value = mock_response
+        mock_ollama.Client.return_value.embed.return_value = mock_response
         
         # Create client that should normalize to 512 dimensions
         client = EmbeddingFactory.ollama(
@@ -119,6 +119,7 @@ class TestEndToEndNormalization:
             embedding_dim=512,
             use_l2_norm=False,  # Disable L2 for simpler testing
         )
+        client.cache_duration_seconds = 0
         
         # Generate embedding
         result = client.generate_embedding("test text")
@@ -137,7 +138,7 @@ class TestEndToEndNormalization:
         mock_response = {
             'embeddings': [[0.5] * 768]
         }
-        mock_ollama.embed.return_value = mock_response
+        mock_ollama.Client.return_value.embed.return_value = mock_response
         
         # Create client with both normalizations enabled
         client = EmbeddingFactory.ollama(
@@ -145,6 +146,7 @@ class TestEndToEndNormalization:
             embedding_dim=512,
             use_l2_norm=True,  # Enable L2 normalization
         )
+        client.cache_duration_seconds = 0
         
         # Generate embedding
         result = client.generate_embedding("test text")
