@@ -130,7 +130,7 @@ class TestDocumentClassifierInit:
         clf._client = mock_client  # inject directly to avoid create_fallback_llm_client
         # Calling classify should use the injected client without re-creating it
         clf.classify(filename="test.pdf", content_excerpt="Revenue up 12%")
-        mock_client.chat.assert_called_once()
+        assert mock_client.chat.call_count == 2  # classification plus bounded scope enrichment
 
     def test_client_reused_on_second_call(self):
         clf = DocumentClassifier()
@@ -138,7 +138,7 @@ class TestDocumentClassifierInit:
         clf._client = mock_client
         clf.classify(filename="a.pdf", content_excerpt="text1")
         clf.classify(filename="b.pdf", content_excerpt="text2")
-        assert mock_client.chat.call_count == 2  # same client, two calls
+        assert mock_client.chat.call_count == 4  # same client, classification plus enrichment per call
 
     def test_top_level_import(self):
         """Ensure the module is importable from the package top level."""
@@ -183,6 +183,24 @@ class TestDocumentClassifierClassifyHappyPath:
         assert result.description == "A detailed API reference guide."
         assert result.alternative_categories == alts
         assert result.primary_topics == ["REST APIs"]
+
+    def test_retries_once_when_scope_terms_are_missing(self):
+        initial = _make_result(
+            description="Security compliance evidence for customer audits.",
+        )
+        enriched = _make_result(
+            primary_topics=["cybersecurity compliance"],
+            capabilities=["ISO 27001 and SOC 2 audit evidence"],
+        )
+        clf = DocumentClassifier()
+        clf._client = MagicMock()
+        clf._client.chat.side_effect = [{"content": initial}, {"content": enriched}]
+
+        result = clf.classify(filename="security.pdf", content_excerpt="ISO 27001 and SOC 2")
+
+        assert clf._client.chat.call_count == 2
+        assert result.primary_topics == ["cybersecurity compliance"]
+        assert result.capabilities == ["ISO 27001 and SOC 2 audit evidence"]
 
     def test_calls_chat_with_system_and_user_messages(self):
         clf = self._classifier_with_result(_make_result())

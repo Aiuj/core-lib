@@ -38,6 +38,11 @@ French, etc.
 - product_areas: named products, modules, optional features, or business processes
 - capabilities: concrete capabilities or questions this document can support
 
+`primary_topics` and `capabilities` are required whenever the excerpt contains
+enough information to identify them. Return 1-5 concise terms for each; do not
+repeat the description. `product_areas` may be empty only when the document does
+not name a product, module, feature, or business process.
+
 Use only the category_id values from the list above. Be precise."""
 
 
@@ -138,6 +143,10 @@ class DocumentClassifier:
                     capabilities=result.capabilities,
                 )
 
+            result = self._enrich_missing_scope_terms(
+                client, result, filename, content_excerpt, language, file_type
+            )
+
             return result
 
         except Exception as exc:
@@ -156,6 +165,66 @@ class DocumentClassifier:
                 usage="classify",
             )
         return self._client
+
+    @staticmethod
+    def _coerce_result(response) -> Optional[DocumentClassificationResult]:
+        """Validate a structured provider response without accepting partial dicts."""
+        result = response.get("content") if isinstance(response, dict) else None
+        if isinstance(result, dict):
+            try:
+                return DocumentClassificationResult.model_validate(result)
+            except Exception:
+                return None
+        return result if isinstance(result, DocumentClassificationResult) else None
+
+    def _enrich_missing_scope_terms(
+        self,
+        client,
+        result: DocumentClassificationResult,
+        filename: str,
+        content_excerpt: str,
+        language: str,
+        file_type: Optional[str],
+    ) -> DocumentClassificationResult:
+        """Use one bounded follow-up when a valid classification lacks usable scope."""
+        if not result.description or (result.primary_topics and result.capabilities):
+            return result
+
+        try:
+            response = client.chat(
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            self._build_user_message(
+                                filename, content_excerpt, language, file_type
+                            )
+                            + "\n\nThe initial classification omitted retrieval scope terms. "
+                            "Return the complete JSON again, with at least one concise "
+                            "primary_topics value and one capabilities value grounded in the excerpt."
+                        ),
+                    },
+                ],
+                structured_output=DocumentClassificationResult,
+            )
+            enriched = self._coerce_result(response)
+            if not enriched:
+                return result
+            return DocumentClassificationResult(
+                category_id=result.category_id,
+                confidence=result.confidence,
+                reasoning=result.reasoning,
+                description=result.description,
+                detection_method=result.detection_method,
+                alternative_categories=result.alternative_categories,
+                primary_topics=result.primary_topics or enriched.primary_topics,
+                product_areas=result.product_areas or enriched.product_areas,
+                capabilities=result.capabilities or enriched.capabilities,
+            )
+        except Exception as exc:
+            logger.warning("Failed to enrich document scope for '%s': %s", filename, exc)
+            return result
 
     @staticmethod
     def _build_user_message(
