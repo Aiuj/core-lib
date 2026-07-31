@@ -13,6 +13,10 @@ class _FakeHTTPResponse:
     def read(self):
         return self._body
 
+    def close(self):
+        """Match urllib response cleanup used by HTTPError."""
+        pass
+
 
 def _http_error(url: str, code: int = 404, reason: str = "Not Found") -> HTTPError:
     return HTTPError(url=url, code=code, msg=reason, hdrs=None, fp=_FakeHTTPResponse(code, b""))

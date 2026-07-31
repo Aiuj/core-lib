@@ -11,6 +11,8 @@ Documentation: https://github.com/michaelfeil/infinity
 import time
 from typing import List, Optional, Tuple, Dict
 
+import requests
+
 from core_lib.api_utils import InfinityAPIClient, InfinityAPIError
 from .reranker_config import reranker_settings
 from .base import BaseRerankerClient, RerankerError, RerankResult
@@ -92,6 +94,7 @@ class InfinityRerankerClient(BaseRerankerClient):
             token=token,
             wake_on_lan=wake_on_lan,
             wakeup_service=wakeup_service,
+            http_client=requests,
         )
         
         # Set default model if not provided

@@ -498,8 +498,16 @@ def _check_gemini(model: str, api_key: str) -> tuple[str, Optional[str], Optiona
 def _check_vertex(model: str, project: str, location: str, service_account_file: str) -> tuple[str, Optional[str], Optional[str]]:
     """status, details, error — probes Vertex AI model availability using service account credentials."""
     try:
-        from google import genai
-        from google.oauth2 import service_account
+        import google
+
+        # Resolve patched package attributes first so callers can provide a
+        # lightweight Vertex client without importing the real SDK modules.
+        genai = getattr(google, "genai", None)
+        oauth2 = getattr(google, "oauth2", None)
+        service_account = getattr(oauth2, "service_account", None) if oauth2 else None
+        if genai is None or service_account is None:
+            from google import genai as genai  # type: ignore[no-redef]
+            from google.oauth2 import service_account as service_account  # type: ignore[no-redef]
         
         normalized_path = str(service_account_file).strip().strip('"').strip("'")
         expanded_path = os.path.expanduser(normalized_path)

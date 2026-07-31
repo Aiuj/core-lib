@@ -54,6 +54,7 @@ class InfinityAPIClient:
         max_retries_per_url: int = 1,
         wake_on_lan: Optional[Dict[str, Any]] = None,
         wakeup_service: Optional[Dict[str, Any]] = None,
+        http_client: Any = None,
     ):
         """Initialize Infinity API client with failover support.
         
@@ -86,6 +87,7 @@ class InfinityAPIClient:
         self.timeout = timeout
         self.token = token
         self.max_retries_per_url = max_retries_per_url
+        self._requests = http_client if http_client is not None else requests
         self.wake_on_lan = WakeOnLanStrategy(wake_on_lan)
         self.wakeup_service = WakeupServiceStrategy(wakeup_service)
 
@@ -112,9 +114,9 @@ class InfinityAPIClient:
 
     def _is_connection_or_timeout_error(self, error: Exception) -> bool:
         """Return True when error indicates host may be sleeping/unreachable."""
-        if requests is None:
+        if self._requests is None:
             return False
-        return isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
+        return isinstance(error, (self._requests.exceptions.Timeout, self._requests.exceptions.ConnectionError))
     
     def _build_headers(self, additional_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Build request headers with authentication."""
@@ -180,7 +182,7 @@ class InfinityAPIClient:
                     _wol_timeout = self.wake_on_lan.maybe_get_initial_timeout(base_url, timeout)
                     _svc_timeout = self.wakeup_service.maybe_get_initial_timeout(base_url, timeout)
                     effective_timeout = min(_wol_timeout, _svc_timeout)
-                    response = requests.post(
+                    response = self._requests.post(
                         full_url,
                         json=json,
                         headers=headers,
@@ -202,7 +204,7 @@ class InfinityAPIClient:
                     
                     return response.json(), base_url
                 
-                except requests.exceptions.Timeout as e:
+                except self._requests.exceptions.Timeout as e:
                     wake_result = self.wake_on_lan.maybe_wake(base_url, e)
                     if wake_result.succeeded and not wake_result.warmup_seconds:
                         # Blocking mode: wait for the host and retry immediately.
@@ -212,7 +214,7 @@ class InfinityAPIClient:
                             f"with timeout={retry_timeout}s"
                         )
                         try:
-                            response = requests.post(
+                            response = self._requests.post(
                                 full_url,
                                 json=json,
                                 headers=headers,
@@ -238,7 +240,7 @@ class InfinityAPIClient:
                         if svc_result.warmup_seconds:
                             wol_warmup_fired = True
 
-                    error_msg = f"Timeout after {effective_timeout}s: {full_url}"
+                    error_msg = f"Request timed out after {effective_timeout}s: {full_url}"
                     errors.append(error_msg)
                     self.url_failures[url_index] += 1
                     if not wol_warmup_fired:
@@ -246,7 +248,7 @@ class InfinityAPIClient:
                     else:
                         logger.debug(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
 
-                except requests.exceptions.ConnectionError as e:
+                except self._requests.exceptions.ConnectionError as e:
                     wake_result = self.wake_on_lan.maybe_wake(base_url, e)
                     if wake_result.succeeded and not wake_result.warmup_seconds:
                         # Blocking mode: wait for the host and retry immediately.
@@ -256,7 +258,7 @@ class InfinityAPIClient:
                             f"with timeout={retry_timeout}s"
                         )
                         try:
-                            response = requests.post(
+                            response = self._requests.post(
                                 full_url,
                                 json=json,
                                 headers=headers,
@@ -290,7 +292,7 @@ class InfinityAPIClient:
                         logger.debug(f"{error_msg} (attempt {retry + 1}/{self.max_retries_per_url})")
                     break  # No point retrying connection errors
                     
-                except requests.exceptions.HTTPError as e:
+                except self._requests.exceptions.HTTPError as e:
                     # For HTTP errors, try to extract detailed message
                     error_detail = None
                     try:
@@ -367,7 +369,7 @@ class InfinityAPIClient:
             full_url = f"{base_url}/{endpoint}"
             
             try:
-                response = requests.get(
+                response = self._requests.get(
                     full_url,
                     headers=headers,
                     timeout=timeout
@@ -397,7 +399,7 @@ class InfinityAPIClient:
         for base_url in self.base_urls:
             try:
                 # Try health endpoint
-                response = requests.get(
+                response = self._requests.get(
                     f"{base_url}/health",
                     timeout=5
                 )

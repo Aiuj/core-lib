@@ -72,6 +72,12 @@ class ApiSettings(BaseSettings):
     enable_logger: bool = field(default=False)
     enable_mcp_server: bool = field(default=False)
     enable_fastapi_server: bool = field(default=False)
+    _raise_validation_errors: bool = field(default=True, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self._raise_validation_errors and self._validation_errors:
+            raise SettingsError(self._validation_errors[0])
     
     @classmethod
     def from_env(
@@ -185,6 +191,7 @@ class ApiSettings(BaseSettings):
         # Apply overrides
         settings_dict.update(overrides)
         
+        settings_dict["_raise_validation_errors"] = False
         return cls(**settings_dict)
     
     @staticmethod

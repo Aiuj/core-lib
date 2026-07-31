@@ -7,7 +7,7 @@ the base AppSettings with BaseSettings compatibility.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -32,6 +32,12 @@ class AppSettings(BaseSettings):
     environment: str = "dev"
     log_level: str = "DEBUG"
     project_root: Optional[Path] = None
+    _raise_validation_errors: bool = field(default=True, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self._raise_validation_errors and self._validation_errors:
+            raise ValueError(self._validation_errors[0])
     
     @classmethod
     def from_env(
@@ -84,7 +90,8 @@ class AppSettings(BaseSettings):
             version=version,
             environment=environment,
             log_level=log_level,
-            project_root=resolved_root
+            project_root=resolved_root,
+            _raise_validation_errors=False,
         )
 
     @staticmethod
