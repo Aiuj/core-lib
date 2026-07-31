@@ -45,10 +45,9 @@ class TestGeminiJSONModeFallback:
         """Test that fallback is triggered for Gemma models."""
         config = GeminiConfig(api_key="test-key", model="gemma-3-4b-it")
         
-        with patch('core_lib.llm.providers.google_genai_provider.genai') as mock_genai:
+        with patch('google.genai.Client') as mock_client_class:
             # Mock the client
-            mock_client = MagicMock()
-            mock_genai.Client.return_value = mock_client
+            mock_client = mock_client_class.return_value
             
             # Mock response
             mock_response = MagicMock()
@@ -97,6 +96,7 @@ class TestGeminiJSONModeFallback:
             )
 
             mock_client = mock_client_class.return_value
+            mock_client.models.generate_content.return_value = chunk
             mock_client.models.generate_content_stream.return_value = [chunk]
 
             result = provider.chat(

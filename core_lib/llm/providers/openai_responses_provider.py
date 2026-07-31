@@ -53,6 +53,11 @@ from core_lib.tracing.service_usage import log_llm_usage
 
 logger = get_module_logger()
 
+try:
+    from langfuse.openai import OpenAI  # type: ignore
+except Exception:
+    from openai import OpenAI  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -218,8 +223,6 @@ class OpenAIResponsesProvider(BaseProvider):
 
     def __init__(self, config: OpenAIResponsesConfig) -> None:  # type: ignore[override]
         super().__init__(config)
-        from openai import OpenAI as _OpenAI  # type: ignore
-
         kwargs: Dict[str, Any] = {"api_key": config.api_key}
         if config.base_url:
             kwargs["base_url"] = config.base_url
@@ -227,7 +230,7 @@ class OpenAIResponsesProvider(BaseProvider):
             kwargs["organization"] = config.organization
         if config.project:
             kwargs["project"] = config.project
-        self._client = _OpenAI(**kwargs)
+        self._client = OpenAI(**kwargs)
         # Stores the last response id for stateful multi-turn
         self.last_response_id: Optional[str] = None
 

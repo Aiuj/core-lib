@@ -12,6 +12,10 @@ import os
 import time
 import json
 from contextlib import contextmanager
+try:
+    from google import genai
+except ImportError:
+    genai = None  # type: ignore[assignment]
 
 
 from pydantic import BaseModel
@@ -245,12 +249,17 @@ class GoogleGenAIProvider(BaseProvider):
     # we expect to find in the configured model name for a match. These values
     # reflect only RPM (requests per minute); TPM/RPD intentionally ignored for now.
     _MODEL_RPM: Dict[str, int] = {
+        "gemini-3.6-flash": 30,       # Gemini 3.6 Flash
+        "gemini-3.5-flash-lite": 120, # Gemini 3.5 Flash-Lite
+        "gemini-3.5-flash": 30,       # Gemini 3.5 Flash
+        "gemini-3.1-pro": 10,         # Gemini 3.1 Pro
+        "gemini-3.1-flash-lite": 120, # Gemini 3.1 Flash-Lite
         "gemini-3-pro-preview": 5,    # Gemini 3.0 Pro
         "gemini-3-flash-preview": 30, # Gemini 3.0 Flash
         "gemini-2.5-pro": 10,         # Gemini 2.5 Pro
         "gemini-2.5-flash-lite": 120, # Gemini 2.5 Flash-Lite
         "gemini-2.5-flash": 30,       # Gemini 2.5 Flash
-        "gemma-3": 60,                # Gemma 3
+        "gemma-4": 60,                # Gemma 4
         "embedding": 600,             # Gemini Embedding models
     }
     
@@ -353,13 +362,13 @@ class GoogleGenAIProvider(BaseProvider):
         # Identify retryable exceptions from google-genai and google.api_core
         retryable_exceptions = []
         try:
-            from google.api_core import exceptions as gac_exceptions
+            import google.api_core.exceptions as gac_exceptions  # type: ignore[import-not-found,import-untyped]
             retryable_exceptions.extend([
-                gac_exceptions.ResourceExhausted,     # 429 rate limits
-                gac_exceptions.ServiceUnavailable,    # 503 service unavailable
-                gac_exceptions.InternalServerError,   # 500 internal errors
-                gac_exceptions.DeadlineExceeded,      # 504 gateway timeout
-                gac_exceptions.TooManyRequests,       # Additional rate limit variant
+                getattr(gac_exceptions, "ResourceExhausted", Exception),     # 429 rate limits
+                getattr(gac_exceptions, "ServiceUnavailable", Exception),    # 503 service unavailable
+                getattr(gac_exceptions, "InternalServerError", Exception),   # 500 internal errors
+                getattr(gac_exceptions, "DeadlineExceeded", Exception),      # 504 gateway timeout
+                getattr(gac_exceptions, "TooManyRequests", Exception),       # Additional rate limit variant
             ])
         except ImportError:
             # google.api_core might not be available in all setups
@@ -385,9 +394,9 @@ class GoogleGenAIProvider(BaseProvider):
         ])
 
         self._retry_config = RetryConfig(
-            max_retries=1,   # One retry for genuine transient glitches; overloaded models go to fallback
+            max_retries=3,
             base_delay=1.0,
-            max_delay=5.0,
+            max_delay=30.0,
             retry_on_exceptions=tuple(retryable_exceptions) if retryable_exceptions else (Exception,),
         )
         logger.debug(
@@ -656,14 +665,13 @@ class GoogleGenAIProvider(BaseProvider):
         # This uses safety-reviewed search augmentation when supported by the model.
         if use_search_grounding:
             try:
-                # Enable Google Search tool and config per official docs
+                # Enable Google Search tool per official docs
                 gs = types.GoogleSearch()
                 gs_tool = types.Tool(google_search=gs)
                 if cfg.get("tools"):
                     cfg["tools"] = [*cfg["tools"], gs_tool]
                 else:
                     cfg["tools"] = [gs_tool]
-                cfg["tool_config"] = types.ToolConfig(google_search=gs)
             except Exception:
                 # Fail-soft: if SDK/version doesn't support it, ignore silently
                 pass
@@ -983,25 +991,14 @@ class GoogleGenAIProvider(BaseProvider):
                 )
                 start = time.perf_counter()
                 
-                # Use streaming to keep connection alive during long generations (prevents 504/timeouts)
-                stream = self._client.models.generate_content_stream(
+                # Call generate_content (streaming only if explicitly requested)
+                resp = self._client.models.generate_content(
                     model=self.config.model,
                     contents=user_text,
                     **extra,
                 )
-                
-                # Consume stream to accumulate response
-                # We need to manually aggregate usage and content since we're consuming chunks
-                chunks = []
-                for chunk in stream:
-                    chunks.append(chunk)
-
                 latency_ms = (time.perf_counter() - start) * 1000
-                
-                # Use the last chunk for metadata, but we'll need to aggregate text/function calls
-                resp = chunks[-1] if chunks else None
-                if not resp:
-                     raise RuntimeError("Empty response stream from Google GenAI")
+                chunks = [resp] if resp else []
                      
             else:
                 prompt = self._to_genai_messages(working_messages)
@@ -1016,12 +1013,15 @@ class GoogleGenAIProvider(BaseProvider):
                 chat = self._client.chats.create(model=self.config.model)
                 start = time.perf_counter()
                 
-                # Use streaming to keep connection alive
-                stream = chat.send_message_stream(prompt, **extra)  # type: ignore[arg-type]
+                try:
+                    stream = chat.send_message_stream(prompt, **extra)  # type: ignore[arg-type]
+                    chunks = list(stream) if stream else []
+                except (AttributeError, TypeError):
+                    chunks = []
                 
-                chunks = []
-                for chunk in stream:
-                    chunks.append(chunk)
+                if not chunks:
+                    resp = chat.send_message(prompt, **extra)
+                    chunks = [resp] if resp else []
 
                 latency_ms = (time.perf_counter() - start) * 1000
                 

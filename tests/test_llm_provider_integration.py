@@ -252,7 +252,7 @@ class TestGoogleGenAIProviderRetry:
             
             with patch.object(provider, '_acquire_rate_limit'), \
                  patch('time.sleep') as mock_sleep, \
-                 patch('core_lib.llm.providers.google_genai_provider.logger') as mock_logger:
+                 patch('core_lib.llm.retry.logger') as mock_logger:
                 
                 messages = [{"role": "user", "content": "Hello"}]
                 result = provider.chat(messages=messages)

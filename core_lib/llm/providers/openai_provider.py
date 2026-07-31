@@ -34,6 +34,13 @@ from core_lib.tracing.service_usage import log_llm_usage
 
 logger = get_module_logger()
 
+try:
+    # Prefer Langfuse drop-in wrapper so chat/completions are traced.
+    from langfuse.openai import OpenAI, AzureOpenAI  # type: ignore
+except Exception:
+    # Safe fallback when Langfuse wrapper is unavailable.
+    from openai import OpenAI, AzureOpenAI  # type: ignore
+
 
 
 @dataclass
@@ -177,16 +184,10 @@ class OpenAIProvider(BaseProvider):
         super().__init__(config)
         # Narrow the config type so type checkers can see OpenAI-specific fields.
         self.config: OpenAIConfig = config
-        try:
-            # Prefer Langfuse drop-in wrapper so chat/completions are traced.
-            from langfuse.openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
-        except Exception:
-            # Safe fallback when Langfuse wrapper is unavailable.
-            from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI  # type: ignore
 
         # Instantiate client based on mode using official OpenAI SDK only
         if config.azure_endpoint:
-            self._client = _AzureOpenAI(
+            self._client = AzureOpenAI(
                 api_key=config.api_key,
                 azure_endpoint=config.azure_endpoint,
                 api_version=config.azure_api_version,
@@ -205,7 +206,7 @@ class OpenAIProvider(BaseProvider):
                 kwargs["organization"] = config.organization
             if config.project:
                 kwargs["project"] = config.project
-            self._client = _OpenAI(**kwargs)
+            self._client = OpenAI(**kwargs)
 
         self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
 
@@ -683,4 +684,11 @@ class OpenAIProvider(BaseProvider):
             # Unexpected / unclassified error — log the full traceback so it is
             # visible, then re-raise for the caller to handle.
             logger.exception("openai.chat failed")
-            raise
+            return {
+                "error": str(e),
+                "content": None,
+                "structured": structured_output is not None,
+                "tool_calls": [],
+                "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                "latency_ms": 0,
+            }

@@ -285,7 +285,6 @@ class ProviderConfig:
         thinking = data.get("thinking")
         if thinking is None and ("thinking_enabled" in data or "thinkingEnabled" in data):
             thinking = data.get("thinking_enabled", data.get("thinkingEnabled"))
-
         thinking_level = data.get("thinking_level") if "thinking_level" in data else data.get("thinkingLevel")
         thinking_budget = data.get("thinking_budget") if "thinking_budget" in data else data.get("thinkingBudget")
         include_thoughts = data.get("include_thoughts") if "include_thoughts" in data else data.get("includeThoughts")
@@ -296,6 +295,8 @@ class ProviderConfig:
             thinking_cfg.update(thinking)
             if "enabled" in thinking:
                 normalized["thinking_enabled"] = bool(thinking.get("enabled"))
+        elif isinstance(thinking, bool):
+            normalized["thinking_enabled"] = thinking
         elif isinstance(thinking, (int, float)):
             budget = int(thinking)
             thinking_cfg["budget"] = budget

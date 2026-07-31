@@ -222,7 +222,7 @@ class TestOpenAIResponsesProviderChat:
         assert result["content"] == "Paris is the capital."
         assert result["structured"] is False
         assert result["tool_calls"] == []
-        assert result["error"] is not None or "error" not in result
+        assert "error" not in result
 
     def test_response_id_stored(self):
         provider, mock_client = _make_provider()
