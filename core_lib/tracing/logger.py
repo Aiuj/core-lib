@@ -536,9 +536,10 @@ def setup_logging(
 
     resolved_name = _resolve_logger_name(name)
     logger = logging.getLogger(resolved_name)
-    # Do NOT set level on module loggers - let them inherit from parent chain
-    # Setting level here creates an additional filter that blocks propagated logs
-    logger.setLevel(logging.NOTSET)  # NOTSET = inherit effective level from parent
+    # Keep the returned logger's configured level explicit as well as setting
+    # the root logger, so callers inspecting the returned logger see the same
+    # effective logging configuration.
+    logger.setLevel(numeric_level)
     return logger
 
 

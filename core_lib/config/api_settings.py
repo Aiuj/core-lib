@@ -226,10 +226,11 @@ class ApiSettings(BaseSettings):
         if EnvParser.get_env("ENABLE_LOGGER", env_type=bool) is not None:
             return EnvParser.get_env("ENABLE_LOGGER", env_type=bool)
         
-        # Auto-detect based on OVH LDP or file logging settings
+        # Auto-detect based on explicit logger/OTLP or legacy logging settings.
         return (
             EnvParser.get_env("OVH_LDP_ENABLED", env_type=bool) or
-            EnvParser.get_env("LOG_FILE_ENABLED", env_type=bool)
+            EnvParser.get_env("LOG_FILE_ENABLED", env_type=bool) or
+            EnvParser.get_env("OTLP_ENABLED", env_type=bool)
         ) or False
     
     @staticmethod

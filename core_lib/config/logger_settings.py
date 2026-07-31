@@ -101,6 +101,13 @@ class LoggerSettings(BaseSettings):
     otlp_instance_id: Optional[str] = None
     otlp_log_channel: Optional[str] = None
     otlp_log_level: Optional[str] = None  # Independent log level for OTLP handler (if None, inherits from log_level)
+    _raise_validation_errors: bool = field(default=True, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Raise direct-construction errors while keeping environment loading inspectable."""
+        super().__post_init__()
+        if self._raise_validation_errors and self._validation_errors:
+            raise SettingsError(self._validation_errors[0])
     
     @staticmethod
     def _read_pyproject_version() -> Optional[str]:
@@ -243,6 +250,9 @@ class LoggerSettings(BaseSettings):
         }
         
         settings_dict.update(overrides)
+        # Preserve the historical from_env behavior: callers can inspect
+        # invalid configuration through is_valid/validation_errors.
+        settings_dict["_raise_validation_errors"] = False
         return cls(**settings_dict)
     
     def validate(self) -> None:

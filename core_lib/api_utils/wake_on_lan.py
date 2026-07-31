@@ -41,8 +41,8 @@ class WakeTarget:
 class WakeResult:
     """Outcome of a wake attempt."""
 
-    attempted: bool
-    succeeded: bool
+    attempted: bool = False
+    succeeded: bool = False
     retry_timeout_seconds: Optional[float] = None
     warmup_seconds: Optional[float] = None
     """When > 0, the caller should route to secondary servers for this many seconds
@@ -278,10 +278,18 @@ class WakeOnLanStrategy:
             # Stale entry with no timestamp — discard so WoL can re-fire.
             self._woken_hosts.discard(base_url)
             return False
-        # TTL: warmup window in non-blocking mode; wait_seconds in blocking mode.
+        # TTL: warmup window in non-blocking mode. In blocking mode, retain
+        # suppression for the configured retry timeout when no wait is needed;
+        # otherwise a zero wait_seconds value would cause an immediate re-fire
+        # on the next failed request.
         target = self._find_target()
         wait = target.wait_seconds if target else 0.0
-        ttl = self.warmup_seconds if (self.warmup_seconds and self.warmup_seconds > 0) else wait
+        if self.warmup_seconds and self.warmup_seconds > 0:
+            ttl = self.warmup_seconds
+        elif wait > 0:
+            ttl = wait
+        else:
+            ttl = (target.retry_timeout_seconds if target else None) or 30.0
         if time.time() - wake_time >= ttl:
             self._woken_hosts.discard(base_url)
             self._waking_timestamps.pop(base_url, None)

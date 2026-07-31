@@ -340,18 +340,16 @@ class OcrService:
         data_url = f"data:{mime_type};base64,{b64}"
 
         prompt_text = self._ENRICHED_PROMPT if enrich else self._OCR_ONLY_PROMPT
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_text,
-                    },
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
+        content_parts = [
+            {"type": "text", "text": prompt_text},
+            {"type": "image_url", "image_url": {"url": data_url}},
         ]
+        # Keep the historical non-enriched payload shape: image first, prompt
+        # second. Enriched calls retain the text-first shape used by callers
+        # that inspect the enrichment prompt directly.
+        if not enrich:
+            content_parts.reverse()
+        messages = [{"role": "user", "content": content_parts}]
 
         try:
             # Observability tagging for vision/OCR calls.

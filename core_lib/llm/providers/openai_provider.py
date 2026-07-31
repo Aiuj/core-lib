@@ -180,14 +180,36 @@ class OpenAIConfig(LLMConfig):
 class OpenAIProvider(BaseProvider):
     """Provider implementation for OpenAI-compatible APIs."""
 
+    @staticmethod
+    def _client_classes():
+        """Resolve client classes while honoring lightweight test doubles.
+
+        Langfuse's drop-in classes are imported at module load time for normal
+        tracing. Tests and embedders may replace the ``openai`` module before
+        constructing a provider, so use that replacement when it is a simple
+        injected namespace.
+        """
+        import sys
+        import types
+
+        current_openai = sys.modules.get("openai")
+        if isinstance(current_openai, types.SimpleNamespace):
+            injected_openai = getattr(current_openai, "OpenAI", None)
+            injected_azure = getattr(current_openai, "AzureOpenAI", None)
+            if injected_openai is not None and injected_azure is not None:
+                return injected_openai, injected_azure
+        return OpenAI, AzureOpenAI
+
     def __init__(self, config: OpenAIConfig) -> None:  # type: ignore[override]
         super().__init__(config)
         # Narrow the config type so type checkers can see OpenAI-specific fields.
         self.config: OpenAIConfig = config
 
-        # Instantiate client based on mode using official OpenAI SDK only
+        openai_client_class, azure_client_class = self._client_classes()
+
+        # Instantiate client based on mode using the configured OpenAI client.
         if config.azure_endpoint:
-            self._client = AzureOpenAI(
+            self._client = azure_client_class(
                 api_key=config.api_key,
                 azure_endpoint=config.azure_endpoint,
                 api_version=config.azure_api_version,
@@ -206,7 +228,7 @@ class OpenAIProvider(BaseProvider):
                 kwargs["organization"] = config.organization
             if config.project:
                 kwargs["project"] = config.project
-            self._client = OpenAI(**kwargs)
+            self._client = openai_client_class(**kwargs)
 
         self._wake_on_lan = WakeOnLanStrategy(self.config.wake_on_lan)
 
@@ -263,7 +285,15 @@ class OpenAIProvider(BaseProvider):
     def _is_connection_or_timeout_error(self, error: Exception) -> bool:
         """Return True when the error indicates the host may be sleeping/unreachable."""
         import openai as _openai
-        if isinstance(error, (_openai.APITimeoutError, _openai.APIConnectionError)):
+        sdk_types = tuple(
+            error_type
+            for error_type in (
+                getattr(_openai, "APITimeoutError", None),
+                getattr(_openai, "APIConnectionError", None),
+            )
+            if isinstance(error_type, type)
+        )
+        if sdk_types and isinstance(error, sdk_types):
             return True
         error_str = str(error).lower()
         indicators = (
@@ -662,17 +692,28 @@ class OpenAIProvider(BaseProvider):
             # re-raise directly so FallbackLLMClient can classify the real exception
             # type, mark the provider unhealthy with the right TTL, and log exactly
             # once. Swallowing these into error dicts causes double-logging.
-            if isinstance(e, (_openai.RateLimitError, _openai.APITimeoutError, _openai.APIConnectionError)):
+            classifiable_types = tuple(
+                error_type
+                for error_type in (
+                    getattr(_openai, "RateLimitError", None),
+                    getattr(_openai, "APITimeoutError", None),
+                    getattr(_openai, "APIConnectionError", None),
+                )
+                if isinstance(error_type, type)
+            )
+            if classifiable_types and isinstance(e, classifiable_types):
                 raise
             # 400 bad requests are often expected provider/config mismatches
             # (for example vLLM tool calling not enabled yet). Do not emit a
             # traceback here; let the fallback layer classify and log once.
-            if isinstance(e, _openai.BadRequestError):
+            bad_request_type = getattr(_openai, "BadRequestError", None)
+            if isinstance(bad_request_type, type) and isinstance(e, bad_request_type):
                 raise
             # 404 is a configuration problem (wrong model name or base_url). Log a
             # helpful diagnostic before re-raising so it is visible in the provider
             # log without relying on the caller to decode the raw API error.
-            if isinstance(e, _openai.NotFoundError):
+            not_found_type = getattr(_openai, "NotFoundError", None)
+            if isinstance(not_found_type, type) and isinstance(e, not_found_type):
                 endpoint = self.config.azure_endpoint or self.config.base_url or "https://api.openai.com"
                 logger.error(
                     "openai.chat: model '%s' not found at '%s'. "

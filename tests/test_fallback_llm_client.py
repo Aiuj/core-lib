@@ -194,6 +194,9 @@ class TestFallbackLLMClientHealthTracking:
         
         # Pre-mark as unhealthy
         mock_health_tracker.mark_unhealthy("gemini", "gemini-2.0-flash", reason="test")
+        # Also make the other provider unavailable so this test exercises
+        # Gemini's success path rather than the healthy-first routing path.
+        mock_health_tracker.mark_unhealthy("openai", "gpt-4o-mini", reason="test")
         assert not mock_health_tracker.is_healthy("gemini", "gemini-2.0-flash")
         
         mock_llm = create_mock_client(should_succeed=True)
@@ -201,7 +204,7 @@ class TestFallbackLLMClientHealthTracking:
         with patch.object(client, '_get_client', return_value=mock_llm):
             client.chat("Hi")
         
-        # Should now be healthy
+        # The successful provider should now be healthy.
         assert mock_health_tracker.is_healthy("gemini", "gemini-2.0-flash")
     
     def test_marks_provider_unhealthy_on_failure(self, mock_registry, mock_health_tracker):
