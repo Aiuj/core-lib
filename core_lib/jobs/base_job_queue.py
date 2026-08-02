@@ -170,6 +170,21 @@ class BaseJobQueue(ABC):
             True if updated successfully
         """
         pass
+
+    @abstractmethod
+    def requeue_job(
+        self,
+        job_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> bool:
+        """Return a job to the pending queue after a transient failure."""
+        pass
+
+    @abstractmethod
+    def recover_pending_jobs(self) -> int:
+        """Re-enqueue pending jobs that were not left in the pending queue."""
+        pass
     
     @abstractmethod
     def update_job_progress(

@@ -241,6 +241,56 @@ class RedisJobQueue(BaseJobQueue):
             job.error = error
         
         return self._update_job(job, old_status)
+
+    def requeue_job(
+        self,
+        job_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> bool:
+        """Persist retry metadata and return a job to the FIFO pending queue."""
+        if not self.client:
+            return False
+
+        job = self.get_job(job_id)
+        if not job:
+            return False
+
+        old_status = job.status
+        job.status = JobStatus.PENDING
+        job.progress_message = "Retry scheduled"
+        job.metadata = metadata if metadata is not None else job.metadata
+        job.error = error
+
+        self.client.srem(self._processing_set_key, job_id)
+        if not self._update_job(job, old_status):
+            return False
+
+        # A retried job has already been popped from the list. Remove any stale
+        # duplicate before adding the single authoritative retry entry.
+        self.client.lrem(self._pending_queue_key, 0, job_id)
+        self.client.rpush(self._pending_queue_key, job_id)
+        logger.info("[RedisJobQueue] Job %s re-enqueued for retry", job_id)
+        return True
+
+    def recover_pending_jobs(self) -> int:
+        """Restore pending jobs orphaned by an interrupted retry or restart."""
+        if not self.client:
+            return 0
+
+        pending_ids = set(self.client.smembers(self._get_status_index_key(JobStatus.PENDING)))
+        queued_ids = set(self.client.lrange(self._pending_queue_key, 0, -1))
+        orphaned_ids = pending_ids - queued_ids
+        for job_id in orphaned_ids:
+            self.client.rpush(self._pending_queue_key, job_id)
+
+        if orphaned_ids:
+            logger.warning(
+                "[RedisJobQueue] Re-enqueued %s orphaned pending job(s): %s",
+                len(orphaned_ids),
+                ", ".join(sorted(orphaned_ids)),
+            )
+        return len(orphaned_ids)
     
     def update_job_progress(
         self,

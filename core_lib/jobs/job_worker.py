@@ -222,8 +222,15 @@ class JobWorker:
                 
                 logger.info(f"[JobWorker] Retrying job {job_id} (attempt {retry_count + 1}/{self.max_retries})")
                 
-                # Update job status back to pending for retry
-                self.job_queue.update_job_status(job_id, JobStatus.PENDING)
+                # Persist retry metadata and put the job back on the queue.
+                # Updating only the status would orphan the job after its
+                # original queue entry was popped.
+                if not self.job_queue.requeue_job(job_id, metadata, error_msg):
+                    self.job_queue.fail_job(
+                        job_id,
+                        f"Could not requeue retryable job: {error_msg}",
+                    )
+                    return False
                 
                 # Wait before retry
                 time.sleep(self.retry_delay)
@@ -251,6 +258,9 @@ class JobWorker:
         
         logger.info("[JobWorker] Worker started")
         logger.info(f"[JobWorker] Registered handlers: {list(self._handlers.keys())}")
+        recovered = self.job_queue.recover_pending_jobs()
+        if recovered:
+            logger.info("[JobWorker] Recovered %s pending job(s)", recovered)
         
         try:
             while self._running and not self._stop_requested:
