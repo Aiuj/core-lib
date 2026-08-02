@@ -144,6 +144,24 @@ class JobWorker:
             
             # Call handler
             result = handler.handle(job)
+
+            # Handlers use a structured result for expected processing errors.
+            # Treat an explicit failure as a terminal job failure instead of
+            # publishing it as a completed job and making callers infer failure
+            # from result.success.  This lets polling clients stop immediately.
+            if isinstance(result, dict) and result.get("success") is False:
+                error_msg = str(
+                    result.get("error")
+                    or result.get("message")
+                    or "Job handler reported an unsuccessful result"
+                )
+                self.job_queue.fail_job(job_id, error_msg)
+                logger.error(
+                    "[JobWorker] Job %s failed with a handler result: %s",
+                    job_id,
+                    error_msg,
+                )
+                return False
             
             # Mark as completed
             self.job_queue.complete_job(job_id, result)
@@ -160,6 +178,20 @@ class JobWorker:
                 f"Marking as failed without retrying: {error_msg}"
             )
             self.job_queue.fail_job(job_id, f"Configuration error: {error_msg}")
+            return False
+
+        except (NameError, AttributeError, KeyError, TypeError, AssertionError) as e:
+            # These errors indicate a programming or input-contract defect, not
+            # a transient dependency failure. Retrying them only extends the
+            # time that API and Celery pollers report a job as pending.
+            error_msg = f"Job processing failed: {e}"
+            logger.error(
+                "[JobWorker] Job %s failed with a non-retryable programming error: %s",
+                job_id,
+                error_msg,
+                exc_info=True,
+            )
+            self.job_queue.fail_job(job_id, error_msg)
             return False
             
         except Exception as e:
