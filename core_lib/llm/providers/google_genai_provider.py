@@ -1270,7 +1270,14 @@ class GoogleGenAIProvider(BaseProvider):
                 # - structured=True (boolean flag, not the object)
                 # - content = model_dump() dict so callers read content, not structured
                 # - text = raw LLM text for debugging/logging
-                result["content"] = parsed_result.model_dump()
+                if hasattr(parsed_result, "model_dump"):
+                    result["content"] = parsed_result.model_dump()
+                elif isinstance(parsed_result, dict):
+                    result["content"] = parsed_result
+                elif hasattr(parsed_result, "dict"):
+                    result["content"] = parsed_result.dict()
+                else:
+                    result["content"] = parsed_result
                 result["structured"] = True
                 result["text"] = extracted_text
                 result["content_json"] = json.dumps(result["content"], ensure_ascii=False)

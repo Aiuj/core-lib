@@ -155,6 +155,45 @@ class TestGeminiJSONModeFallback:
             mock_client.models.generate_content_stream.assert_not_called()
             mock_chat.send_message_stream.assert_called_once()
 
+    def test_gemini_parsed_as_dict_handled_safely(self):
+        """Test native-mode handling when resp.parsed is a dict rather than a Pydantic model."""
+        config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash")
+
+        with patch('google.genai.Client') as mock_client_class, \
+             patch('openinference.instrumentation.google_genai.GoogleGenAIInstrumentor'):
+
+            provider = GoogleGenAIProvider(config)
+
+            text_json = '{"result": "success", "score": 0.95}'
+            chunk = SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[SimpleNamespace(text=text_json)]
+                        )
+                    )
+                ],
+                function_calls=None,
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                ),
+                parsed={"result": "success", "score": 0.95},
+            )
+
+            mock_client = mock_client_class.return_value
+            mock_client.models.generate_content.return_value = chunk
+            mock_client.models.generate_content_stream.return_value = [chunk]
+
+            result = provider.chat(
+                messages=[{"role": "user", "content": "test"}],
+                structured_output=SampleSchema,
+            )
+
+            assert result["structured"] is True
+            assert result["content"] == {"result": "success", "score": 0.95}
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
