@@ -55,6 +55,10 @@ class ProviderHealthResult:
     latency_ms: Optional[float]
     url: Optional[str] = None
     location: Optional[str] = None
+    project: Optional[str] = None
+    credential_project: Optional[str] = None
+    service_account_email: Optional[str] = None
+    credential_type: Optional[str] = None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -179,6 +183,38 @@ def _resolve_provider_endpoint_and_region(provider) -> tuple[Optional[str], Opti
             region = getattr(resolved, "location", None) or None
 
     return url, region
+
+
+def _resolve_provider_identity(
+    provider,
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Resolve non-secret cloud identity metadata for provider diagnostics."""
+    try:
+        resolved = provider.to_llm_config()
+    except Exception:
+        resolved = None
+
+    project = getattr(resolved, "project", None) if resolved is not None else None
+    credential_file = (
+        getattr(resolved, "service_account_file", None)
+        if resolved is not None
+        else getattr(provider, "service_account_file", None)
+    )
+    if not credential_file:
+        return project, None, None, None
+
+    try:
+        with open(os.path.expanduser(str(credential_file)), encoding="utf-8") as file:
+            metadata = json.load(file)
+    except (OSError, ValueError, TypeError):
+        return project, None, None, None
+
+    return (
+        project,
+        metadata.get("project_id"),
+        metadata.get("client_email"),
+        metadata.get("type"),
+    )
 
 
 def get_cached_llm_provider_registry(
@@ -344,6 +380,9 @@ def check_llm_providers_health(
         error = _probe_provider(provider)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         resolved_url, resolved_region = _resolve_provider_endpoint_and_region(provider)
+        project, credential_project, service_account_email, credential_type = (
+            _resolve_provider_identity(provider)
+        )
 
         results.append(
             ProviderHealthResult(
@@ -356,6 +395,10 @@ def check_llm_providers_health(
                 latency_ms=elapsed_ms,
                 url=resolved_url,
                 location=resolved_region,
+                project=project,
+                credential_project=credential_project,
+                service_account_email=service_account_email,
+                credential_type=credential_type,
             )
         )
 
@@ -391,6 +434,9 @@ def check_llm_providers_health(
             resolved_url, resolved_region = _resolve_provider_endpoint_and_region(
                 provider
             )
+            project, credential_project, service_account_email, credential_type = (
+                _resolve_provider_identity(provider)
+            )
             results[idx] = ProviderHealthResult(
                 provider=provider.provider,
                 model=provider.model,
@@ -401,6 +447,10 @@ def check_llm_providers_health(
                 latency_ms=elapsed_ms,
                 url=resolved_url,
                 location=resolved_region,
+                project=project,
+                credential_project=credential_project,
+                service_account_email=service_account_email,
+                credential_type=credential_type,
             )
             if error is None:
                 logger.info(

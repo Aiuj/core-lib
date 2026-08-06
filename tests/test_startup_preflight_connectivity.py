@@ -1,5 +1,6 @@
 """Connectivity checks for startup preflight helpers."""
 
+import json
 from urllib.error import HTTPError
 
 from core_lib.llm import startup_preflight
@@ -117,4 +118,39 @@ def test_check_vertex_success(monkeypatch):
     assert status == "ok"
     assert details == "Vertex AI model verified"
     assert error is None
+
+
+def test_resolve_provider_identity_reads_only_non_secret_metadata(tmp_path):
+    credentials_file = tmp_path / "service-account.json"
+    credentials_file.write_text(
+        json.dumps(
+            {
+                "type": "service_account",
+                "project_id": "credential-project",
+                "client_email": "vertex-agent@credential-project.iam.gserviceaccount.com",
+                "private_key": "should-never-be-returned",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Provider:
+        service_account_file = str(credentials_file)
+
+        def to_llm_config(self):
+            return type(
+                "Config",
+                (),
+                {
+                    "project": "configured-project",
+                    "service_account_file": str(credentials_file),
+                },
+            )()
+
+    assert startup_preflight._resolve_provider_identity(Provider()) == (
+        "configured-project",
+        "credential-project",
+        "vertex-agent@credential-project.iam.gserviceaccount.com",
+        "service_account",
+    )
 

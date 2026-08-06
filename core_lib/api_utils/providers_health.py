@@ -53,6 +53,10 @@ def _build_llm_section(llm_results: List[Any]) -> Dict[str, Any]:
                 "latency_ms": r.latency_ms,
                 **({"url": r.url} if r.url else {}),
                 **({"region": r.location} if r.location else {}),
+                **({"project": getattr(r, "project", None)} if getattr(r, "project", None) else {}),
+                **({"credential_project": getattr(r, "credential_project", None)} if getattr(r, "credential_project", None) else {}),
+                **({"service_account_email": getattr(r, "service_account_email", None)} if getattr(r, "service_account_email", None) else {}),
+                **({"credential_type": getattr(r, "credential_type", None)} if getattr(r, "credential_type", None) else {}),
             }
             for r in llm_results
         ],
