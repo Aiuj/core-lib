@@ -1,5 +1,7 @@
 ﻿"""core-lib: Shared library for MCP agent tools."""
 
+from importlib import import_module
+
 __version__ = "0.4.0"
 
 from .cache import (
@@ -17,11 +19,6 @@ from .jobs import (
 )
 from .mcp_utils import get_transport_from_args
 from .tracing import setup_tracing, setup_logging, get_logger, get_module_logger, get_last_logging_config, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION, LoggingContext, parse_from, generate_process_id
-from .llm import (
-    LLMClient, LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig,
-    create_llm_client, create_gemini_client, create_ollama_client, 
-    create_openai_client, create_client_from_env, clean_and_parse_json_response
-)
 from .utils import LanguageUtils, HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check, utc_now, parse_iso_datetime, to_iso_string
 from .tools import ExcelManager
 
@@ -34,17 +31,6 @@ from .config import (
     CONFIDENTIALITY_LEVELS, CONFIDENTIALITY_LEVEL_NAMES, DEFAULT_CONFIDENTIALITY_LEVEL,
     CONFIDENTIALITY_LEVEL_DESCRIPTION, validate_confidentiality_level,
     get_confidentiality_level_name, get_confidentiality_level_value
-)
-
-# OCR services
-from .ocr import OcrService, OcrResult, OcrPageResult, DotsOcrClient
-
-# Document classification
-from .classification import (
-    DocumentClassifier,
-    DocumentClassificationResult,
-    QuestionnaireTopicClassifier,
-    TopicProfile,
 )
 
 # API utilities for time-based authentication
@@ -60,12 +46,52 @@ from .exceptions import (
     CoreLibError, ConfigurationError, APIError, TimeoutError
 )
 
-from .reranker import (
-    BaseRerankerClient, RerankerError, RerankResult,
-    RerankerSettings, reranker_settings,
-    RerankerFactory, create_reranker_client, create_infinity_reranker,
-    create_cohere_reranker, create_local_reranker, get_reranker_client
-)
+_LAZY_EXPORTS = {
+    # LLM
+    "LLMClient": (".llm", "LLMClient"),
+    "LLMConfig": (".llm", "LLMConfig"),
+    "GeminiConfig": (".llm", "GeminiConfig"),
+    "OllamaConfig": (".llm", "OllamaConfig"),
+    "OpenAIConfig": (".llm", "OpenAIConfig"),
+    "create_llm_client": (".llm", "create_llm_client"),
+    "create_gemini_client": (".llm", "create_gemini_client"),
+    "create_ollama_client": (".llm", "create_ollama_client"),
+    "create_openai_client": (".llm", "create_openai_client"),
+    "create_client_from_env": (".llm", "create_client_from_env"),
+    "clean_and_parse_json_response": (".llm", "clean_and_parse_json_response"),
+    # OCR
+    "OcrService": (".ocr", "OcrService"),
+    "OcrResult": (".ocr", "OcrResult"),
+    "OcrPageResult": (".ocr", "OcrPageResult"),
+    "DotsOcrClient": (".ocr", "DotsOcrClient"),
+    # Classification
+    "DocumentClassifier": (".classification", "DocumentClassifier"),
+    "DocumentClassificationResult": (".classification", "DocumentClassificationResult"),
+    "QuestionnaireTopicClassifier": (".classification", "QuestionnaireTopicClassifier"),
+    "TopicProfile": (".classification", "TopicProfile"),
+    # Reranker
+    "BaseRerankerClient": (".reranker", "BaseRerankerClient"),
+    "RerankerError": (".reranker", "RerankerError"),
+    "RerankResult": (".reranker", "RerankResult"),
+    "RerankerSettings": (".reranker", "RerankerSettings"),
+    "reranker_settings": (".reranker", "reranker_settings"),
+    "RerankerFactory": (".reranker", "RerankerFactory"),
+    "create_reranker_client": (".reranker", "create_reranker_client"),
+    "create_infinity_reranker": (".reranker", "create_infinity_reranker"),
+    "create_cohere_reranker": (".reranker", "create_cohere_reranker"),
+    "create_local_reranker": (".reranker", "create_local_reranker"),
+    "get_reranker_client": (".reranker", "get_reranker_client"),
+}
+
+
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute_name = target
+    value = getattr(import_module(module_name, __name__), attribute_name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     # Cache
