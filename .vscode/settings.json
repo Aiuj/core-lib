@@ -29,5 +29,12 @@
     "terminal.integrated.shellArgs.windows": [
     "/K",
     "${workspaceFolder}/.venv/Scripts/activate.bat"
-  ]
+],
+"python-envs.pythonProjects": [
+    {
+        "path": ".",
+        "envManager": "ms-python.python:venv",
+        "packageManager": "ms-python.python:pip"
+    }
+]
 }
