@@ -23,6 +23,41 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## August 2026
+
+### v0.4.1 - Provider Expansion & Embedding Framework (Aug 11, 2026)
+
+#### New providers and retrieval improvements
+
+- **DeepInfra and Cloudflare providers**: Added DeepInfra and Cloudflare as retrieval provider options for embeddings and rerankers
+- **vLLM reranker provider**: Added vLLM as a supported reranker backend
+- **Vertex identity in diagnostics**: Exposed Vertex AI identity information in provider diagnostic reports
+
+#### Multi-provider embedding framework
+
+- **Embedding fallback framework**: Implemented a multi-provider embedding framework with comprehensive fallback support and full test coverage
+- **Retrieval health probes**: Exercise actual retrieval providers (embeddings, reranker) in health probes and bypass caches to ensure live connectivity
+
+#### Performance and observability
+
+- **Lazy-load optional AI integrations**: Deferred loading of optional AI provider dependencies at startup for improved import performance
+- **OCR observability and provider usage**: Improved OCR observability and provider-level usage reporting
+- **Active reranker telemetry**: Report the currently active reranker provider in telemetry for better operational visibility
+
+#### Bug fixes
+
+- **LLM content extraction**: Safely extract content from dict `parsed_result` in `GoogleGenAIProvider` to avoid attribute errors
+- **Job recovery**: Recover and requeue orphaned pending jobs; surface terminal worker failures immediately
+- **Reranker preflight**: Fixed reranker settings preflight and suppressed spurious test warnings
+- **Topic scope enrichment**: Improved topic scope classification enrichment
+- **Test isolation**: Fixed focused test compatibility, provider fallback behavior, and embedding test isolation
+
+#### Utilities
+
+- **Safe download filename builder**: Added a cross-platform safe filename builder combining document title and version
+
+---
+
 ## July 2026
 
 ### v0.4.0 - Questionnaire Topic Profiles (Jul 30, 2026)
