@@ -187,6 +187,38 @@ class TestInfinityRerankerClient:
         assert client.health_check() is True
 
 
+class TestVLLMRerankerClient:
+    def test_factory_creates_vllm_client(self):
+        from core_lib.reranker.vllm_provider import VLLMRerankerClient
+
+        client = RerankerFactory.create(
+            provider="vllm",
+            model="Qwen/Qwen3-Reranker-0.6B",
+            base_url="http://localhost:8112",
+        )
+
+        assert isinstance(client, VLLMRerankerClient)
+        assert client.model == "Qwen/Qwen3-Reranker-0.6B"
+        assert client.base_url == "http://localhost:8112"
+
+    def test_vllm_uses_openai_model_discovery(self):
+        from core_lib.reranker.vllm_provider import VLLMRerankerClient
+
+        client = VLLMRerankerClient(
+            model="Qwen/Qwen3-Reranker-0.6B",
+            base_url="http://localhost:8112",
+        )
+        client._api_client.get = Mock(
+            return_value=(
+                {"data": [{"id": "Qwen/Qwen3-Reranker-0.6B"}]},
+                "http://localhost:8112",
+            )
+        )
+
+        assert client.get_available_models() == ["Qwen/Qwen3-Reranker-0.6B"]
+        client._api_client.get.assert_called_once_with("/v1/models")
+
+
 class TestCacheIntegration:
     """Tests for reranker caching."""
     

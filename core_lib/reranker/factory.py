@@ -24,6 +24,13 @@ except ImportError:
     _infinity_available = False
 
 try:
+    from .vllm_provider import VLLMRerankerClient
+    _vllm_available = True
+except ImportError:
+    VLLMRerankerClient = None
+    _vllm_available = False
+
+try:
     from .cohere_provider import CohereRerankerClient
     _cohere_available = True
 except ImportError:
@@ -78,6 +85,8 @@ class RerankerFactory:
 
         if provider == "infinity":
             return cls.infinity(model=model, **kwargs)
+        elif provider == "vllm":
+            return cls.vllm(model=model, **kwargs)
         elif provider == "deepinfra":
             return cls.deepinfra(model=model, **kwargs)
         elif provider == "cloudflare":
@@ -149,6 +158,26 @@ class RerankerFactory:
             model=model,
             api_key=api_key,
             **kwargs
+        )
+
+    @classmethod
+    def vllm(
+        cls,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+        token: Optional[str] = None,
+        **kwargs,
+    ) -> BaseRerankerClient:
+        """Create a client for vLLM's standard ``POST /rerank`` API."""
+        if not _vllm_available or VLLMRerankerClient is None:
+            raise ImportError("vLLM reranker provider not available. Install requests")
+        return VLLMRerankerClient(
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            token=token,
+            **kwargs,
         )
 
     @classmethod
@@ -316,6 +345,15 @@ def create_infinity_reranker(
         Infinity reranker client instance
     """
     return RerankerFactory.infinity(model=model, base_url=base_url, **kwargs)
+
+
+def create_vllm_reranker(
+    model: str = "Qwen/Qwen3-Reranker-0.6B",
+    base_url: Optional[str] = None,
+    **kwargs,
+) -> BaseRerankerClient:
+    """Create a reranker using a vLLM pooling server."""
+    return RerankerFactory.vllm(model=model, base_url=base_url, **kwargs)
 
 
 def create_cohere_reranker(

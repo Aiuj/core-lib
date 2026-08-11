@@ -45,6 +45,13 @@ except ImportError:
     _infinity_available = False
 
 try:
+    from .vllm_provider import VLLMRerankerClient
+    _vllm_available = True
+except ImportError:
+    VLLMRerankerClient = None
+    _vllm_available = False
+
+try:
     from .cohere_provider import CohereRerankerClient
     _cohere_available = True
 except ImportError:
@@ -79,6 +86,7 @@ from .factory import (
     create_reranker_client,
     create_client_from_env,
     create_infinity_reranker,
+    create_vllm_reranker,
     create_cohere_reranker,
     create_local_reranker,
     create_fallback_reranker,
@@ -110,6 +118,7 @@ __all__ = [
     "RerankerProviderHealthResult",
     "check_reranker_providers_health",
     "create_infinity_reranker",
+    "create_vllm_reranker",
     "create_cohere_reranker",
     "create_local_reranker",
     "create_fallback_reranker",
@@ -120,6 +129,8 @@ __all__ = [
 # Add available providers to __all__
 if _infinity_available:
     __all__.append("InfinityRerankerClient")
+if _vllm_available:
+    __all__.append("VLLMRerankerClient")
 if _cohere_available:
     __all__.append("CohereRerankerClient")
 if _local_available:

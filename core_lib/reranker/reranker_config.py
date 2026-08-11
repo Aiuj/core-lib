@@ -18,7 +18,7 @@ from ..config.provider_config_loader import get_service_provider_configs
 class RerankerSettings(BaseSettings):
     """Reranker provider configuration settings."""
     
-    # Provider selection (infinity, deepinfra, cohere, local)
+    # Provider selection (infinity, vllm, deepinfra, cohere, local)
     provider: str = "infinity"
     
     # Model name - defaults to a good multilingual reranker
@@ -108,7 +108,7 @@ class RerankerSettings(BaseSettings):
                 api_key = config.get("api_key") or config.get("key") or defaults.get("api_key")
                 if api_key:
                     entry["api_key"] = api_key
-            elif provider in {"infinity", "deepinfra"}:
+            elif provider in {"infinity", "vllm", "deepinfra"}:
                 token = (
                     config.get("token")
                     or config.get("api_key")
