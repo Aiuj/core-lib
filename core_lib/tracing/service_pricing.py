@@ -112,6 +112,8 @@ LLM_PRICING = {
 # Embedding Pricing per 1K tokens (USD)
 # Format: {"model-name": price_per_1k}
 EMBEDDING_PRICING = {
+    # Qwen embeddings — $0.01 per 1M tokens
+    "qwen/qwen3-embedding-0.6b": 0.00001,
     # OpenAI embeddings
     # Source: https://openai.com/api/pricing/
     "text-embedding-3-small": 0.00002,
@@ -139,6 +141,13 @@ EMBEDDING_PRICING = {
     # Local/Self-hosted (free)
     "infinity": 0.0,
     "ollama": 0.0,
+}
+
+
+# Reranker Pricing per 1K input tokens (USD)
+# Qwen3-Reranker-0.6B: $0.01 per 1M tokens.
+RERANKER_PRICING = {
+    "qwen/qwen3-reranker-0.6b": 0.00001,
 }
 
 
@@ -267,6 +276,11 @@ def get_embedding_pricing(model: str) -> float:
     return None
 
 
+def get_reranker_pricing(model: str) -> float:
+    """Get pricing per 1K input tokens for a reranker model."""
+    return RERANKER_PRICING.get(model.lower())
+
+
 def get_ocr_pricing(provider: str, model: str) -> dict:
     """Get pricing for an OCR service.
     
@@ -285,8 +299,10 @@ def get_ocr_pricing(provider: str, model: str) -> dict:
 __all__ = [
     "LLM_PRICING",
     "EMBEDDING_PRICING",
+    "RERANKER_PRICING",
     "OCR_PRICING",
     "get_llm_pricing",
     "get_embedding_pricing",
+    "get_reranker_pricing",
     "get_ocr_pricing",
 ]

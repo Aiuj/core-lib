@@ -21,10 +21,13 @@ from .service_usage import (
     log_search_usage,
     calculate_llm_cost,
     calculate_embedding_cost,
+    calculate_reranker_cost,
     set_llm_purpose,
     set_llm_usage_type,
     set_embedding_purpose,
     set_intelligence_level,
+    clear_llm_selection,
+    clear_intelligence_level,
     clear_purposes,
 )
 from .service_pricing import (
@@ -33,6 +36,7 @@ from .service_pricing import (
     OCR_PRICING,
     get_llm_pricing,
     get_embedding_pricing,
+    get_reranker_pricing,
     get_ocr_pricing,
 )
 
@@ -64,15 +68,19 @@ __all__ = [
     "log_search_usage",
     "calculate_llm_cost",
     "calculate_embedding_cost",
+    "calculate_reranker_cost",
     "set_llm_purpose",
     "set_llm_usage_type",
     "set_embedding_purpose",
     "set_intelligence_level",
+    "clear_llm_selection",
+    "clear_intelligence_level",
     "clear_purposes",
     "LLM_PRICING",
     "EMBEDDING_PRICING",
     "OCR_PRICING",
     "get_llm_pricing",
     "get_embedding_pricing",
+    "get_reranker_pricing",
     "get_ocr_pricing",
 ]

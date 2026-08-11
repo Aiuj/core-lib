@@ -49,7 +49,11 @@ from enum import Enum
 from contextvars import ContextVar
 
 from .logger import get_module_logger
-from .service_pricing import get_llm_pricing, get_embedding_pricing
+from .service_pricing import (
+    get_embedding_pricing,
+    get_llm_pricing,
+    get_reranker_pricing,
+)
 
 logger = get_module_logger()
 
@@ -107,6 +111,22 @@ def set_llm_selection(label: Optional[str], kind: Optional[str] = None) -> None:
     """
     _llm_selection_label.set(label)
     _llm_selection_kind.set(kind)
+
+
+def clear_llm_selection() -> None:
+    """Clear provider-selection metadata for direct (non-fallback) calls.
+
+    Direct provider clients do not select a provider through
+    ``FallbackLLMClient``.  Clearing this context prevents a previous
+    fallback-routed call from being incorrectly attached to their usage log.
+    """
+    _llm_selection_label.set(None)
+    _llm_selection_kind.set(None)
+
+
+def clear_intelligence_level() -> None:
+    """Clear the inherited intelligence level for an independently routed call."""
+    _intelligence_level.set(None)
 
 
 def clear_purposes() -> None:
@@ -177,6 +197,19 @@ def calculate_embedding_cost(
         logger.debug(f"No pricing data for embedding model: {model} (provider: {provider})")
         return 0.0
     
+    return (input_tokens / 1000.0) * price_per_1k
+
+
+def calculate_reranker_cost(
+    provider: str,
+    model: str,
+    input_tokens: int,
+) -> float:
+    """Calculate reranking cost from input tokens."""
+    price_per_1k = get_reranker_pricing(model)
+    if price_per_1k is None:
+        logger.debug(f"No pricing data for reranker model: {model} (provider: {provider})")
+        return 0.0
     return (input_tokens / 1000.0) * price_per_1k
 
 
@@ -485,9 +518,7 @@ def log_reranker_usage(
         metadata: Additional context
         error: Error message if the request failed
     """
-    # Reranking cost is typically negligible or included in subscription, 
-    # but we can add pricing logic later if needed.
-    cost = 0.0
+    cost = calculate_reranker_cost(provider, model, input_tokens) if input_tokens is not None else 0.0
     
     event = {
         "service.type": "reranker",
@@ -691,4 +722,5 @@ __all__ = [
     "log_search_usage",
     "calculate_llm_cost",
     "calculate_embedding_cost",
+    "calculate_reranker_cost",
 ]

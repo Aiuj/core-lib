@@ -18,7 +18,12 @@ from typing import Any, Dict, List, Optional
 
 from .. import get_module_logger
 from ..config.ocr_settings import OcrSettings
-from ..tracing import set_llm_purpose, set_llm_usage_type
+from ..tracing import (
+    clear_intelligence_level,
+    clear_llm_selection,
+    set_llm_purpose,
+    set_llm_usage_type,
+)
 from .dots_ocr_client import DotsOcrClient, DEFAULT_MODE
 from .models import LayoutElement, OcrPageResult, OcrResult
 
@@ -353,7 +358,13 @@ class OcrService:
 
         try:
             # Observability tagging for vision/OCR calls.
-            # This appears as gen_ai.purpose / gen_ai.usage_type in OTEL logs.
+            # OCR receives a concrete provider client, rather than routing
+            # through FallbackLLMClient. Clear routing metadata inherited
+            # from an earlier request so the provider/model in the usage log
+            # cannot be decorated with a stale selected model (for example,
+            # GLM-OCR being logged as selected Ministral).
+            clear_llm_selection()
+            clear_intelligence_level()
             set_llm_purpose("ocr_enrich" if enrich else "ocr_vision")
             set_llm_usage_type("ocr")
             response = self._vision_client.chat(messages=messages)

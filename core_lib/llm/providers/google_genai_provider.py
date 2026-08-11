@@ -781,7 +781,12 @@ class GoogleGenAIProvider(BaseProvider):
                 """Run the async function in a new event loop."""
                 return asyncio.run(_acquire_with_timeout())
             
-            # Check if we're already in an async context
+            # Check if we're already in an async context.  A synchronous
+            # caller can still reach this provider from a worker that has
+            # previously used another event loop; in that case the limiter's
+            # asyncio.Lock may reject asyncio.run() with a loop-binding
+            # RuntimeError.  Throttling is best-effort, so do not let that
+            # prevent the provider request (or delay fallback routing).
             try:
                 loop = asyncio.get_running_loop()
                 # We're in an async context - use thread executor
@@ -790,13 +795,22 @@ class GoogleGenAIProvider(BaseProvider):
                     future.result(timeout=MAX_TIMEOUT + 1.0)
             except RuntimeError:
                 # No running loop - standard case for sync calls
-                asyncio.run(_acquire_with_timeout())
-                    
+                try:
+                    asyncio.run(_acquire_with_timeout())
+                except RuntimeError as exc:
+                    logger.debug(
+                        "Rate limiter unavailable in current event-loop context; "
+                        "proceeding without throttle (%s)",
+                        exc,
+                    )
+
         except Exception as e:
             # Never block the call due to rate limiter errors
             logger.warning(
-                "Rate limiter acquisition failed; proceeding without throttle",
-                exc_info=e
+                "Rate limiter acquisition failed; proceeding without throttle "
+                "(%s: %s)",
+                type(e).__name__,
+                e,
             )
 
     def chat(
