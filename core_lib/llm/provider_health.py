@@ -456,13 +456,17 @@ def classify_error(error: Exception) -> str:
     if "499" in error_str or "cancelled" in error_str:
         return "server_error"
 
-    # Connection errors (including DNS resolution failures: socket.gaierror / [Errno -2])
+    # Connection errors (including DNS resolution failures: socket.gaierror / [Errno -2]).
+    # httpx may wrap a remote TCP reset as RuntimeError while preserving only
+    # the platform error text (for example, Windows WinError 10054).
     if any(x in error_str for x in ["connection", "connect", "unreachable", "network",
                                      "name or service not known", "nodename nor servname",
-                                     "temporary failure in name resolution"]):
+                                     "temporary failure in name resolution", "winerror 10054",
+                                     "winerror 10053", "connection reset", "forcibly closed",
+                                     "remote host closed", "broken pipe"]):
         return "connection_error"
 
-    if any(x in error_type for x in ["connection", "network", "socket", "gaierror"]):
+    if any(x in error_type for x in ["connection", "network", "socket", "gaierror", "readerror"]):
         return "connection_error"
 
     # Pydantic/config validation failures should be treated as configuration errors,

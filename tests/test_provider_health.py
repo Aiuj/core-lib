@@ -321,6 +321,18 @@ class TestClassifyError:
         """Test detection of connection errors."""
         error = Exception("Connection refused: server unreachable")
         assert classify_error(error) == "connection_error"
+
+    def test_windows_connection_reset_detection(self):
+        """Windows remote TCP resets should be transient connection errors."""
+        error = RuntimeError(
+            "[WinError 10054] An existing connection was forcibly closed by the remote host"
+        )
+        assert classify_error(error) == "connection_error"
+
+    def test_httpx_read_error_detection(self):
+        """httpx response-read failures should be treated as connection errors."""
+        error = type("ReadError", (Exception,), {})("response body read failed")
+        assert classify_error(error) == "connection_error"
     
     def test_auth_error_detection(self):
         """Test detection of auth errors."""

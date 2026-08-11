@@ -882,7 +882,13 @@ class GoogleGenAIProvider(BaseProvider):
                 error_reason = "credentials_error"
 
             # Expected transient failures: log as warning without traceback
-            silent_reasons = ("rate_limit", "quota_exceeded", "server_error", "timeout")
+            silent_reasons = (
+                "rate_limit",
+                "quota_exceeded",
+                "server_error",
+                "timeout",
+                "connection_error",
+            )
             if is_credentials_error:
                 logger.warning(
                     f"genai.chat skipped — Google credentials not available: {e}. "
