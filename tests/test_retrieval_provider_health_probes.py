@@ -19,6 +19,7 @@ def test_embedding_probe_uses_public_generation_path() -> None:
     assert result.healthy is True
     client.generate_embedding_single.assert_called_once_with("embedding health check")
     client.health_check.assert_not_called()
+    assert client.cache_duration_seconds == 0
 
 
 def test_reranker_probe_uses_public_rerank_path() -> None:
@@ -37,3 +38,4 @@ def test_reranker_probe_uses_public_rerank_path() -> None:
         top_k=2,
     )
     client.health_check.assert_not_called()
+    assert client.cache_duration_seconds == 0

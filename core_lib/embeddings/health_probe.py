@@ -44,6 +44,10 @@ def _probe_single_provider(config: dict) -> str | None:
         model = config.get("model")
         kwargs = {k: v for k, v in config.items() if k not in {"provider", "model"}}
         client = EmbeddingFactory.create(provider=provider, model=model, **kwargs)
+        # Health probes must reach the provider.  Fixed probe text would
+        # otherwise be served from the shared embeddings cache, reporting a
+        # false healthy result without producing provider telemetry.
+        client.cache_duration_seconds = 0
         # Use the public generation method rather than a transport-only probe.
         # This verifies the complete request/response/normalisation path and lets
         # provider implementations emit their normal embedding usage telemetry.

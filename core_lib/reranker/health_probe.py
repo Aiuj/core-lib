@@ -42,6 +42,10 @@ def _probe_single_provider(config: dict) -> str | None:
         model = config.get("model")
         kwargs = {k: v for k, v in config.items() if k not in {"provider", "model"}}
         client = RerankerFactory.create(provider=provider, model=model, **kwargs)
+        # The probe uses fixed query/documents, so disable the shared cache to
+        # ensure every health check makes a real provider request and emits
+        # usage telemetry.
+        client.cache_duration_seconds = 0
         # Exercise the public reranking API so response parsing, sorting, and
         # usage telemetry are covered by the health probe as well.
         documents = ["health check relevant document", "health check alternate document"]
