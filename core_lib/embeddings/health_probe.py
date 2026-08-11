@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import math
+import numbers
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
@@ -42,7 +44,15 @@ def _probe_single_provider(config: dict) -> str | None:
         model = config.get("model")
         kwargs = {k: v for k, v in config.items() if k not in {"provider", "model"}}
         client = EmbeddingFactory.create(provider=provider, model=model, **kwargs)
-        return None if client.health_check() else "health_check returned False"
+        # Use the public generation method rather than a transport-only probe.
+        # This verifies the complete request/response/normalisation path and lets
+        # provider implementations emit their normal embedding usage telemetry.
+        embedding = client.generate_embedding_single("embedding health check")
+        if not isinstance(embedding, list) or not embedding:
+            return "embedding request returned no vector"
+        if not all(isinstance(value, numbers.Real) and math.isfinite(value) for value in embedding):
+            return "embedding request returned a non-finite vector"
+        return None
     except Exception as exc:
         return str(exc)
     finally:
