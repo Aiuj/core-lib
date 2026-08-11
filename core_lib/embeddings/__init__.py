@@ -90,6 +90,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from .cloudflare_provider import CloudflareEmbeddingClient
+    __all_providers__.append("CloudflareEmbeddingClient")
+except ImportError:
+    CloudflareEmbeddingClient = None
+
 __all__ = [
     # Base classes and errors
     "BaseEmbeddingClient",

@@ -45,6 +45,8 @@ class EmbeddingsSettings(BaseSettings):
     infinity_timeout: Optional[int] = None
     infinity_token: Optional[str] = None  # Authentication token(s), comma-separated
     infinity_wake_on_lan: Optional[Dict[str, Any]] = None
+    cloudflare_account_id: Optional[str] = None
+    cloudflare_api_token: Optional[str] = None
     
     # Local model settings
     device: str = "auto"
@@ -123,8 +125,12 @@ class EmbeddingsSettings(BaseSettings):
             if dim is not None:
                 entry["embedding_dim"] = int(dim)
 
-            if provider == "openai":
-                api_key = config.get("api_key") or config.get("key") or defaults.get("api_key")
+            if provider in {"openai", "deepinfra"}:
+                api_key = (
+                    config.get("api_key")
+                    or config.get("key")
+                    or defaults.get("api_key")
+                )
                 if api_key:
                     entry["api_key"] = api_key
                 if config.get("organization"):
@@ -151,6 +157,9 @@ class EmbeddingsSettings(BaseSettings):
                 wake_on_lan = config.get("wake_on_lan")
                 if isinstance(wake_on_lan, dict):
                     entry["wake_on_lan"] = wake_on_lan
+            elif provider == "cloudflare":
+                entry["account_id"] = config.get("account_id") or config.get("cloudflare_account_id") or defaults.get("cloudflare_account_id")
+                entry["api_token"] = config.get("api_token") or config.get("token") or config.get("api_key") or defaults.get("cloudflare_api_token")
             elif provider == "local":
                 if config.get("device"):
                     entry["device"] = config.get("device")
@@ -221,6 +230,8 @@ class EmbeddingsSettings(BaseSettings):
             "infinity_timeout": EnvParser.get_env("INFINITY_TIMEOUT", env_type=int) if EnvParser.get_env("INFINITY_TIMEOUT") else embedding_timeout,
             "infinity_token": infinity_token,
             "infinity_wake_on_lan": None,
+            "cloudflare_account_id": EnvParser.get_env("CLOUDFLARE_ACCOUNT_ID"),
+            "cloudflare_api_token": EnvParser.get_env("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_AUTH_TOKEN"),
             "device": EnvParser.get_env("EMBEDDING_DEVICE", default="auto"),
             "cache_dir": EnvParser.get_env("EMBEDDING_CACHE_DIR"),
             "trust_remote_code": EnvParser.get_env("EMBEDDING_TRUST_REMOTE_CODE", default=False, env_type=bool),
@@ -252,7 +263,7 @@ class EmbeddingsSettings(BaseSettings):
             if selected.get("base_url"):
                 if settings_dict["provider"] == "infinity":
                     settings_dict["infinity_url"] = selected.get("base_url")
-                elif settings_dict["provider"] == "openai":
+                elif settings_dict["provider"] in {"openai", "deepinfra"}:
                     settings_dict["base_url"] = selected.get("base_url")
                 elif settings_dict["provider"] == "ollama":
                     settings_dict["ollama_url"] = selected.get("base_url")
@@ -272,6 +283,10 @@ class EmbeddingsSettings(BaseSettings):
                     settings_dict["api_key"] = selected.get("api_key")
             if selected.get("token"):
                 settings_dict["infinity_token"] = selected.get("token")
+            if selected.get("account_id"):
+                settings_dict["cloudflare_account_id"] = selected.get("account_id")
+            if selected.get("api_token"):
+                settings_dict["cloudflare_api_token"] = selected.get("api_token")
             if isinstance(selected.get("wake_on_lan"), dict):
                 settings_dict["infinity_wake_on_lan"] = selected.get("wake_on_lan")
             if selected.get("organization"):
@@ -316,6 +331,8 @@ class EmbeddingsSettings(BaseSettings):
             "infinity_timeout": self.infinity_timeout,
             "infinity_token": self.infinity_token,
             "infinity_wake_on_lan": self.infinity_wake_on_lan,
+            "cloudflare_account_id": self.cloudflare_account_id,
+            "cloudflare_api_token": self.cloudflare_api_token,
             "device": self.device,
             "cache_dir": self.cache_dir,
             "trust_remote_code": self.trust_remote_code,

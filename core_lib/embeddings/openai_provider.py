@@ -57,7 +57,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
         # Use provided API key or fall back to config
         self.api_key = api_key or embeddings_settings.api_key
         if not self.api_key:
-            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable.")
+            raise ValueError("An API key is required for this OpenAI-compatible embedding provider.")
         
         # Set default model if not provided
         if not self.model:

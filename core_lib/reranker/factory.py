@@ -37,6 +37,19 @@ except ImportError:
     LocalRerankerClient = None
     _local_available = False
 
+try:
+    from .deepinfra_provider import DeepInfraRerankerClient
+    _deepinfra_available = True
+except ImportError:
+    DeepInfraRerankerClient = None
+    _deepinfra_available = False
+try:
+    from .cloudflare_provider import CloudflareRerankerClient
+    _cloudflare_available = True
+except ImportError:
+    CloudflareRerankerClient = None
+    _cloudflare_available = False
+
 
 class RerankerFactory:
     """Factory class for creating reranker clients with various providers."""
@@ -65,6 +78,10 @@ class RerankerFactory:
 
         if provider == "infinity":
             return cls.infinity(model=model, **kwargs)
+        elif provider == "deepinfra":
+            return cls.deepinfra(model=model, **kwargs)
+        elif provider == "cloudflare":
+            return cls.cloudflare(model=model, **kwargs)
         elif provider == "cohere":
             return cls.cohere(model=model, **kwargs)
         elif provider == "local" or provider == "crossencoder":
@@ -135,6 +152,27 @@ class RerankerFactory:
         )
 
     @classmethod
+    def deepinfra(
+        cls,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+        token: Optional[str] = None,
+        **kwargs,
+    ) -> BaseRerankerClient:
+        if not _deepinfra_available or DeepInfraRerankerClient is None:
+            raise ImportError("DeepInfra reranker provider not available. Install with: pip install requests")
+        return DeepInfraRerankerClient(
+            model=model, base_url=base_url, timeout=timeout, token=token, **kwargs
+        )
+
+    @classmethod
+    def cloudflare(cls, model=None, **kwargs) -> BaseRerankerClient:
+        if not _cloudflare_available or CloudflareRerankerClient is None:
+            raise ImportError("Cloudflare reranker provider not available. Install with: pip install requests")
+        return CloudflareRerankerClient(model=model, **kwargs)
+
+    @classmethod
     def local(
         cls,
         model: Optional[str] = None,
@@ -184,6 +222,8 @@ class RerankerFactory:
                 ("infinity_token", "token", "truthy"),
                 ("infinity_wake_on_lan", "wake_on_lan", "truthy"),
                 ("infinity_wakeup_service", "wakeup_service", "truthy"),
+                ("cloudflare_account_id", "account_id", "truthy"),
+                ("cloudflare_api_token", "api_token", "truthy"),
                 ("device", "device", "truthy"),
                 ("cache_dir", "cache_dir", "truthy"),
                 ("trust_remote_code", "trust_remote_code", "exists"),

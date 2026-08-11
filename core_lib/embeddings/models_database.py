@@ -66,6 +66,24 @@ EMBEDDING_MODELS_DATABASE: Dict[str, ModelSpec] = {
         "provider": "openai",
         "notes": "Legacy model. Does not support dimension customization.",
     },
+
+    # Qwen3 Embedding Models
+    "Qwen/Qwen3-Embedding-0.6B": {
+        "dimensions": 1024,
+        "context_size": 32768,
+        "supports_matryoshka": True,
+        "supports_custom_dimensions": True,
+        "provider": "deepinfra",
+        "notes": "Multilingual Qwen3 embedding model; supports user-defined dimensions from 32 to 1024.",
+    },
+    "@cf/qwen/qwen3-embedding-0.6b": {
+        "dimensions": 1024,
+        "context_size": 8192,
+        "supports_matryoshka": True,
+        "supports_custom_dimensions": True,
+        "provider": "cloudflare",
+        "notes": "Cloudflare Workers AI hosted Qwen3 embedding model.",
+    },
     
     # Nomic Models
     "nomic-embed-text": {

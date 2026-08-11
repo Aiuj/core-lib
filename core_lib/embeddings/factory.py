@@ -45,6 +45,13 @@ except ImportError:
     InfinityEmbeddingClient = None
     _infinity_available = False
 
+try:
+    from .cloudflare_provider import CloudflareEmbeddingClient
+    _cloudflare_available = True
+except ImportError:
+    CloudflareEmbeddingClient = None
+    _cloudflare_available = False
+
 
 class EmbeddingFactory:
     """Factory class for creating embedding clients with various providers."""
@@ -117,6 +124,17 @@ class EmbeddingFactory:
                 norm_method=norm_method,
                 **kwargs
             )
+        elif provider == "deepinfra":
+            # DeepInfra exposes an OpenAI-compatible embeddings endpoint.
+            return cls.openai(
+                model=model,
+                embedding_dim=embedding_dim,
+                use_l2_norm=use_l2_norm,
+                norm_method=norm_method,
+                **kwargs,
+            )
+        elif provider == "cloudflare":
+            return cls.cloudflare(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm, norm_method=norm_method, **kwargs)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -325,6 +343,13 @@ class EmbeddingFactory:
         )
 
     @classmethod
+    def cloudflare(cls, model=None, embedding_dim=None, use_l2_norm=True, norm_method=None, **kwargs):
+        if not _cloudflare_available or CloudflareEmbeddingClient is None:
+            raise ImportError("Cloudflare embedding provider not available. Install with: pip install requests")
+        return CloudflareEmbeddingClient(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm,
+                                         norm_method=norm_method, **kwargs)
+
+    @classmethod
     def from_config(cls, config: Optional[object] = None) -> BaseEmbeddingClient:
         """Create a client from configuration object.
         
@@ -351,6 +376,8 @@ class EmbeddingFactory:
                 ("trust_remote_code", "trust_remote_code", "exists"),
                 ("use_sentence_transformers", "use_sentence_transformers", "exists"),
                 ("infinity_wake_on_lan", "wake_on_lan", "truthy"),
+                ("cloudflare_account_id", "account_id", "truthy"),
+                ("cloudflare_api_token", "api_token", "truthy"),
             ],
         )
 

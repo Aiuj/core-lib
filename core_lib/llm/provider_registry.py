@@ -196,6 +196,11 @@ class ProviderConfig:
             self.provider = "gemini"
         elif self.provider in ("azure", "azure_openai"):
             self.provider = "azure-openai"
+        elif self.provider in ("deepinfra", "deep-infra"):
+            # DeepInfra exposes an OpenAI-compatible Chat Completions API.
+            self.provider = "openai"
+            if not self.host:
+                self.host = "https://api.deepinfra.com/v1/openai"
         elif self.provider in ("alibaba", "alibaba-cloud", "dashscope", "qwen"):
             # Route to standard Chat Completions (compatible-mode) — the well-supported
             # Alibaba path. The /compatible-mode/v1 endpoint is what Alibaba docs
@@ -482,6 +487,7 @@ class ProviderConfig:
                 self.api_key
                 or os.getenv("OPENAI_API_KEY")
                 or os.getenv("DASHSCOPE_API_KEY")
+                or os.getenv("DEEPINFRA_API_KEY")
                 or ""
             )
             # thinking_budget lives in thinking_config["budget"] (parsed by from_dict)
@@ -638,6 +644,7 @@ class ProviderConfig:
                 bool(self.api_key)
                 or bool(os.getenv("OPENAI_API_KEY"))
                 or bool(os.getenv("DASHSCOPE_API_KEY"))
+                or bool(os.getenv("DEEPINFRA_API_KEY"))
             )
         elif self.provider == "azure-openai":
             has_key = bool(self.api_key) or bool(os.getenv("AZURE_OPENAI_API_KEY")) or bool(os.getenv("OPENAI_API_KEY"))
@@ -1003,8 +1010,9 @@ class ProviderRegistry:
                 priority=10,
             ))
         
-        # Check for OpenAI
+        # Check for OpenAI / DeepInfra
         openai_key = os.getenv("OPENAI_API_KEY")
+        deepinfra_key = os.getenv("DEEPINFRA_API_KEY")
         azure_key = os.getenv("AZURE_OPENAI_API_KEY")
         
         if azure_key:
@@ -1017,6 +1025,17 @@ class ProviderRegistry:
                 temperature=float(os.getenv("OPENAI_TEMPERATURE") or "0.7"),
                 priority=20,
             ))
+        elif deepinfra_key:
+            self.add(
+                ProviderConfig(
+                    provider="deepinfra",
+                    api_key=deepinfra_key,
+                    model=os.getenv("DEEPINFRA_MODEL") or "Qwen/Qwen3-32B",
+                    host=os.getenv("DEEPINFRA_BASE_URL") or "https://api.deepinfra.com/v1/openai",
+                    temperature=float(os.getenv("OPENAI_TEMPERATURE") or "0.7"),
+                    priority=20,
+                )
+            )
         elif openai_key:
             self.add(ProviderConfig(
                 provider="openai",

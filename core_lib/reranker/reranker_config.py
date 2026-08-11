@@ -18,7 +18,7 @@ from ..config.provider_config_loader import get_service_provider_configs
 class RerankerSettings(BaseSettings):
     """Reranker provider configuration settings."""
     
-    # Provider selection (infinity, cohere, local)
+    # Provider selection (infinity, deepinfra, cohere, local)
     provider: str = "infinity"
     
     # Model name - defaults to a good multilingual reranker
@@ -33,6 +33,8 @@ class RerankerSettings(BaseSettings):
     infinity_token: Optional[str] = None
     infinity_wake_on_lan: Optional[Dict[str, Any]] = None
     infinity_wakeup_service: Optional[Dict[str, Any]] = None
+    cloudflare_account_id: Optional[str] = None
+    cloudflare_api_token: Optional[str] = None
     
     # Local model settings
     device: str = "auto"
@@ -106,9 +108,10 @@ class RerankerSettings(BaseSettings):
                 api_key = config.get("api_key") or config.get("key") or defaults.get("api_key")
                 if api_key:
                     entry["api_key"] = api_key
-            elif provider == "infinity":
+            elif provider in {"infinity", "deepinfra"}:
                 token = (
                     config.get("token")
+                    or config.get("api_key")
                     or config.get("infinity_token")
                     or config.get("reranker_token")
                     or defaults.get("infinity_token")
@@ -123,6 +126,9 @@ class RerankerSettings(BaseSettings):
                 # the YAML config don't silently inherit the global reranker_settings
                 # wakeup_service (which would point to a different server's endpoint).
                 entry["wakeup_service"] = wakeup_service if isinstance(wakeup_service, dict) else {}
+            elif provider == "cloudflare":
+                entry["account_id"] = config.get("account_id") or config.get("cloudflare_account_id") or defaults.get("cloudflare_account_id")
+                entry["api_token"] = config.get("api_token") or config.get("token") or config.get("api_key") or defaults.get("cloudflare_api_token")
             elif provider == "local":
                 if config.get("device"):
                     entry["device"] = config.get("device")
@@ -210,9 +216,15 @@ class RerankerSettings(BaseSettings):
             "api_key": EnvParser.get_env("COHERE_API_KEY"),
             "infinity_url": infinity_url,
             "infinity_timeout": infinity_timeout,
-            "infinity_token": EnvParser.get_env("INFINITY_TOKEN") or EnvParser.get_env("RERANKER_TOKEN"),
+            "infinity_token": (
+                EnvParser.get_env("DEEPINFRA_API_KEY")
+                or EnvParser.get_env("INFINITY_TOKEN")
+                or EnvParser.get_env("RERANKER_TOKEN")
+            ),
             "infinity_wake_on_lan": None,
             "infinity_wakeup_service": infinity_wakeup_service,
+            "cloudflare_account_id": EnvParser.get_env("CLOUDFLARE_ACCOUNT_ID"),
+            "cloudflare_api_token": EnvParser.get_env("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_AUTH_TOKEN"),
             "device": EnvParser.get_env("RERANKER_DEVICE", default="auto"),
             "cache_dir": EnvParser.get_env("RERANKER_CACHE_DIR"),
             "trust_remote_code": EnvParser.get_env("RERANKER_TRUST_REMOTE_CODE", default=False, env_type=bool),
@@ -246,6 +258,10 @@ class RerankerSettings(BaseSettings):
                 settings_dict["api_key"] = selected.get("api_key")
             if selected.get("token"):
                 settings_dict["infinity_token"] = selected.get("token")
+            if selected.get("account_id"):
+                settings_dict["cloudflare_account_id"] = selected.get("account_id")
+            if selected.get("api_token"):
+                settings_dict["cloudflare_api_token"] = selected.get("api_token")
             if isinstance(selected.get("wake_on_lan"), dict):
                 settings_dict["infinity_wake_on_lan"] = selected.get("wake_on_lan")
             if isinstance(selected.get("wakeup_service"), dict):

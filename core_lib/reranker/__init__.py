@@ -58,6 +58,19 @@ except ImportError:
     LocalRerankerClient = None
     _local_available = False
 
+try:
+    from .deepinfra_provider import DeepInfraRerankerClient
+    _deepinfra_available = True
+except ImportError:
+    DeepInfraRerankerClient = None
+    _deepinfra_available = False
+try:
+    from .cloudflare_provider import CloudflareRerankerClient
+    _cloudflare_available = True
+except ImportError:
+    CloudflareRerankerClient = None
+    _cloudflare_available = False
+
 # Fallback client (always available as it doesn't require optional dependencies)
 from .fallback_client import FallbackRerankerClient
 
@@ -111,3 +124,7 @@ if _cohere_available:
     __all__.append("CohereRerankerClient")
 if _local_available:
     __all__.append("LocalRerankerClient")
+if _deepinfra_available:
+    __all__.append("DeepInfraRerankerClient")
+if _cloudflare_available:
+    __all__.append("CloudflareRerankerClient")

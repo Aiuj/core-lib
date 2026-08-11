@@ -102,6 +102,11 @@ class OpenAIConfig(LLMConfig):
         return bool(self.base_url and "openrouter.ai" in self.base_url.lower())
 
     @property
+    def is_deepinfra(self) -> bool:
+        """True when targeting DeepInfra's OpenAI-compatible endpoint."""
+        return bool(self.base_url and "deepinfra.com" in self.base_url.lower())
+
+    @property
     def is_ovh(self) -> bool:
         """True when base_url points to an OVHcloud AI Endpoints endpoint."""
         return bool(self.base_url and "ovh.net" in self.base_url.lower())
@@ -114,6 +119,7 @@ class OpenAIConfig(LLMConfig):
             self.base_url
             and not self.is_alibaba
             and not self.is_openrouter
+            and not self.is_deepinfra
             and not self.is_ovh
             and "openai.com" not in self.base_url.lower()
         )
