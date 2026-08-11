@@ -128,6 +128,11 @@ class FallbackRerankerClient(BaseRerankerClient):
         
         config_str = "|".join(provider_info)
         return f"reranker_fallback_{hashlib.md5(config_str.encode()).hexdigest()[:12]}"
+
+    def _telemetry_provider_name(self) -> str:
+        """Report the backend that handled the current request, not the wrapper."""
+        provider = self.providers[self.current_provider_index]
+        return provider.__class__.__name__.replace("RerankerClient", "").lower()
     
     def _get_cache(self):
         """Get cache instance if available and caching is enabled."""

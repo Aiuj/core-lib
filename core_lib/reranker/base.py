@@ -81,6 +81,10 @@ class BaseRerankerClient:
         """Service host URL used for requests. Override in concrete providers."""
         return None
 
+    def _telemetry_provider_name(self) -> str:
+        """Return the provider name recorded in usage telemetry."""
+        return self.__class__.__name__.replace("RerankerClient", "").lower()
+
     def _generate_cache_key(self, query: str, documents: List[str], top_k: Optional[int]) -> str:
         """Generate a cache key for the given query and documents."""
         cache_data = {
@@ -137,7 +141,7 @@ class BaseRerankerClient:
         
         # Log usage
         log_reranker_usage(
-            provider=self.__class__.__name__.replace("RerankerClient", "").lower(),
+            provider=self._telemetry_provider_name(),
             model=self.model,
             num_documents=len(documents),
             input_tokens=usage.get("input_tokens") if usage else None,
