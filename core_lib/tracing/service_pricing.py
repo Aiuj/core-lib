@@ -6,7 +6,7 @@ Update these dictionaries when providers change their pricing.
 Pricing is per 1,000 tokens unless otherwise noted.
 All prices in USD.
 
-Last updated: July 31, 2026
+Last updated: August 12, 2026
 """
 
 # LLM Pricing per 1K tokens (USD)
@@ -89,6 +89,13 @@ LLM_PRICING = {
     # Prices in EUR; converted to USD at ~1.10 USD/EUR. Last updated: May 2026.
     "Qwen3.5-9B": {"input": 0.00011, "output": 0.000165},        # 0.10€/$0.15€ per 1M tokens
     "Qwen3.5-397B-A17B": {"input": 0.00066, "output": 0.00396},  # 0.60€/3.60€ per 1M tokens
+
+    # DeepInfra multimodal Qwen models
+    # Source: https://deepinfra.com/Qwen/Qwen3-VL-30B-A3B-Instruct/api
+    #         https://deepinfra.com/Qwen/Qwen3-VL-235B-A22B-Instruct/api
+    # Standard-tier prices per 1M tokens, converted to per 1K here.
+    "qwen/qwen3-vl-30b-a3b-instruct": {"input": 0.00015, "output": 0.00060},
+    "qwen/qwen3-vl-235b-a22b-instruct": {"input": 0.00020, "output": 0.00088},
 
     # Mistral AI models
     # Source: https://mistral.ai/pricing#api (updated May 2026)

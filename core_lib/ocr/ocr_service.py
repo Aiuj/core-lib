@@ -302,24 +302,28 @@ class OcrService:
     # ------------------------------------------------------------------
 
     _OCR_ONLY_PROMPT = (
-        "Extract all text content from this image. "
-        "Output as clean markdown. "
-        "Preserve the document structure including headings, "
-        "paragraphs, lists, and tables. Use markdown tables. "
-        "Output formulas as LaTeX. Be thorough and accurate. "
-        "Do not wrap the output in code fences."
+        "You are a document OCR engine. Transcribe every visible character from "
+        "the image accurately and in natural reading order. Do not summarize, "
+        "translate, explain, correct, or invent text. Preserve headings, paragraphs, "
+        "lists, footnotes, labels, and page numbers as clean markdown. Reconstruct "
+        "tables as markdown tables without dropping rows or columns. Render formulas "
+        "as LaTeX and keep the original language, spelling, punctuation, and numbers. "
+        "For text that cannot be read confidently, write [illegible] instead of "
+        "guessing. Return only the transcription, with no preamble or code fences."
     )
 
     _ENRICHED_PROMPT = (
-        "Analyze this image and summarize it for search indexing. "
+        "Analyze this document image for search indexing while transcribing its text "
+        "faithfully. Do not translate, correct, or invent text. "
         "Return EXACTLY three markdown sections in this order:\n\n"
         "## Description\n"
         "Write 1-2 short sentences describing the main subject of the image.\n\n"
         "## Search Terms\n"
         "List 5-10 relevant keywords as a comma-separated list.\n\n"
         "## Text Content\n"
-        "Extract all readable text exactly as it appears. Use markdown tables for tabular data. "
-        "Output formulas as LaTeX. If there is no text, write 'None'.\n\n"
+        "Extract all readable text in natural reading order exactly as it appears. "
+        "Use markdown tables for tabular data, output formulas as LaTeX, and write "
+        "[illegible] rather than guessing uncertain text. If there is no text, write 'None'.\n\n"
         "Do not include any other commentary. Do not wrap the output in code fences."
     )
 

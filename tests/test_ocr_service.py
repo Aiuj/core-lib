@@ -277,7 +277,9 @@ class TestEnrichedMode:
         call_args = mock_client.chat.call_args
         messages = call_args[1].get("messages") or call_args[0][0]
         prompt_text = messages[0]["content"][1]["text"]
-        assert "Extract all text content" in prompt_text
+        assert "document OCR engine" in prompt_text
+        assert "[illegible]" in prompt_text
+        assert "Do not summarize" in prompt_text
         assert "## Description" not in prompt_text
 
     def test_enriched_cache_key_differs_from_standard(self, settings, tiny_image):
