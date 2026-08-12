@@ -43,6 +43,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
+from core_lib.api_utils import WarmupFallbackRouter
 from core_lib.tracing.logger import get_module_logger
 from core_lib.tracing.service_usage import set_intelligence_level, set_llm_selection
 
@@ -160,6 +161,7 @@ class FallbackLLMClient:
         
         # Client cache to avoid recreating clients
         self._client_cache: Dict[str, LLMClient] = {}
+        self._warmup_router = WarmupFallbackRouter()
         
         # Log providers in priority order with their level ranges (skip disabled ones)
         provider_details = []
@@ -202,6 +204,7 @@ class FallbackLLMClient:
         client.last_was_fallback = False
         client.last_attempts = 0
         client._client_cache = {}
+        client._warmup_router = WarmupFallbackRouter()
         client._unconfigured_reason = reason
         logger.warning(
             "Initialized FallbackLLMClient in unconfigured mode: %s",
@@ -228,10 +231,7 @@ class FallbackLLMClient:
         ones just for a warmup check.  Returns False when no provider has been
         contacted yet (warmup is triggered on first connection attempt).
         """
-        for client in self._client_cache.values():
-            if client.is_in_warmup() is True:
-                return True
-        return False
+        return self._warmup_router.any_warming(self._client_cache.items())
 
     def _build_cache_key(self, config: ProviderConfig) -> str:
         """Build a stable cache key for a specific provider configuration.
@@ -434,15 +434,22 @@ class FallbackLLMClient:
         else:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
-        for config, is_fallback in self._iter_providers(level, usage=effective_usage):
+        provider_entries = self._warmup_router.prioritize_recovered(
+            list(self._iter_providers(level, usage=effective_usage)),
+            key=lambda entry: self._build_cache_key(entry[0]),
+            provider=lambda entry: self._get_client(entry[0]),
+        )
+
+        for config, is_fallback in provider_entries:
             provider_id = config.name or f"{config.provider}:{config.model}"
+            warmup_key = self._build_cache_key(config)
 
             # Skip providers whose WoL warmup window is still active.
             # After a non-blocking WoL wake the server needs time to power on;
             # we route to secondary providers during this period and return to
             # the main once the window elapses (without marking it unhealthy).
             client = self._get_client(config)
-            if client.is_in_warmup() is True:
+            if self._warmup_router.is_warming(warmup_key, client):
                 logger.info(
                     f"Skipping {provider_id}: WoL warmup in progress — routing to next provider"
                 )
@@ -506,6 +513,7 @@ class FallbackLLMClient:
                     
                     # Success! Mark healthy and record metadata
                     self._health_tracker.mark_healthy(config.provider, config.model)
+                    self._warmup_router.mark_success(warmup_key)
                     
                     self.last_used_provider = config.provider
                     self.last_used_model = config.model
@@ -577,7 +585,9 @@ class FallbackLLMClient:
                     # we don't permanently demote it in the health tracker.
                     if retry == self._max_retries - 1:
                         client_for_wol_check = self._get_client(config)
-                        if client_for_wol_check.is_in_warmup() is True:
+                        if self._warmup_router.is_warming(
+                            warmup_key, client_for_wol_check
+                        ):
                             logger.info(
                                 f"{provider_id} is in WoL warmup — skipping health demotion; "
                                 f"will retry after warmup window"

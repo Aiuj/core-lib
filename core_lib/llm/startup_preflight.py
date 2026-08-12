@@ -120,7 +120,7 @@ def _run_static_checks(providers: Iterable) -> int:
     return warnings
 
 
-def _probe_provider(provider) -> str | None:
+def _probe_provider(provider, *, allow_wol: bool = True) -> str | None:
     """Probe a single provider/model.
 
     Returns None on success, otherwise a short error string.
@@ -133,8 +133,13 @@ def _probe_provider(provider) -> str | None:
         probe_config = provider
         try:
             import dataclasses as _dc
+            replacements = {}
             if not getattr(provider, "max_tokens", None):
-                probe_config = _dc.replace(provider, max_tokens=32)
+                replacements["max_tokens"] = 32
+            if not allow_wol and hasattr(provider, "wake_on_lan"):
+                replacements["wake_on_lan"] = {"enabled": False}
+            if replacements:
+                probe_config = _dc.replace(provider, **replacements)
         except Exception:
             pass  # dataclasses.replace failed (e.g. not a dataclass); use original
 
@@ -341,12 +346,17 @@ def check_llm_providers_health(
     providers: Iterable | None = None,
     *,
     wait_for_wol: bool = False,
+    enable_wol: bool | None = None,
 ) -> List[ProviderHealthResult]:
     """Probe every configured LLM provider and return per-provider health results.
 
     This is a **synchronous** function suitable for REST health endpoints.  It
     runs probes sequentially; each probe sends a single minimal chat message to
     the provider and records latency + any error.
+
+    By default, a non-waiting health check does not trigger Wake-on-LAN.  Use
+    ``enable_wol=True, wait_for_wol=False`` to explicitly request non-blocking
+    wakeup behavior.
 
     Args:
         providers: Optional iterable of ``ProviderConfig`` objects.  When
@@ -362,6 +372,9 @@ def check_llm_providers_health(
         A list of :class:`ProviderHealthResult` — one per configured provider
         entry, sorted by priority ascending.
     """
+    if enable_wol is None:
+        enable_wol = wait_for_wol
+
     if providers is None:
         try:
             registry = ProviderRegistry.from_env()
@@ -377,7 +390,7 @@ def check_llm_providers_health(
 
     for provider in configured:
         start = time.monotonic()
-        error = _probe_provider(provider)
+        error = _probe_provider(provider, allow_wol=enable_wol)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         resolved_url, resolved_region = _resolve_provider_endpoint_and_region(provider)
         project, credential_project, service_account_email, credential_type = (
@@ -429,7 +442,7 @@ def check_llm_providers_health(
 
         for provider, _warmup, idx in wol_retry_candidates:
             start = time.monotonic()
-            error = _probe_provider(provider)
+            error = _probe_provider(provider, allow_wol=enable_wol)
             elapsed_ms = round((time.monotonic() - start) * 1000, 1)
             resolved_url, resolved_region = _resolve_provider_endpoint_and_region(
                 provider

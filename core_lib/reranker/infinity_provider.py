@@ -117,6 +117,10 @@ class InfinityRerankerClient(BaseRerankerClient):
         """Compatibility alias for the currently selected Infinity server."""
         return self._last_used_url
 
+    def is_in_warmup(self) -> bool:
+        """Return whether non-blocking WoL or wakeup-service warmup is active."""
+        return self._api_client.is_in_warmup()
+
     def _rerank_raw(
         self,
         query: str,

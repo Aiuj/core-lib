@@ -37,12 +37,14 @@ def _close_client(client) -> None:
             pass
 
 
-def _probe_single_provider(config: dict) -> str | None:
+def _probe_single_provider(config: dict, *, allow_wol: bool = True) -> str | None:
     client = None
     try:
         provider = config.get("provider")
         model = config.get("model")
         kwargs = {k: v for k, v in config.items() if k not in {"provider", "model"}}
+        if not allow_wol:
+            kwargs["wake_on_lan"] = {"enabled": False}
         client = EmbeddingFactory.create(provider=provider, model=model, **kwargs)
         # Health probes must reach the provider.  Fixed probe text would
         # otherwise be served from the shared embeddings cache, reporting a
@@ -64,7 +66,7 @@ def _probe_single_provider(config: dict) -> str | None:
             _close_client(client)
 
 
-def _config_from_settings(settings: EmbeddingsSettings) -> dict:
+def _config_from_settings(settings: EmbeddingsSettings, *, allow_wol: bool = True) -> dict:
     config = {
         "provider": settings.provider,
         "model": settings.model,
@@ -98,6 +100,12 @@ def _config_from_settings(settings: EmbeddingsSettings) -> dict:
             config["token"] = settings.infinity_token
         if settings.infinity_wake_on_lan:
             config["wake_on_lan"] = settings.infinity_wake_on_lan
+    elif settings.provider == "tei":
+        if settings.base_url:
+            config["base_url"] = settings.base_url
+        config["timeout"] = settings.timeout
+        if settings.infinity_token:
+            config["token"] = settings.infinity_token
     elif settings.provider == "ollama":
         if settings.ollama_url:
             config["base_url"] = settings.ollama_url
@@ -112,11 +120,15 @@ def _config_from_settings(settings: EmbeddingsSettings) -> dict:
         config["trust_remote_code"] = settings.trust_remote_code
         config["use_sentence_transformers"] = settings.use_sentence_transformers
 
+    if not allow_wol:
+        config["wake_on_lan"] = {"enabled": False}
     return config
 
 
 def check_embedding_providers_health(
     provider_configs: Iterable[dict] | None = None,
+    *,
+    allow_wol: bool = True,
 ) -> List[EmbeddingProviderHealthResult]:
     """Probe configured embedding providers and return per-provider health results."""
     if provider_configs is None:
@@ -129,7 +141,10 @@ def check_embedding_providers_health(
         provider_configs = list(getattr(settings, "provider_configs", ()) or ())
         if not provider_configs:
             start = time.monotonic()
-            error = _probe_single_provider(_config_from_settings(settings))
+            error = _probe_single_provider(
+                _config_from_settings(settings, allow_wol=allow_wol),
+                allow_wol=allow_wol,
+            )
             elapsed_ms = round((time.monotonic() - start) * 1000, 1)
             resolved_url = settings.base_url or settings.infinity_url or settings.ollama_url or settings.ollama_host or None
             return [
@@ -150,7 +165,7 @@ def check_embedding_providers_health(
 
     for raw_config, config in zip(raw_configs, sanitized_configs):
         start = time.monotonic()
-        error = _probe_single_provider(config)
+        error = _probe_single_provider(config, allow_wol=allow_wol)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         resolved_url = (
             config.get("base_url")

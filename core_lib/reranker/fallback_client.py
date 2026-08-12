@@ -19,6 +19,7 @@ import hashlib
 
 from .base import BaseRerankerClient, RerankerError, RerankResult
 from .factory import RerankerFactory
+from core_lib.api_utils import WarmupFallbackRouter
 from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
@@ -100,6 +101,7 @@ class FallbackRerankerClient(BaseRerankerClient):
         self.health_check_interval = health_check_interval
         self.use_health_cache = use_health_cache
         self._last_health_check: Dict[int, float] = {}
+        self._warmup_router = WarmupFallbackRouter()
         self._cache_instance = None
         
         # Generate unique identifier for this fallback client config
@@ -195,7 +197,7 @@ class FallbackRerankerClient(BaseRerankerClient):
             except Exception as e:
                 logger.debug(f"Could not get preferred provider: {e}")
         return None
-    
+
     def _rerank_raw(
         self,
         query: str,
@@ -206,10 +208,29 @@ class FallbackRerankerClient(BaseRerankerClient):
         errors = []
         start_idx = self._get_preferred_provider_index() or self.current_provider_index
         
-        # Try each provider in turn
-        for attempt in range(len(self.providers)):
-            provider_idx = (start_idx + attempt) % len(self.providers)
+        ordered_indices = self._warmup_router.prioritize_recovered(
+            [
+                (start_idx + attempt) % len(self.providers)
+                for attempt in range(len(self.providers))
+            ],
+            key=lambda idx: idx,
+            provider=lambda idx: self.providers[idx],
+        )
+
+        # Try each provider in turn, retrying a primary whose warmup just ended.
+        tried_providers = set()
+        for provider_idx in ordered_indices:
+            if provider_idx in tried_providers:
+                continue
+            tried_providers.add(provider_idx)
             provider = self.providers[provider_idx]
+
+            if self._warmup_router.is_warming(provider_idx, provider):
+                logger.debug(
+                    f"Skipping reranker provider {provider_idx} "
+                    "(WoL warmup in progress)"
+                )
+                continue
             
             # Check if we should retry this provider
             if self.provider_failures.get(provider_idx, 0) >= self.max_retries_per_provider:
@@ -235,6 +256,7 @@ class FallbackRerankerClient(BaseRerankerClient):
                 self.provider_failures[provider_idx] = 0
                 self.provider_overloads[provider_idx] = 0
                 self._mark_provider_healthy(provider_idx)
+                self._warmup_router.mark_success(provider_idx)
                 
                 logger.debug(
                     f"Reranking succeeded with provider {provider_idx} "
@@ -246,23 +268,29 @@ class FallbackRerankerClient(BaseRerankerClient):
             except RerankerError as e:
                 error_msg = f"Provider {provider_idx} failed: {e}"
                 errors.append(error_msg)
-                logger.warning(error_msg)
-                
-                # Track failure
-                self.provider_failures[provider_idx] = self.provider_failures.get(provider_idx, 0) + 1
-                self._mark_provider_unhealthy(provider_idx)
-                
-                # Check if this looks like temporary overload
-                if any(code in str(e) for code in ['503', '429', 'timeout', 'overload']):
-                    self.provider_overloads[provider_idx] = self.provider_overloads.get(provider_idx, 0) + 1
-                    logger.debug(f"Provider {provider_idx} appears overloaded")
+                if self._warmup_router.is_warming(provider_idx, provider):
+                    logger.debug(
+                        f"Reranker provider {provider_idx} fired WoL; "
+                        "routing to the next provider"
+                    )
+                else:
+                    logger.warning(error_msg)
+                    self.provider_failures[provider_idx] = self.provider_failures.get(provider_idx, 0) + 1
+                    self._mark_provider_unhealthy(provider_idx)
+
+                    if any(code in str(e) for code in ['503', '429', 'timeout', 'overload']):
+                        self.provider_overloads[provider_idx] = self.provider_overloads.get(provider_idx, 0) + 1
+                        logger.debug(f"Provider {provider_idx} appears overloaded")
                 
             except Exception as e:
                 error_msg = f"Provider {provider_idx} unexpected error: {e}"
                 errors.append(error_msg)
-                logger.error(error_msg)
-                self.provider_failures[provider_idx] = self.provider_failures.get(provider_idx, 0) + 1
-                self._mark_provider_unhealthy(provider_idx)
+                if self._warmup_router.is_warming(provider_idx, provider):
+                    logger.debug(error_msg)
+                else:
+                    logger.error(error_msg)
+                    self.provider_failures[provider_idx] = self.provider_failures.get(provider_idx, 0) + 1
+                    self._mark_provider_unhealthy(provider_idx)
         
         # All providers failed
         if self.fail_on_all_providers:

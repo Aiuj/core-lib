@@ -145,7 +145,7 @@ class EmbeddingsSettings(BaseSettings):
                     entry["task_type"] = config.get("task_type")
                 if config.get("title"):
                     entry["title"] = config.get("title")
-            elif provider == "infinity":
+            elif provider in {"infinity", "tei"}:
                 token = (
                     config.get("token")
                     or config.get("infinity_token")
@@ -196,11 +196,20 @@ class EmbeddingsSettings(BaseSettings):
             EnvParser.get_env("INFINITY_BASE_URL") or 
             embedding_base_url
         )
-        infinity_token = EnvParser.get_env("INFINITY_TOKEN") or EnvParser.get_env("EMBEDDING_TOKEN")
+        infinity_token = (
+            EnvParser.get_env("TEI_TOKEN")
+            if str(provider).strip().lower() == "tei"
+            else EnvParser.get_env("INFINITY_TOKEN")
+        ) or EnvParser.get_env("EMBEDDING_TOKEN")
         openai_base_url = (
             EnvParser.get_env("OPENAI_BASE_URL") or 
             EnvParser.get_env("BASE_URL") or 
             embedding_base_url
+        )
+        provider_base_url = (
+            EnvParser.get_env("TEI_BASE_URL")
+            if str(provider).strip().lower() == "tei"
+            else openai_base_url
         )
         
         config_file = (
@@ -218,7 +227,7 @@ class EmbeddingsSettings(BaseSettings):
             "title": EnvParser.get_env("EMBEDDING_TITLE"),
             "timeout": embedding_timeout,
             "api_key": EnvParser.get_env("OPENAI_API_KEY", "API_KEY"),
-            "base_url": openai_base_url,
+            "base_url": provider_base_url,
             "organization": EnvParser.get_env("OPENAI_ORGANIZATION"),
             "project": EnvParser.get_env("OPENAI_PROJECT"),
             "google_api_key": EnvParser.get_env("GOOGLE_GENAI_API_KEY", "GEMINI_API_KEY"),
@@ -263,7 +272,7 @@ class EmbeddingsSettings(BaseSettings):
             if selected.get("base_url"):
                 if settings_dict["provider"] == "infinity":
                     settings_dict["infinity_url"] = selected.get("base_url")
-                elif settings_dict["provider"] in {"openai", "deepinfra"}:
+                elif settings_dict["provider"] in {"openai", "deepinfra", "tei"}:
                     settings_dict["base_url"] = selected.get("base_url")
                 elif settings_dict["provider"] == "ollama":
                     settings_dict["ollama_url"] = selected.get("base_url")

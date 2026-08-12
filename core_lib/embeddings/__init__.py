@@ -7,6 +7,7 @@ It includes a provider-agnostic `BaseEmbeddingClient` and implementations for:
 - Ollama (local models)
 - Local HuggingFace models (sentence-transformers, transformers)
 - Infinity (high-throughput local embedding server)
+- Hugging Face TEI (Text Embeddings Inference)
 
 Example usage:
     # Simple auto-detection from environment
@@ -57,6 +58,7 @@ from .factory import (
     create_ollama_client,
     create_local_client,
     create_infinity_client,
+    create_tei_client,
     get_embedding_client,  # Legacy function
 )
 from .health_probe import (
@@ -87,6 +89,12 @@ except ImportError:
 try:
     from .infinity_provider import InfinityEmbeddingClient
     __all_providers__.append("InfinityEmbeddingClient")
+except ImportError:
+    pass
+
+try:
+    from .tei_provider import TEIEmbeddingClient
+    __all_providers__.append("TEIEmbeddingClient")
 except ImportError:
     pass
 
@@ -141,5 +149,6 @@ __all__ = [
     "create_ollama_client",
     "create_local_client",
     "create_infinity_client",
+    "create_tei_client",
     "get_embedding_client",
 ] + __all_providers__

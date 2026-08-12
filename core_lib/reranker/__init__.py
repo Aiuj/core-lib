@@ -3,6 +3,7 @@
 This package provides a stable public API for reranking search results with multiple providers.
 It includes a provider-agnostic `BaseRerankerClient` and implementations for:
 - Infinity (high-throughput local reranking server - default)
+- Hugging Face TEI (Text Embeddings Inference)
 - Cohere (cloud-based reranking API)
 - Local cross-encoder models (sentence-transformers)
 
@@ -52,6 +53,13 @@ except ImportError:
     _vllm_available = False
 
 try:
+    from .tei_provider import TEIRerankerClient
+    _tei_available = True
+except ImportError:
+    TEIRerankerClient = None
+    _tei_available = False
+
+try:
     from .cohere_provider import CohereRerankerClient
     _cohere_available = True
 except ImportError:
@@ -87,6 +95,7 @@ from .factory import (
     create_client_from_env,
     create_infinity_reranker,
     create_vllm_reranker,
+    create_tei_reranker,
     create_cohere_reranker,
     create_local_reranker,
     create_fallback_reranker,
@@ -119,6 +128,7 @@ __all__ = [
     "check_reranker_providers_health",
     "create_infinity_reranker",
     "create_vllm_reranker",
+    "create_tei_reranker",
     "create_cohere_reranker",
     "create_local_reranker",
     "create_fallback_reranker",
@@ -131,6 +141,8 @@ if _infinity_available:
     __all__.append("InfinityRerankerClient")
 if _vllm_available:
     __all__.append("VLLMRerankerClient")
+if _tei_available:
+    __all__.append("TEIRerankerClient")
 if _cohere_available:
     __all__.append("CohereRerankerClient")
 if _local_available:

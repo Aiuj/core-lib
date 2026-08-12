@@ -128,6 +128,7 @@ def check_providers_health(
     *,
     check_llm: bool = True,
     wait_for_wol: bool = False,
+    enable_wol: Optional[bool] = None,
     probe_embeddings: Optional[bool] = None,
     probe_rerankers: Optional[bool] = None,
     llm_providers_file: Optional[str] = None,
@@ -142,6 +143,10 @@ def check_providers_health(
         Passed through to :func:`check_llm_providers_health`.  When *True*
         the probe waits for Wake-on-LAN warmup before declaring a sleeping
         host as degraded.
+    enable_wol:
+        Whether provider probes may trigger Wake-on-LAN or a configured
+        wakeup service.  If omitted, it follows ``wait_for_wol``.  Set it to
+        ``True`` while keeping ``wait_for_wol=False`` for non-blocking wakeup.
     probe_embeddings:
         Whether to probe embedding providers.  *None* (default) means
         auto-detect from ``llm_providers_file``; *True*/*False* overrides.
@@ -167,6 +172,9 @@ def check_providers_health(
     if not check_llm:
         return {}
 
+    if enable_wol is None:
+        enable_wol = wait_for_wol
+
     # Resolve optional providers file for auto-detection
     resolved_file = llm_providers_file or os.environ.get("LLM_PROVIDERS_FILE")
 
@@ -183,14 +191,17 @@ def check_providers_health(
     try:
         from core_lib.llm import check_llm_providers_health
 
-        llm_results = check_llm_providers_health(wait_for_wol=wait_for_wol)
+        llm_results = check_llm_providers_health(
+            wait_for_wol=wait_for_wol,
+            enable_wol=enable_wol,
+        )
         components["llm_providers"] = _build_llm_section(llm_results)
 
         if probe_embeddings:
             try:
                 from core_lib.embeddings import check_embedding_providers_health
 
-                embedding_results = check_embedding_providers_health()
+                embedding_results = check_embedding_providers_health(allow_wol=enable_wol)
                 components["embedding_providers"] = _build_embedding_section(embedding_results)
             except Exception as exc:
                 components["embedding_providers"] = {"healthy": False, "error": str(exc)}
@@ -201,7 +212,7 @@ def check_providers_health(
             try:
                 from core_lib.reranker import check_reranker_providers_health
 
-                reranker_results = check_reranker_providers_health()
+                reranker_results = check_reranker_providers_health(allow_wol=enable_wol)
                 components["reranker_providers"] = _build_reranker_section(reranker_results)
             except Exception as exc:
                 components["reranker_providers"] = {"healthy": False, "error": str(exc)}

@@ -108,7 +108,7 @@ class RerankerSettings(BaseSettings):
                 api_key = config.get("api_key") or config.get("key") or defaults.get("api_key")
                 if api_key:
                     entry["api_key"] = api_key
-            elif provider in {"infinity", "vllm", "deepinfra"}:
+            elif provider in {"infinity", "vllm", "tei", "deepinfra"}:
                 token = (
                     config.get("token")
                     or config.get("api_key")
@@ -188,11 +188,18 @@ class RerankerSettings(BaseSettings):
         usage = EnvParser.get_env("RERANKER_USAGE")
         
         # Get Infinity URL - check reranker-specific first, then general
-        infinity_url = (
-            EnvParser.get_env("INFINITY_RERANK_URL") or
-            EnvParser.get_env("INFINITY_BASE_URL") or
-            EnvParser.get_env("RERANKER_BASE_URL")
-        )
+        if provider == "tei":
+            infinity_url = (
+                EnvParser.get_env("TEI_RERANK_URL") or
+                EnvParser.get_env("TEI_BASE_URL") or
+                EnvParser.get_env("RERANKER_BASE_URL")
+            )
+        else:
+            infinity_url = (
+                EnvParser.get_env("INFINITY_RERANK_URL") or
+                EnvParser.get_env("INFINITY_BASE_URL") or
+                EnvParser.get_env("RERANKER_BASE_URL")
+            )
         
         # Get timeout
         timeout = EnvParser.get_env("RERANKER_TIMEOUT", env_type=int, default=30)
@@ -210,17 +217,26 @@ class RerankerSettings(BaseSettings):
                 ),
             }
 
+        if provider == "deepinfra":
+            provider_token = EnvParser.get_env("DEEPINFRA_API_KEY")
+        elif provider == "tei":
+            provider_token = (
+                EnvParser.get_env("TEI_TOKEN")
+                or EnvParser.get_env("RERANKER_TOKEN")
+            )
+        else:
+            provider_token = (
+                EnvParser.get_env("INFINITY_TOKEN")
+                or EnvParser.get_env("RERANKER_TOKEN")
+            )
+
         settings_dict = {
             "provider": provider,
             "model": model,
             "api_key": EnvParser.get_env("COHERE_API_KEY"),
             "infinity_url": infinity_url,
             "infinity_timeout": infinity_timeout,
-            "infinity_token": (
-                EnvParser.get_env("DEEPINFRA_API_KEY")
-                or EnvParser.get_env("INFINITY_TOKEN")
-                or EnvParser.get_env("RERANKER_TOKEN")
-            ),
+            "infinity_token": provider_token,
             "infinity_wake_on_lan": None,
             "infinity_wakeup_service": infinity_wakeup_service,
             "cloudflare_account_id": EnvParser.get_env("CLOUDFLARE_ACCOUNT_ID"),

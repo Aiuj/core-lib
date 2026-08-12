@@ -215,6 +215,10 @@ class BaseRerankerClient:
         """Optional health check. Return True if service reachable."""
         return True
 
+    def is_in_warmup(self) -> bool:
+        """Return True while this provider is in a WoL warmup window."""
+        return False
+
     def get_rerank_time_ms(self) -> float:
         """Get the time taken for the last rerank operation in milliseconds."""
         return self.rerank_time_ms

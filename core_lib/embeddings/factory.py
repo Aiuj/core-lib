@@ -46,6 +46,13 @@ except ImportError:
     _infinity_available = False
 
 try:
+    from .tei_provider import TEIEmbeddingClient
+    _tei_available = True
+except ImportError:
+    TEIEmbeddingClient = None
+    _tei_available = False
+
+try:
     from .cloudflare_provider import CloudflareEmbeddingClient
     _cloudflare_available = True
 except ImportError:
@@ -118,6 +125,14 @@ class EmbeddingFactory:
             )
         elif provider == "infinity":
             return cls.infinity(
+                model=model,
+                embedding_dim=embedding_dim,
+                use_l2_norm=use_l2_norm,
+                norm_method=norm_method,
+                **kwargs
+            )
+        elif provider == "tei":
+            return cls.tei(
                 model=model,
                 embedding_dim=embedding_dim,
                 use_l2_norm=use_l2_norm,
@@ -350,6 +365,32 @@ class EmbeddingFactory:
                                          norm_method=norm_method, **kwargs)
 
     @classmethod
+    def tei(
+        cls,
+        model: Optional[str] = None,
+        embedding_dim: Optional[int] = None,
+        use_l2_norm: bool = True,
+        norm_method: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+        **kwargs
+    ) -> BaseEmbeddingClient:
+        """Create a Hugging Face TEI embedding client."""
+        if not _tei_available or TEIEmbeddingClient is None:
+            raise ImportError(
+                "TEI embedding provider not available. Install with: pip install requests"
+            )
+        return TEIEmbeddingClient(
+            model=model,
+            embedding_dim=embedding_dim,
+            use_l2_norm=use_l2_norm,
+            norm_method=norm_method,
+            base_url=base_url,
+            timeout=timeout,
+            **kwargs
+        )
+
+    @classmethod
     def from_config(cls, config: Optional[object] = None) -> BaseEmbeddingClient:
         """Create a client from configuration object.
         
@@ -478,6 +519,7 @@ def create_embedding_client(
         provider_name=provider_name,
         provider_env_map={
             "infinity": ["INFINITY_BASE_URL"],
+            "tei": ["TEI_BASE_URL"],
             "ollama": ["OLLAMA_URL"],
             "openai": ["OPENAI_BASE_URL"],
         },
@@ -611,6 +653,15 @@ def create_infinity_client(
         Infinity embedding client instance
     """
     return EmbeddingFactory.infinity(model=model, base_url=base_url, **kwargs)
+
+
+def create_tei_client(
+    model: str = "Qwen/Qwen3-Embedding-0.6B",
+    base_url: Optional[str] = None,
+    **kwargs
+) -> BaseEmbeddingClient:
+    """Create a Hugging Face TEI embedding client."""
+    return EmbeddingFactory.tei(model=model, base_url=base_url, **kwargs)
 
 
 # Legacy function for backward compatibility - now with enhanced capabilities

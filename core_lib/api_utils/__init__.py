@@ -17,6 +17,7 @@ from .api_client import APIClient
 
 # Infinity API client (always available)
 from .infinity_api import InfinityAPIClient, InfinityAPIError
+from .warmup_routing import WarmupFallbackRouter
 
 # JWT authentication (always available)
 from .jwt_auth import (
@@ -138,6 +139,7 @@ __all__ = [
     # Infinity API client
     "InfinityAPIClient",
     "InfinityAPIError",
+    "WarmupFallbackRouter",
     
     # FastMCP integration
     "create_auth_middleware",

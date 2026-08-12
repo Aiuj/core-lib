@@ -35,12 +35,15 @@ def _close_client(client) -> None:
             pass
 
 
-def _probe_single_provider(config: dict) -> str | None:
+def _probe_single_provider(config: dict, *, allow_wol: bool = True) -> str | None:
     client = None
     try:
         provider = config.get("provider")
         model = config.get("model")
         kwargs = {k: v for k, v in config.items() if k not in {"provider", "model"}}
+        if not allow_wol:
+            kwargs["wake_on_lan"] = {"enabled": False}
+            kwargs["wakeup_service"] = {"enabled": False}
         client = RerankerFactory.create(provider=provider, model=model, **kwargs)
         # The probe uses fixed query/documents, so disable the shared cache to
         # ensure every health check makes a real provider request and emits
@@ -62,9 +65,17 @@ def _probe_single_provider(config: dict) -> str | None:
             _close_client(client)
 
 
-def _probe_settings(settings: RerankerSettings) -> str | None:
+def _probe_settings(settings: RerankerSettings, *, allow_wol: bool = True) -> str | None:
     client = None
     try:
+        if not allow_wol:
+            from dataclasses import replace
+
+            settings = replace(
+                settings,
+                infinity_wake_on_lan={"enabled": False},
+                infinity_wakeup_service={"enabled": False},
+            )
         client = RerankerFactory.from_config(settings)
         return None if client.health_check() else "health_check returned False"
     except Exception as exc:
@@ -76,6 +87,8 @@ def _probe_settings(settings: RerankerSettings) -> str | None:
 
 def check_reranker_providers_health(
     provider_configs: Iterable[dict] | None = None,
+    *,
+    allow_wol: bool = True,
 ) -> List[RerankerProviderHealthResult]:
     """Probe configured reranker providers and return per-provider health results."""
     if provider_configs is None:
@@ -88,7 +101,7 @@ def check_reranker_providers_health(
         provider_configs = list(getattr(settings, "provider_configs", ()) or ())
         if not provider_configs:
             start = time.monotonic()
-            error = _probe_settings(settings)
+            error = _probe_settings(settings, allow_wol=allow_wol)
             elapsed_ms = round((time.monotonic() - start) * 1000, 1)
             resolved_url = getattr(settings, "infinity_url", None) or getattr(settings, "base_url", None) or None
             return [
@@ -109,7 +122,7 @@ def check_reranker_providers_health(
 
     for raw_config, config in zip(raw_configs, sanitized_configs):
         start = time.monotonic()
-        error = _probe_single_provider(config)
+        error = _probe_single_provider(config, allow_wol=allow_wol)
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)
         resolved_url = (
             config.get("base_url")

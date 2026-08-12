@@ -31,6 +31,13 @@ except ImportError:
     _vllm_available = False
 
 try:
+    from .tei_provider import TEIRerankerClient
+    _tei_available = True
+except ImportError:
+    TEIRerankerClient = None
+    _tei_available = False
+
+try:
     from .cohere_provider import CohereRerankerClient
     _cohere_available = True
 except ImportError:
@@ -87,6 +94,8 @@ class RerankerFactory:
             return cls.infinity(model=model, **kwargs)
         elif provider == "vllm":
             return cls.vllm(model=model, **kwargs)
+        elif provider == "tei":
+            return cls.tei(model=model, **kwargs)
         elif provider == "deepinfra":
             return cls.deepinfra(model=model, **kwargs)
         elif provider == "cloudflare":
@@ -125,6 +134,28 @@ class RerankerFactory:
             )
 
         return InfinityRerankerClient(
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+            token=token,
+            **kwargs
+        )
+
+    @classmethod
+    def tei(
+        cls,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+        token: Optional[str] = None,
+        **kwargs
+    ) -> BaseRerankerClient:
+        """Create a Hugging Face TEI reranker client."""
+        if not _tei_available or TEIRerankerClient is None:
+            raise ImportError(
+                "TEI reranker provider not available. Install with: pip install requests"
+            )
+        return TEIRerankerClient(
             model=model,
             base_url=base_url,
             timeout=timeout,
@@ -354,6 +385,15 @@ def create_vllm_reranker(
 ) -> BaseRerankerClient:
     """Create a reranker using a vLLM pooling server."""
     return RerankerFactory.vllm(model=model, base_url=base_url, **kwargs)
+
+
+def create_tei_reranker(
+    model: str = "Alibaba-NLP/gte-multilingual-reranker-base",
+    base_url: Optional[str] = None,
+    **kwargs,
+) -> BaseRerankerClient:
+    """Create a reranker using a Hugging Face TEI server."""
+    return RerankerFactory.tei(model=model, base_url=base_url, **kwargs)
 
 
 def create_cohere_reranker(
