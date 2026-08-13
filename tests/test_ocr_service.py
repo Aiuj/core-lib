@@ -280,7 +280,20 @@ class TestEnrichedMode:
         assert "document OCR engine" in prompt_text
         assert "[illegible]" in prompt_text
         assert "Do not summarize" in prompt_text
+        assert "small text in corners" in prompt_text
         assert "## Description" not in prompt_text
+
+    def test_enriched_prompt_requires_peripheral_text(self, settings, tiny_image):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"content": "ocr output", "error": None}
+        service = OcrService(settings, vision_llm_client=mock_client)
+
+        service._ocr_via_vision_llm(tiny_image, mime_type="image/png", enrich=True)
+
+        call_args = mock_client.chat.call_args
+        messages = call_args[1].get("messages") or call_args[0][0]
+        prompt_text = messages[0]["content"][0]["text"]
+        assert "small text in corners" in prompt_text
 
     def test_enriched_cache_key_differs_from_standard(self, settings, tiny_image):
         """Enriched and standard cache keys must differ for the same image."""

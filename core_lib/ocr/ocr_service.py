@@ -301,9 +301,15 @@ class OcrService:
     # Vision LLM fallback
     # ------------------------------------------------------------------
 
+    # Included in cache keys so prompt improvements cannot reuse incomplete OCR
+    # produced by an older transcription policy.
+    _OCR_PROMPT_VERSION = "v2-peripheral-text"
+
     _OCR_ONLY_PROMPT = (
         "You are a document OCR engine. Transcribe every visible character from "
-        "the image accurately and in natural reading order. Do not summarize, "
+        "the image accurately and in natural reading order. Scan the entire canvas, "
+        "including small text in corners, margins, headers, footers, captions, and "
+        "labels outside the main content blocks. Do not summarize, "
         "translate, explain, correct, or invent text. Preserve headings, paragraphs, "
         "lists, footnotes, labels, and page numbers as clean markdown. Reconstruct "
         "tables as markdown tables without dropping rows or columns. Render formulas "
@@ -322,6 +328,8 @@ class OcrService:
         "List 5-10 relevant keywords as a comma-separated list.\n\n"
         "## Text Content\n"
         "Extract all readable text in natural reading order exactly as it appears. "
+        "Scan the entire canvas and do not omit small text in corners, margins, "
+        "headers, footers, captions, or labels outside the main content blocks. "
         "Use markdown tables for tabular data, output formulas as LaTeX, and write "
         "[illegible] rather than guessing uncertain text. If there is no text, write 'None'.\n\n"
         "Do not include any other commentary. Do not wrap the output in code fences."
@@ -567,7 +575,8 @@ class OcrService:
     @staticmethod
     def _cache_key(img_bytes: bytes, *, enrich: bool = False) -> str:
         """Generate a deterministic cache key from image bytes."""
-        digest = hashlib.sha256(img_bytes).hexdigest()
+        versioned = OcrService._OCR_PROMPT_VERSION.encode("utf-8") + b"\0" + img_bytes
+        digest = hashlib.sha256(versioned).hexdigest()
         prefix = "ocr-enriched" if enrich else "ocr"
         return f"{prefix}:{digest}"
 
