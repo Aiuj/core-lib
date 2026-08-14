@@ -41,6 +41,56 @@ def test_setup_logging_basic(tmp_path: Path):
     assert "info message" in content
 
 
+def test_setup_logging_isolates_explicit_path_by_script(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("sys.argv", ["worker.py"])
+    base_log_file = tmp_path / "mcp-doc-qa.log"
+
+    setup_logging(file_logging=True, file_path=str(base_log_file), force=True)
+
+    expected_log_file = tmp_path / "mcp-doc-qa-worker.log"
+    cfg = get_last_logging_config()
+    assert cfg["service_name"] == "worker"
+    assert cfg["file_path"] == str(expected_log_file)
+    assert expected_log_file.exists()
+    assert not base_log_file.exists()
+
+
+def test_setup_logging_derives_default_path_without_new_environment(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("sys.argv", ["worker.py"])
+    monkeypatch.delenv("LOG_FILE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    setup_logging(app_name="mcp-doc-qa", file_logging=True, force=True)
+
+    expected_log_file = tmp_path / "logs" / "mcp-doc-qa-worker.log"
+    cfg = get_last_logging_config()
+    assert cfg["service_name"] == "worker"
+    assert cfg["file_path"] == os.path.join("logs", "mcp-doc-qa-worker.log")
+    assert expected_log_file.exists()
+
+
+def test_setup_logging_supports_inferred_service_path_template(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("sys.argv", ["gunicorn", "src.unified_server:app"])
+    path_template = str(tmp_path / "{service_name}" / "application.log")
+
+    setup_logging(file_logging=True, file_path=path_template, force=True)
+
+    expected_log_file = tmp_path / "unified-server" / "application.log"
+    cfg = get_last_logging_config()
+    assert cfg["file_path"] == str(expected_log_file)
+    assert expected_log_file.exists()
+
+
+def test_setup_logging_preserves_explicit_path_without_detectable_service(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("sys.argv", ["pytest"])
+    log_file = tmp_path / "shared.log"
+
+    setup_logging(file_logging=True, file_path=str(log_file), force=True)
+
+    assert get_last_logging_config()["file_path"] == str(log_file)
+    assert log_file.exists()
+
+
 def test_get_module_logger_does_not_initialize_again():
     # Calling get_module_logger should not reconfigure handlers
     before = len(logging.getLogger().handlers)

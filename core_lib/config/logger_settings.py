@@ -12,7 +12,8 @@ Environment Variables:
     LOG_LEVEL: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     LOG_CONSOLE_COLORS: Enable ANSI colors for console logs (true/false). Defaults to auto-detect on TTY.
     LOG_FILE_ENABLED: Enable file logging (true/false)
-    LOG_FILE_PATH: Path to log file (default: logs/<app_name>.log)
+    LOG_FILE_PATH: Base path to log file (default: logs/<app_name>.log). The
+        automatically detected service name is appended when available.
     LOG_FILE_MAX_BYTES: Max file size before rotation (default: 1048576)
     LOG_FILE_BACKUP_COUNT: Number of backup files (default: 3)
     

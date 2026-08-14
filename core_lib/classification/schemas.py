@@ -140,6 +140,30 @@ class DocumentClassificationResult(BaseModel):
         default="unknown",
         description="How questions and answers are paired when content_structure is qa_pairs or mixed",
     )
+    prospect_document_type: Optional[Literal[
+        "requirements_specification",
+        "project_description",
+        "rfx_instructions",
+        "evaluation_criteria",
+        "technical_requirements",
+        "security_requirements",
+        "commercial_terms",
+        "contractual_terms",
+        "implementation_timeline",
+        "other",
+    ]] = Field(
+        default=None,
+        description=(
+            "Dominant buyer/prospect RFx package type, or null when the document "
+            "is not clearly prospect-supplied RFx material"
+        ),
+    )
+    prospect_document_type_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in prospect_document_type",
+    )
 
     def to_topic_profile(self, language: str = "unknown") -> TopicProfile:
         return TopicProfile(

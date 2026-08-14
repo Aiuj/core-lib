@@ -54,6 +54,8 @@ class TestDocumentClassificationResultSchema:
         assert result.content_structure == "unknown"
         assert result.structure_confidence == 0.0
         assert result.pairing_pattern == "unknown"
+        assert result.prospect_document_type is None
+        assert result.prospect_document_type_confidence == 0.0
 
     def test_structure_fields_are_topic_independent(self):
         result = _make_result(
@@ -64,6 +66,19 @@ class TestDocumentClassificationResultSchema:
         assert result.category_id == VALID_CATEGORY_KEY
         assert result.content_structure == "qa_pairs"
         assert result.structure_confidence == 0.94
+
+    def test_prospect_rfx_type_is_validated(self):
+        result = _make_result(
+            prospect_document_type="requirements_specification",
+            prospect_document_type_confidence=0.96,
+        )
+        assert result.prospect_document_type == "requirements_specification"
+        assert result.prospect_document_type_confidence == 0.96
+
+    def test_invalid_prospect_rfx_type_is_rejected(self):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            _make_result(prospect_document_type="random_document")
 
     def test_default_detection_method_is_llm(self):
         result = DocumentClassificationResult(
@@ -189,6 +204,8 @@ class TestDocumentClassifierClassifyHappyPath:
             primary_topics=["REST APIs"],
             product_areas=["Developer platform"],
             capabilities=["API integration"],
+            prospect_document_type="technical_requirements",
+            prospect_document_type_confidence=0.82,
         )
         clf = self._classifier_with_result(expected)
         result = clf.classify(filename="api_guide.pdf", content_excerpt="REST endpoints")
@@ -196,6 +213,8 @@ class TestDocumentClassifierClassifyHappyPath:
         assert result.description == "A detailed API reference guide."
         assert result.alternative_categories == alts
         assert result.primary_topics == ["REST APIs"]
+        assert result.prospect_document_type == "technical_requirements"
+        assert result.prospect_document_type_confidence == 0.82
 
     def test_retries_once_when_scope_terms_are_missing(self):
         initial = _make_result(
@@ -257,6 +276,8 @@ class TestDocumentClassifierCategoryValidation:
             confidence=0.65,
             reasoning="some reasoning",
             description="some description",
+            prospect_document_type="requirements_specification",
+            prospect_document_type_confidence=0.91,
         )
         clf = DocumentClassifier()
         clf._client = _mock_client(bad_result)
@@ -266,6 +287,8 @@ class TestDocumentClassifierCategoryValidation:
         assert result.reasoning == "some reasoning"
         assert result.description == "some description"
         assert result.detection_method == "llm"  # stays llm, not default
+        assert result.prospect_document_type == "requirements_specification"
+        assert result.prospect_document_type_confidence == 0.91
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +378,16 @@ class TestBuildUserMessage:
     def test_excerpt_included(self):
         msg = self._call("doc.pdf", "Annual revenue was $10M")
         assert "Annual revenue was $10M" in msg
+
+    def test_document_role_hint_is_included(self):
+        msg = DocumentClassifier._build_user_message(
+            "requirements.pdf",
+            "Buyer requirements",
+            "en",
+            "pdf",
+            "prospect_context",
+        )
+        assert "document role: prospect_context" in msg
 
     def test_empty_excerpt_replaced_with_placeholder(self):
         msg = self._call("doc.pdf", "")

@@ -16,7 +16,7 @@ Capabilities:
 Environment variables (used only if explicit params not provided):
  LOG_LEVEL                -> root/application log level (default: INFO)
  LOG_FILE_ENABLED=true    -> enable file logging (default: false)
- LOG_FILE_PATH=logs/app.log
+ LOG_FILE_PATH=logs/app.log (the detected service name is appended)
  LOG_FILE_MAX_BYTES=1048576 (1MB default) 
  LOG_FILE_BACKUP_COUNT=3
  OVH_LDP_ENABLED=true     -> enable OVH LDP integration (default: false)
@@ -37,6 +37,7 @@ Notes:
 import logging
 import sys
 import os
+import re
 from typing import Optional, Union, Any
 
 from .machine_identity import resolve_machine_identity
@@ -183,6 +184,91 @@ def _resolve_logger_name(module_name: Optional[str]) -> str:
     return module_name
 
 
+def _sanitize_service_name(service_name: str) -> str:
+    """Return a filesystem-safe service identifier."""
+    normalized = re.sub(r"[^A-Za-z0-9.-]+", "-", service_name.strip().replace("_", "-"))
+    return normalized.strip("-._") or "service"
+
+
+_GENERIC_PROCESS_NAMES = {
+    "-c",
+    "debugpy",
+    "gunicorn",
+    "hypercorn",
+    "py",
+    "pytest",
+    "python",
+    "pythonw",
+    "uvicorn",
+}
+
+
+def _infer_service_name() -> Optional[str]:
+    """Infer a stable service identity from the current process entrypoint.
+
+    ASGI/WSGI launchers retain the application target in ``sys.argv`` (for
+    example ``src.unified_server:app``), while scripts expose their filename as
+    ``sys.argv[0]``. Generic runners are ignored so libraries and tests retain
+    the historical application-level path when no service can be identified.
+    """
+    application_target = re.compile(
+        r"^(?P<module>[A-Za-z_][A-Za-z0-9_.]*):[A-Za-z_][A-Za-z0-9_.]*$"
+    )
+    for argument in reversed(sys.argv[1:]):
+        match = application_target.match(argument.strip())
+        if match:
+            return _sanitize_service_name(match.group("module").rsplit(".", 1)[-1])
+
+    entrypoint = os.path.basename(sys.argv[0]).strip() if sys.argv else ""
+    stem, extension = os.path.splitext(entrypoint)
+    candidate = stem if extension.casefold() in {".py", ".exe"} else entrypoint
+    if candidate == "__main__":
+        main_spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+        module_name = getattr(main_spec, "name", "") or ""
+        module_parts = module_name.split(".")
+        if module_parts and module_parts[-1] == "__main__":
+            module_parts.pop()
+        candidate = module_parts[-1] if module_parts else candidate
+    normalized_candidate = candidate.casefold().replace("_", "-")
+    if candidate and normalized_candidate not in _GENERIC_PROCESS_NAMES:
+        return _sanitize_service_name(candidate)
+
+    return None
+
+
+def _resolve_service_log_path(
+    file_path: Optional[str],
+    *,
+    app_name: str,
+    service_name: Optional[str],
+) -> tuple[str, Optional[str]]:
+    """Resolve a per-service file path without changing legacy defaults.
+
+    An explicitly supplied or automatically inferred service name is appended
+    to configured filenames so independent services never rotate the same file.
+    ``{service_name}`` can be used in ``LOG_FILE_PATH`` for custom layouts.
+    When no service identity can be inferred, existing behavior is retained.
+    """
+    configured_service_name = service_name or _infer_service_name()
+    resolved_path = os.fspath(file_path or os.path.join("logs", f"{app_name}.log"))
+
+    if "{service_name}" in resolved_path:
+        safe_service_name = _sanitize_service_name(configured_service_name or app_name)
+        return resolved_path.replace("{service_name}", safe_service_name), configured_service_name
+
+    # Preserve backward compatibility when the runtime does not expose a
+    # recognizable service identity. Its configured path remains unchanged.
+    if not configured_service_name:
+        return resolved_path, None
+
+    safe_service_name = _sanitize_service_name(configured_service_name)
+    directory, filename = os.path.split(resolved_path)
+    stem, extension = os.path.splitext(filename)
+    if safe_service_name.casefold() not in stem.casefold():
+        filename = f"{stem}-{safe_service_name}{extension}"
+    return os.path.join(directory, filename), configured_service_name
+
+
 def setup_logging(
     app_name: Optional[str] = None,
     app_version: Optional[str] = None,
@@ -193,6 +279,7 @@ def setup_logging(
     *,
     file_logging: Optional[bool] = None,
     file_path: Optional[str] = None,
+    service_name: Optional[str] = None,
     file_max_bytes: Optional[int] = None,
     file_backup_count: Optional[int] = None,
     force: bool = False,
@@ -217,7 +304,10 @@ def setup_logging(
         app_settings: Optional AppSettings instance (used for log level and environment detection).
         logger_settings: Optional LoggerSettings instance with file and OVH LDP configuration.
         file_logging: Explicitly enable/disable file logging (overrides env if not None).
-        file_path: Path to log file (default derived: logs/<app_name>.log).
+        file_path: Base path to the log file. With a service identity, its name
+                   is appended before the extension. Supports ``{service_name}``.
+        service_name: Optional service identity override. By default this is
+                      inferred from the process entrypoint or ASGI/WSGI target.
         file_max_bytes: Rotate at this size (default 1MB or env LOG_FILE_MAX_BYTES).
         file_backup_count: Number of rotated backups to keep (default 3 or env LOG_FILE_BACKUP_COUNT).
         force: If True, reconfigure even if already initialized.
@@ -277,7 +367,13 @@ def setup_logging(
         if logger_settings is not None:
             file_path = getattr(logger_settings, "file_path", None)
         if file_path is None:
-            file_path = os.getenv("LOG_FILE_PATH") or os.path.join("logs", f"{app_name}.log")
+            file_path = os.getenv("LOG_FILE_PATH")
+
+    file_path, configured_service_name = _resolve_service_log_path(
+        file_path,
+        app_name=app_name,
+        service_name=service_name,
+    )
     
     if file_max_bytes is None:
         if logger_settings is not None:
@@ -338,6 +434,7 @@ def setup_logging(
         "console_colors": _should_enable_console_colors(logger_settings, sys.stdout),
         "file_logging": file_logging,
         "file_path": file_path,
+        "service_name": configured_service_name,
         "file_max_bytes": file_max_bytes,
         "file_backup_count": file_backup_count,
         "app_name": app_name,

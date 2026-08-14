@@ -312,10 +312,16 @@ Useful for container deployments where you want to run separate API and MCP cont
 ```bash
 export LOG_LEVEL=INFO                        # Root log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 export LOG_FILE_ENABLED=true                 # Enable file logging
-export LOG_FILE_PATH=logs/app.log            # Log file path
+export LOG_FILE_PATH=logs/app.log            # Base log path; service suffix is automatic
 export LOG_FILE_MAX_BYTES=1048576            # Max file size before rotation (1MB)
 export LOG_FILE_BACKUP_COUNT=3               # Number of backup files
 ```
+
+The logger derives the service name from the script entrypoint or ASGI/WSGI
+application target and appends it automatically. For example, launching
+`src.unified_server:app` with `LOG_FILE_PATH=logs/app.log` produces
+`logs/app-unified-server.log`. For custom layouts, `LOG_FILE_PATH` may contain
+`{service_name}`, for example `logs/{service_name}/app.log`.
 
 ### OTLP (OpenTelemetry) Logging
 

@@ -45,6 +45,19 @@ French, etc.
 - structure_confidence: confidence between 0.0 and 1.0 in content_structure
 - pairing_pattern: exactly one of "alternating_blocks", "table_columns",
   "labeled_fields", "mixed", or "unknown"
+- prospect_document_type: when the document is clearly material supplied by a
+  buyer/prospect as part of an RFx package, classify its dominant purpose as
+  exactly one of "requirements_specification", "project_description",
+  "rfx_instructions", "evaluation_criteria", "technical_requirements",
+  "security_requirements", "commercial_terms", "contractual_terms",
+  "implementation_timeline", or "other". Return null for company-authored
+  knowledge, product documentation, policies, completed answers, and documents
+  that are not clearly buyer/prospect RFx material. A cahier des charges or
+  specification dominated by requested capabilities is
+  "requirements_specification" even when it also contains background,
+  technical, security, evaluation, or timeline sections.
+- prospect_document_type_confidence: confidence between 0.0 and 1.0 in the
+  prospect_document_type; use 0.0 when prospect_document_type is null
 
 `primary_topics` and `capabilities` are required whenever the excerpt contains
 enough information to identify them. Return 1-5 concise terms for each; do not
@@ -91,6 +104,7 @@ class DocumentClassifier:
         content_excerpt: str,
         language: str = "unknown",
         file_type: Optional[str] = None,
+        document_role: Optional[str] = None,
     ) -> DocumentClassificationResult:
         """Classify a document and generate a RAG description.
 
@@ -99,13 +113,16 @@ class DocumentClassifier:
             content_excerpt: Up to 2 000 characters of document content.
             language: ISO language code or 'unknown'.
             file_type: File extension without dot (e.g. 'pdf', 'docx').
+            document_role: Optional usage hint such as ``prospect_context``.
 
         Returns:
             :class:`DocumentClassificationResult` with category, confidence, and description.
             Returns a safe default (category_id='general', confidence=0.0) on any error.
         """
         try:
-            user_message = self._build_user_message(filename, content_excerpt, language, file_type)
+            user_message = self._build_user_message(
+                filename, content_excerpt, language, file_type, document_role
+            )
 
             client = self._get_client()
             response = client.chat(
@@ -152,10 +169,13 @@ class DocumentClassifier:
                     content_structure=result.content_structure,
                     structure_confidence=result.structure_confidence,
                     pairing_pattern=result.pairing_pattern,
+                    prospect_document_type=result.prospect_document_type,
+                    prospect_document_type_confidence=result.prospect_document_type_confidence,
                 )
 
             result = self._enrich_missing_scope_terms(
-                client, result, filename, content_excerpt, language, file_type
+                client, result, filename, content_excerpt, language, file_type,
+                document_role,
             )
 
             return result
@@ -196,6 +216,7 @@ class DocumentClassifier:
         content_excerpt: str,
         language: str,
         file_type: Optional[str],
+        document_role: Optional[str],
     ) -> DocumentClassificationResult:
         """Use one bounded follow-up when a valid classification lacks usable scope."""
         if not result.description or (result.primary_topics and result.capabilities):
@@ -209,7 +230,8 @@ class DocumentClassifier:
                         "role": "user",
                         "content": (
                             self._build_user_message(
-                                filename, content_excerpt, language, file_type
+                                filename, content_excerpt, language, file_type,
+                                document_role,
                             )
                             + "\n\nThe initial classification omitted retrieval scope terms. "
                             "Return the complete JSON again, with at least one concise "
@@ -235,6 +257,8 @@ class DocumentClassifier:
                 content_structure=result.content_structure,
                 structure_confidence=result.structure_confidence,
                 pairing_pattern=result.pairing_pattern,
+                prospect_document_type=result.prospect_document_type,
+                prospect_document_type_confidence=result.prospect_document_type_confidence,
             )
         except Exception as exc:
             logger.warning("Failed to enrich document scope for '%s': %s", filename, exc)
@@ -246,18 +270,23 @@ class DocumentClassifier:
         content_excerpt: str,
         language: str,
         file_type: Optional[str],
+        document_role: Optional[str] = None,
     ) -> str:
         file_info = filename
         if file_type:
             file_info += f" ({file_type.upper()} file)"
         lang_part = f", language: {language}" if language and language != "unknown" else ""
+        role_part = f", document role: {document_role}" if document_role else ""
         excerpt = content_excerpt or "(no content available)"
         lang_reminder = (
             f"\n\nWrite the description in: {language}"
             if language and language != "unknown"
             else "\n\nDetect the language of the content excerpt above and write the description in that same language."
         )
-        return f"Document: {file_info}{lang_part}\n\nContent excerpt:\n{excerpt}{lang_reminder}"
+        return (
+            f"Document: {file_info}{lang_part}{role_part}\n\n"
+            f"Content excerpt:\n{excerpt}{lang_reminder}"
+        )
 
     @staticmethod
     def _default_result() -> DocumentClassificationResult:

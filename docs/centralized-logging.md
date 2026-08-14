@@ -186,8 +186,13 @@ LoggerSettings(
 ```bash
 LOG_LEVEL=INFO              # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FILE_ENABLED=true       # Enable file logging
-LOG_FILE_PATH=logs/app.log  # Log file path
+LOG_FILE_PATH=logs/app.log  # Base path; the service suffix is automatic
 ```
+
+The logger derives the service name from the script entrypoint or ASGI/WSGI
+application target. You can put `{service_name}` in `LOG_FILE_PATH`, such as
+`logs/{service_name}/app.log`, to create per-service directories without any
+additional configuration.
 
 ### OTLP (OpenTelemetry)
 ```bash

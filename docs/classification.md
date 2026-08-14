@@ -70,6 +70,7 @@ class DocumentClassifier:
         content_excerpt: str,
         language: str = "unknown",
         file_type: Optional[str] = None,
+        document_role: Optional[str] = None,
     ) -> DocumentClassificationResult: ...
 ```
 
@@ -89,6 +90,7 @@ The LLM client is initialised lazily on the first `classify()` call.
 | `content_excerpt` | `str` | Up to ~2 000 characters of raw document text. Longer text is truncated by the caller. |
 | `language` | `str` | ISO 639-1 language code (`"en"`, `"fr"`, …) or `"unknown"`. Helps the LLM generate the `description` in the correct language. |
 | `file_type` | `Optional[str]` | File extension without dot (`"pdf"`, `"docx"`, `"xlsx"`, …). Optional — the LLM can often infer type from the filename. |
+| `document_role` | `Optional[str]` | Optional usage hint. Passing `"prospect_context"` helps distinguish buyer RFx material from company-authored knowledge. |
 
 **Returns:** `DocumentClassificationResult`
 
@@ -119,6 +121,13 @@ Pydantic model (`BaseModel`) representing a classification outcome.
 | `description` | `str` | 2–4 sentence semantic summary written in the document's own language. Optimised for RAG retrieval — describes what the document contains and what questions it can answer. |
 | `detection_method` | `Literal["llm", "default"]` | `"llm"` when the LLM produced the result; `"default"` when the fallback was used. |
 | `alternative_categories` | `List[Dict[str, Any]]` | Up to 2 runner-up candidates, each with `"category_id"` and `"confidence"` keys. Empty list when highly confident or on fallback. |
+| `prospect_document_type` | `Optional[str]` | Dominant buyer/prospect RFx package type, or `None` when the document is not clearly prospect RFx material. |
+| `prospect_document_type_confidence` | `float` | Confidence from `0.0` to `1.0`; `0.0` when no prospect type was detected. |
+
+Prospect document type is independent of the general category and content
+structure. For example, a buyer-authored *cahier des charges* can be category
+`sales_rfx`, structure `mixed`, and prospect type
+`requirements_specification` at the same time.
 
 ---
 
