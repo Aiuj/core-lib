@@ -51,6 +51,19 @@ class TestDocumentClassificationResultSchema:
         assert result.detection_method == "llm"
         assert result.alternative_categories == []
         assert result.primary_topics == []
+        assert result.content_structure == "unknown"
+        assert result.structure_confidence == 0.0
+        assert result.pairing_pattern == "unknown"
+
+    def test_structure_fields_are_topic_independent(self):
+        result = _make_result(
+            content_structure="qa_pairs",
+            structure_confidence=0.94,
+            pairing_pattern="alternating_blocks",
+        )
+        assert result.category_id == VALID_CATEGORY_KEY
+        assert result.content_structure == "qa_pairs"
+        assert result.structure_confidence == 0.94
 
     def test_default_detection_method_is_llm(self):
         result = DocumentClassificationResult(

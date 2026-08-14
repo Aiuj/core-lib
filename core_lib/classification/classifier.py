@@ -37,6 +37,14 @@ French, etc.
 - primary_topics: precise open-vocabulary subjects covered by the document
 - product_areas: named products, modules, optional features, or business processes
 - capabilities: concrete capabilities or questions this document can support
+- content_structure: the dominant organization of the content, exactly one of
+  "prose", "qa_pairs", "table", "list", "presentation", "mixed", or "unknown".
+  This is independent of the topic category. Use "qa_pairs" for repeated questions
+  followed by their answers, in any language; use "mixed" when only part of the
+  document follows that pattern.
+- structure_confidence: confidence between 0.0 and 1.0 in content_structure
+- pairing_pattern: exactly one of "alternating_blocks", "table_columns",
+  "labeled_fields", "mixed", or "unknown"
 
 `primary_topics` and `capabilities` are required whenever the excerpt contains
 enough information to identify them. Return 1-5 concise terms for each; do not
@@ -141,6 +149,9 @@ class DocumentClassifier:
                     primary_topics=result.primary_topics,
                     product_areas=result.product_areas,
                     capabilities=result.capabilities,
+                    content_structure=result.content_structure,
+                    structure_confidence=result.structure_confidence,
+                    pairing_pattern=result.pairing_pattern,
                 )
 
             result = self._enrich_missing_scope_terms(
@@ -221,6 +232,9 @@ class DocumentClassifier:
                 primary_topics=result.primary_topics or enriched.primary_topics,
                 product_areas=result.product_areas or enriched.product_areas,
                 capabilities=result.capabilities or enriched.capabilities,
+                content_structure=result.content_structure,
+                structure_confidence=result.structure_confidence,
+                pairing_pattern=result.pairing_pattern,
             )
         except Exception as exc:
             logger.warning("Failed to enrich document scope for '%s': %s", filename, exc)

@@ -122,6 +122,24 @@ class DocumentClassificationResult(BaseModel):
     primary_topics: List[str] = Field(default_factory=list)
     product_areas: List[str] = Field(default_factory=list)
     capabilities: List[str] = Field(default_factory=list)
+    content_structure: Literal[
+        "prose", "qa_pairs", "table", "list", "presentation", "mixed", "unknown"
+    ] = Field(
+        default="unknown",
+        description="Dominant structural organization, independent of topic category",
+    )
+    structure_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in content_structure",
+    )
+    pairing_pattern: Literal[
+        "alternating_blocks", "table_columns", "labeled_fields", "mixed", "unknown"
+    ] = Field(
+        default="unknown",
+        description="How questions and answers are paired when content_structure is qa_pairs or mixed",
+    )
 
     def to_topic_profile(self, language: str = "unknown") -> TopicProfile:
         return TopicProfile(
