@@ -1,3 +1,5 @@
+import time
+
 from core_lib.jobs.base_job_queue import Job, JobStatus
 from core_lib.jobs.job_worker import JobHandler, JobWorker
 
@@ -30,15 +32,29 @@ class _TransientErrorHandler(JobHandler):
         raise RuntimeError("temporary service outage")
 
 
+class _SlowSuccessHandler(JobHandler):
+    def get_job_type(self) -> str:
+        return "slow-success-test"
+
+    def handle(self, job: Job) -> dict:
+        time.sleep(0.04)
+        return {"success": True}
+
+
 class _Queue:
     def __init__(self):
         self.progress_updates = []
+        self.heartbeats = []
         self.completed = []
         self.failed = []
         self.requeued = []
 
     def update_job_progress(self, job_id, progress, message):
         self.progress_updates.append((job_id, progress, message))
+
+    def heartbeat_job(self, job_id):
+        self.heartbeats.append(job_id)
+        return True
 
     def complete_job(self, job_id, result):
         self.completed.append((job_id, result))
@@ -113,3 +129,25 @@ def test_worker_requeues_transient_errors_with_persisted_retry_metadata():
             "Job processing failed: temporary service outage",
         )
     ]
+
+
+def test_worker_refreshes_job_heartbeat_while_handler_runs():
+    queue = _Queue()
+    worker = JobWorker(job_queue=queue, heartbeat_interval=0.005)
+    worker.register_handler(_SlowSuccessHandler())
+    job = Job(
+        job_id="job-heartbeat",
+        job_type="slow-success-test",
+        status=JobStatus.PROCESSING,
+        created_at="2026-08-02T00:00:00Z",
+        updated_at="2026-08-02T00:00:00Z",
+    )
+
+    assert worker._process_job(job) is True
+    assert queue.progress_updates == [(
+        "job-heartbeat",
+        10,
+        "Starting job processing",
+    )]
+    assert len(queue.heartbeats) >= 1
+    assert set(queue.heartbeats) == {"job-heartbeat"}

@@ -204,6 +204,14 @@ class BaseJobQueue(ABC):
             True if updated successfully
         """
         pass
+
+    def heartbeat_job(self, job_id: str) -> bool:
+        """Refresh job liveness without changing status or progress.
+
+        Queue backends predating heartbeats may leave this as the default
+        no-op; workers treat heartbeat updates as best effort.
+        """
+        return False
     
     @abstractmethod
     def complete_job(

@@ -2,6 +2,7 @@
 
 import time
 import signal
+import threading
 from typing import Callable, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
@@ -54,6 +55,7 @@ class JobWorker:
         poll_interval: float = 1.0,
         max_retries: int = 3,
         retry_delay: float = 5.0,
+        heartbeat_interval: float = 30.0,
     ):
         """Initialize job worker.
         
@@ -62,11 +64,14 @@ class JobWorker:
             poll_interval: Seconds to wait between queue polls
             max_retries: Maximum number of retries for failed jobs
             retry_delay: Delay between retries in seconds
+            heartbeat_interval: Seconds between liveness updates while a handler runs.
+                Set to 0 to disable heartbeats.
         """
         self.job_queue = job_queue or get_job_queue()
         self.poll_interval = poll_interval
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.heartbeat_interval = max(0.0, float(heartbeat_interval))
         
         self._handlers: Dict[str, JobHandler] = {}
         self._running = False
@@ -138,12 +143,34 @@ class JobWorker:
         
         logger.info(f"[JobWorker] Processing job {job_id} (type: {job_type})")
         
+        heartbeat_stop: Optional[threading.Event] = None
+        heartbeat_thread: Optional[threading.Thread] = None
         try:
             # Update progress
             self.job_queue.update_job_progress(job_id, 10, "Starting job processing")
+            job.progress = 10
+            job.progress_message = "Starting job processing"
+            if self.heartbeat_interval > 0:
+                heartbeat_stop = threading.Event()
+                heartbeat_thread = threading.Thread(
+                    target=self._heartbeat_job,
+                    args=(job, heartbeat_stop),
+                    name=f"job-heartbeat-{job_id}",
+                    daemon=True,
+                )
+                heartbeat_thread.start()
             
             # Call handler
             result = handler.handle(job)
+
+            # Stop heartbeating before publishing a terminal state. This avoids
+            # a late heartbeat overwriting the final progress value.
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=min(self.heartbeat_interval, 1.0))
+            heartbeat_stop = None
+            heartbeat_thread = None
 
             # Handlers use a structured result for expected processing errors.
             # Treat an explicit failure as a terminal job failure instead of
@@ -179,7 +206,6 @@ class JobWorker:
             )
             self.job_queue.fail_job(job_id, f"Configuration error: {error_msg}")
             return False
-
         except (NameError, AttributeError, KeyError, TypeError, AssertionError) as e:
             # These errors indicate a programming or input-contract defect, not
             # a transient dependency failure. Retrying them only extends the
@@ -193,14 +219,13 @@ class JobWorker:
             )
             self.job_queue.fail_job(job_id, error_msg)
             return False
-            
         except Exception as e:
             error_msg = f"Job processing failed: {str(e)}"
             logger.error(f"[JobWorker] Job {job_id} failed: {error_msg}", exc_info=True)
-            
+
             # Backward compatibility: Check if this is a configuration error via string prefix
             is_config_error = str(e).startswith("CONFIG_ERROR:")
-            
+
             if is_config_error:
                 # Configuration errors should not be retried
                 clean_error = str(e).replace("CONFIG_ERROR: ", "")
@@ -210,18 +235,18 @@ class JobWorker:
                 )
                 self.job_queue.fail_job(job_id, f"Configuration error: {clean_error}")
                 return False
-            
+
             # Check retry count for other errors
             retry_count = job.metadata.get('retry_count', 0) if job.metadata else 0
-            
+
             if retry_count < self.max_retries:
                 # Update retry count and requeue
                 metadata = job.metadata or {}
                 metadata['retry_count'] = retry_count + 1
                 metadata['last_error'] = error_msg
-                
+
                 logger.info(f"[JobWorker] Retrying job {job_id} (attempt {retry_count + 1}/{self.max_retries})")
-                
+
                 # Persist retry metadata and put the job back on the queue.
                 # Updating only the status would orphan the job after its
                 # original queue entry was popped.
@@ -231,14 +256,31 @@ class JobWorker:
                         f"Could not requeue retryable job: {error_msg}",
                     )
                     return False
-                
+
                 # Wait before retry
                 time.sleep(self.retry_delay)
             else:
                 # Max retries reached, mark as failed
                 self.job_queue.fail_job(job_id, f"{error_msg} (after {retry_count} retries)")
-            
+
             return False
+        finally:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=min(self.heartbeat_interval, 1.0))
+
+    def _heartbeat_job(self, job: Job, stop_event: threading.Event) -> None:
+        """Refresh ``updated_at`` while a synchronous handler is still active."""
+        while not stop_event.wait(self.heartbeat_interval):
+            try:
+                self.job_queue.heartbeat_job(job.job_id)
+            except Exception as exc:  # noqa: BLE001 - heartbeat is best effort
+                logger.warning(
+                    "[JobWorker] Could not update heartbeat for job %s: %s",
+                    job.job_id,
+                    exc,
+                )
     
     def start(self, max_jobs: Optional[int] = None):
         """Start the worker loop.

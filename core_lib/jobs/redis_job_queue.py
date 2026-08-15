@@ -308,6 +308,13 @@ class RedisJobQueue(BaseJobQueue):
             job.progress_message = message
         
         return self._update_job(job)
+
+    def heartbeat_job(self, job_id: str) -> bool:
+        """Refresh ``updated_at`` without overwriting handler-owned progress."""
+        job = self.get_job(job_id)
+        if not job or job.status != JobStatus.PROCESSING:
+            return False
+        return self._update_job(job)
     
     def complete_job(
         self,
