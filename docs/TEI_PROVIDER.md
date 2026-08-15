@@ -11,6 +11,7 @@ embedding_providers:
     enabled: true
     model: Qwen/Qwen3-Embedding-0.6B
     base_url: http://192.168.1.204:8110
+    max_batch_size: 128
     priority: 10
 
 reranker_providers:
@@ -38,6 +39,36 @@ TEI_RERANK_URL=http://192.168.1.204:8111
 ```
 
 Use `TEI_TOKEN` when the TEI endpoints require bearer authentication.
+
+## Embedding batching and cache performance
+
+The TEI embedding client automatically splits large input lists into bounded
+requests while preserving input and output order. The default
+`max_batch_size` is `128`, which stays below TEI's common 256-input client
+limit and leaves capacity for token-heavy inputs. Configure it per provider
+when a server advertises a lower limit or workload characteristics require
+smaller requests:
+
+```yaml
+embedding_providers:
+  - provider: tei
+    model: Qwen/Qwen3-Embedding-0.6B
+    base_url: http://192.168.1.204:8110
+    max_batch_size: 96
+```
+
+For example, 306 input texts use three requests with the default setting:
+`128 + 128 + 50`. If any sub-request fails, the fallback embedding client can
+retry the logical operation on the next configured provider.
+
+Embedding batch cache lookups use a single bulk read. Cache misses are written
+through a Redis or Valkey pipeline instead of issuing multiple round trips per
+vector. Backends without bulk primitives automatically retain the sequential
+cache behavior.
+
+TEI validation failures include the server's response message in logs. A batch
+limit rejection therefore reports details such as `batch size 306 > maximum
+allowed batch size 256` instead of only `HTTP 422`.
 
 ## Non-blocking Wake-on-LAN fallback
 

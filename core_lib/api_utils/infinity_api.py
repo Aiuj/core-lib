@@ -299,6 +299,10 @@ class InfinityAPIClient:
                         error_data = response.json()
                         if 'error' in error_data and 'message' in error_data['error']:
                             error_detail = error_data['error']['message']
+                        elif isinstance(error_data.get('message'), str):
+                            error_detail = error_data['message']
+                        elif isinstance(error_data.get('detail'), str):
+                            error_detail = error_data['detail']
                     except:
                         pass
                     

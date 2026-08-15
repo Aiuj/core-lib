@@ -58,6 +58,22 @@ class TestRedisCache(unittest.TestCase):
         self.assertEqual(result, 'output')
         mock_client.setex.assert_called_once()
 
+    def test_cache_bulk_get_and_set_use_single_operations(self):
+        cache = RedisCache('test_app')
+        cache.client = MagicMock()
+        cache.client.mget.return_value = ['"first"', None, '"third"']
+
+        assert cache.get_many(["a", "b", "c"]) == ["first", None, "third"]
+        cache.client.mget.assert_called_once()
+
+        pipeline = cache.client.pipeline.return_value
+        cache.set_many([("a", [0.1]), ("b", [0.2])], ttl=600)
+
+        cache.client.pipeline.assert_called_once_with(transaction=False)
+        assert pipeline.setex.call_count == 2
+        pipeline.sadd.assert_called_once()
+        pipeline.execute.assert_called_once()
+
     @patch('core_lib.cache.redis_cache.redis.Redis')
     def test_cache_miss(self, mock_redis):
         mock_client = MagicMock()

@@ -5,7 +5,7 @@ import hashlib
 import json
 
 from .embeddings_config import embeddings_settings
-from ..cache.cache_manager import cache_get, cache_set
+from ..cache.cache_manager import cache_get, cache_get_many, cache_set, cache_set_many
 from .models_database import (
     get_model_dimension,
     supports_matryoshka,
@@ -216,11 +216,11 @@ class BaseEmbeddingClient:
         
         # Check cache for each text (only if caching is enabled)
         if self.cache_duration_seconds > 0:
-            for i, text in enumerate(texts):
-                cache_key = self._generate_cache_key(text)
-                cached_result = cache_get(cache_key)
+            cache_keys = [self._generate_cache_key(text) for text in texts]
+            cached_values = cache_get_many(cache_keys)
+            for i, (text, cached_result) in enumerate(zip(texts, cached_values)):
                 if cached_result is not None:
-                    logger.debug(f"Cache hit for embedding: {cache_key}")
+                    logger.debug(f"Cache hit for embedding: {cache_keys[i]}")
                     results.append((i, cached_result))
                 else:
                     uncached_texts.append(text)
@@ -253,12 +253,15 @@ class BaseEmbeddingClient:
                 embeddings = self._l2_normalize(embeddings)
             
             # Cache and collect the new embeddings
+            cache_items = []
             for j, (text, embedding) in enumerate(zip(uncached_texts, embeddings)):
                 if self.cache_duration_seconds > 0:
                     cache_key = self._generate_cache_key(text)
-                    cache_set(cache_key, embedding, ttl=self.cache_duration_seconds)
+                    cache_items.append((cache_key, embedding))
                     logger.debug(f"Cached embedding result: {cache_key}")
                 results.append((uncached_indices[j], embedding))
+            if cache_items:
+                cache_set_many(cache_items, ttl=self.cache_duration_seconds)
         
         # Sort results by original index and return embeddings in order
         results.sort(key=lambda x: x[0])

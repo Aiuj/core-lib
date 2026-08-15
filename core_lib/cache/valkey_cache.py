@@ -95,6 +95,19 @@ class ValkeyCache(BaseCache):
             return self._deserialize_data(value)
         return None
 
+    def get_many(self, input_items: list[Any], company_id: Optional[str] = None) -> list[Optional[Any]]:
+        """Retrieve values with one Valkey round trip."""
+        if self.client is False or self.client is None or not input_items:
+            return [None] * len(input_items)
+        if not callable(getattr(self.client, "mget", None)):
+            return super().get_many(input_items, company_id=company_id)
+        keys = [self._make_key(item, company_id=company_id) for item in input_items]
+        values = self.client.mget(keys)
+        return [
+            self._deserialize_data(value) if isinstance(value, str) else None
+            for value in values
+        ]
+
     def set(self, input_data: Any, output_data: Any, ttl: Optional[int] = None, company_id: Optional[str] = None):
         """Store data in cache with optional TTL"""
         if self.client is False:
@@ -111,6 +124,25 @@ class ValkeyCache(BaseCache):
         except Exception:
             pass
         self._track_key(key, company_id)
+
+    def set_many(
+        self,
+        items: list[tuple[Any, Any]],
+        ttl: Optional[int] = None,
+        company_id: Optional[str] = None,
+    ) -> None:
+        """Store values and their registry membership in one pipeline."""
+        if self.client is False or self.client is None or not items:
+            return
+        if not callable(getattr(self.client, "pipeline", None)):
+            return super().set_many(items, ttl=ttl, company_id=company_id)
+        ttl_to_use = ttl if ttl is not None else self.ttl
+        keys = [self._make_key(item, company_id=company_id) for item, _ in items]
+        pipeline = self.client.pipeline(transaction=False)
+        for key, (_, output_data) in zip(keys, items):
+            pipeline.setex(key, ttl_to_use, self._serialize_data(output_data))
+        pipeline.sadd(self._registry_set_key(company_id), *keys)
+        pipeline.execute()
 
     def delete(self, input_data: Any, company_id: Optional[str] = None) -> bool:
         """Delete cached data for the given input and optional company_id.

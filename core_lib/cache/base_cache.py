@@ -69,6 +69,20 @@ class BaseCache(ABC):
         """Store data in cache with optional TTL and optional company_id"""
         pass
 
+    def get_many(self, input_items: list[Any], company_id: Optional[str] = None) -> list[Optional[Any]]:
+        """Retrieve several values, preserving input order."""
+        return [self.get(item, company_id=company_id) for item in input_items]
+
+    def set_many(
+        self,
+        items: list[tuple[Any, Any]],
+        ttl: Optional[int] = None,
+        company_id: Optional[str] = None,
+    ) -> None:
+        """Store several values using the backend's best available strategy."""
+        for input_data, output_data in items:
+            self.set(input_data, output_data, ttl=ttl, company_id=company_id)
+
     @abstractmethod
     def delete(self, input_data: Any, company_id: Optional[str] = None) -> bool:
         """Delete cached data for the given input and optional company_id.

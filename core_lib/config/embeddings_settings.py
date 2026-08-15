@@ -157,6 +157,8 @@ class EmbeddingsSettings(BaseSettings):
                 wake_on_lan = config.get("wake_on_lan")
                 if isinstance(wake_on_lan, dict):
                     entry["wake_on_lan"] = wake_on_lan
+                if provider == "tei" and config.get("max_batch_size") is not None:
+                    entry["max_batch_size"] = int(config["max_batch_size"])
             elif provider == "cloudflare":
                 entry["account_id"] = config.get("account_id") or config.get("cloudflare_account_id") or defaults.get("cloudflare_account_id")
                 entry["api_token"] = config.get("api_token") or config.get("token") or config.get("api_key") or defaults.get("cloudflare_api_token")

@@ -276,6 +276,26 @@ def cache_set(input_data: Any, output_data: Any, ttl: Optional[int] = None, comp
         cache.set(input_data, output_data, ttl, company_id=company_id)
 
 
+def cache_get_many(input_items: list[Any], company_id: Optional[str] = None) -> list[Optional[Any]]:
+    """Retrieve several cached values while preserving input order."""
+    cache = get_cache()
+    if cache is False:
+        return [None] * len(input_items)
+    return cache.get_many(input_items, company_id=company_id)
+
+
+def cache_set_many(
+    items: list[tuple[Any, Any]],
+    ttl: Optional[int] = None,
+    company_id: Optional[str] = None,
+) -> None:
+    """Store several cached values using a backend bulk operation."""
+    cache = get_cache()
+    if cache is False:
+        return
+    cache.set_many(items, ttl=ttl, company_id=company_id)
+
+
 def cache_clear_company(company_id: str):
     """Clear all cached entries for a specific company_id."""
     cache = get_cache()

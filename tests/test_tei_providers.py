@@ -3,8 +3,10 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 import requests
 
+from core_lib.api_utils import InfinityAPIClient, InfinityAPIError
 from core_lib.config.embeddings_settings import EmbeddingsSettings
 from core_lib.embeddings.base import BaseEmbeddingClient
 from core_lib.embeddings.factory import EmbeddingFactory
@@ -44,6 +46,59 @@ def test_tei_embedding_uses_openai_compatible_endpoint() -> None:
     (endpoint,) = post.call_args.args
     assert endpoint == "/v1/embeddings"
     assert post.call_args.kwargs["json"]["input"] == ["first", "second"]
+
+
+def test_tei_embedding_splits_oversized_batches_and_preserves_order() -> None:
+    client = TEIEmbeddingClient(
+        model="Qwen/Qwen3-Embedding-0.6B",
+        base_url="http://tei-embed:8080",
+        max_batch_size=128,
+        use_l2_norm=False,
+        cache_duration_seconds=0,
+    )
+
+    def respond(_endpoint, *, json):
+        return (
+            {
+                "data": [
+                    {"index": index, "embedding": [float(text)]}
+                    for index, text in reversed(list(enumerate(json["input"])))
+                ],
+                "usage": {"prompt_tokens": len(json["input"])},
+            },
+            "http://tei-embed:8080",
+        )
+
+    with (
+        patch.object(client._api_client, "post", side_effect=respond) as post,
+        patch("core_lib.embeddings.tei_provider.log_embedding_usage"),
+    ):
+        embeddings = client.generate_embedding_batch([str(i) for i in range(306)])
+
+    assert post.call_count == 3
+    assert [len(call.kwargs["json"]["input"]) for call in post.call_args_list] == [
+        128,
+        128,
+        50,
+    ]
+    assert embeddings == [[float(i)] for i in range(306)]
+
+
+def test_infinity_error_includes_top_level_validation_message() -> None:
+    response = Mock(status_code=422)
+    response.json.return_value = {
+        "message": "batch size 306 > maximum allowed batch size 256",
+        "code": 422,
+        "type": "Validation",
+    }
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    client = InfinityAPIClient("http://tei-embed:8080")
+
+    with (
+        patch("requests.post", return_value=response),
+        pytest.raises(InfinityAPIError, match="batch size 306"),
+    ):
+        client.post("/v1/embeddings", json={"input": ["x"] * 306})
 
 
 def test_tei_reranker_uses_native_request_and_response_shapes() -> None:
@@ -102,6 +157,7 @@ embedding_providers:
   - provider: tei
     model: Qwen/Qwen3-Embedding-0.6B
     base_url: http://tei-embed:8110
+    max_batch_size: 96
     priority: 1
 reranker_providers:
   - provider: tei
@@ -118,6 +174,7 @@ reranker_providers:
 
     assert embedding_settings.provider == "tei"
     assert embedding_settings.base_url == "http://tei-embed:8110"
+    assert embedding_settings.provider_configs[0]["max_batch_size"] == 96
     assert reranker_settings.provider == "tei"
     assert reranker_settings.infinity_url == "http://tei-rerank:8111"
 

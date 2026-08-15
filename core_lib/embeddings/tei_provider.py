@@ -30,6 +30,7 @@ class TEIEmbeddingClient(BaseEmbeddingClient):
         timeout: Optional[int] = None,
         token: Optional[str] = None,
         wake_on_lan: Optional[dict] = None,
+        max_batch_size: int = 128,
         **kwargs,
     ):
         super().__init__(
@@ -50,6 +51,9 @@ class TEIEmbeddingClient(BaseEmbeddingClient):
             wake_on_lan=wake_on_lan,
         )
         self._last_used_url = self._api_client.base_urls[0]
+        if max_batch_size < 1:
+            raise ValueError("max_batch_size must be at least 1")
+        self.max_batch_size = max_batch_size
 
     @property
     def host(self) -> Optional[str]:
@@ -64,33 +68,47 @@ class TEIEmbeddingClient(BaseEmbeddingClient):
 
     def _generate_embedding_raw(self, texts: List[str]) -> List[List[float]]:
         start_time = time.time()
-        request_body = {
-            "model": self.model,
-            "input": texts,
-            "encoding_format": "float",
-        }
-        if self.embedding_dim is not None:
-            request_body["dimensions"] = self.embedding_dim
-
         try:
-            data, used_url = self._api_client.post("/v1/embeddings", json=request_body)
-            self._last_used_url = used_url
-            embeddings = [
-                item["embedding"]
-                for item in sorted(data["data"], key=lambda item: item["index"])
-            ]
+            embeddings: List[List[float]] = []
+            for start in range(0, len(texts), self.max_batch_size):
+                batch = texts[start:start + self.max_batch_size]
+                request_body = {
+                    "model": self.model,
+                    "input": batch,
+                    "encoding_format": "float",
+                }
+                if self.embedding_dim is not None:
+                    request_body["dimensions"] = self.embedding_dim
+
+                batch_start = time.time()
+                data, used_url = self._api_client.post(
+                    "/v1/embeddings", json=request_body
+                )
+                self._last_used_url = used_url
+                batch_embeddings = [
+                    item["embedding"]
+                    for item in sorted(data["data"], key=lambda item: item["index"])
+                ]
+                if len(batch_embeddings) != len(batch):
+                    raise EmbeddingGenerationError(
+                        "TEI returned "
+                        f"{len(batch_embeddings)} embeddings for {len(batch)} inputs"
+                    )
+                embeddings.extend(batch_embeddings)
+
+                usage = data.get("usage", {})
+                log_embedding_usage(
+                    provider="tei",
+                    model=self.model,
+                    input_tokens=usage.get("prompt_tokens"),
+                    num_texts=len(batch),
+                    embedding_dim=self.embedding_dim
+                    or (len(batch_embeddings[0]) if batch_embeddings else None),
+                    latency_ms=(time.time() - batch_start) * 1000,
+                    host=used_url,
+                )
+
             self.embedding_time_ms = (time.time() - start_time) * 1000
-            usage = data.get("usage", {})
-            log_embedding_usage(
-                provider="tei",
-                model=self.model,
-                input_tokens=usage.get("prompt_tokens"),
-                num_texts=len(texts),
-                embedding_dim=self.embedding_dim
-                or (len(embeddings[0]) if embeddings else None),
-                latency_ms=self.embedding_time_ms,
-                host=used_url,
-            )
             return embeddings
         except InfinityAPIError as exc:
             self.embedding_time_ms = (time.time() - start_time) * 1000
