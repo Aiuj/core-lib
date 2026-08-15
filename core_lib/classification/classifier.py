@@ -39,12 +39,21 @@ French, etc.
 - capabilities: concrete capabilities or questions this document can support
 - content_structure: the dominant organization of the content, exactly one of
   "prose", "qa_pairs", "table", "list", "presentation", "mixed", or "unknown".
-  This is independent of the topic category. Use "qa_pairs" for repeated questions
-  followed by their answers, in any language; use "mixed" when only part of the
-  document follows that pattern.
+  This is independent of the topic category. Use "qa_pairs" only when the excerpt
+  contains at least two actual question/prompt and answer relationships, in any
+  language. A question-like heading, rhetorical question, troubleshooting title,
+  or prose that discusses questions is not a Q&A pair unless answer content follows
+  it. Use "mixed" only when at least two real pairs coexist with substantial non-Q&A
+  content. Use "prose" for ordinary guides and policies, even when some headings are
+  phrased as questions. Preserve genuine Q&A detection when prompts omit question
+  marks (for example numbered questionnaire prompts followed by response blocks).
 - structure_confidence: confidence between 0.0 and 1.0 in content_structure
 - pairing_pattern: exactly one of "alternating_blocks", "table_columns",
   "labeled_fields", "mixed", or "unknown"
+  For "qa_pairs", return the concrete observed pairing pattern rather than
+  "unknown". Use "alternating_blocks" for repeated prompt then response blocks,
+  "labeled_fields" for Q:/A: or equivalent labels, and "table_columns" only when
+  separate question and answer columns are visible.
 - prospect_document_type: when the document is clearly material supplied by a
   buyer/prospect as part of an RFx package, classify its dominant purpose as
   exactly one of "requirements_specification", "project_description",

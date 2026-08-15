@@ -430,6 +430,13 @@ class TestDocCategoriesIntegration:
                 f"Category key '{cat['key']}' missing from classifier prompt"
             )
 
+    def test_system_prompt_requires_real_repeated_qa_relationships(self):
+        from core_lib.classification.classifier import _SYSTEM_PROMPT
+
+        assert "at least two actual question/prompt and answer relationships" in _SYSTEM_PROMPT
+        assert "rhetorical question" in _SYSTEM_PROMPT
+        assert "prompts omit question" in _SYSTEM_PROMPT
+
     def test_valid_keys_include_general(self):
         """The general category is a valid low-specificity classification."""
         keys = {cat["key"] for cat in DOC_CATEGORIES}
