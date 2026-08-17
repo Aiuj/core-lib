@@ -82,6 +82,56 @@ LLM_PRICING = {
     "azure-gpt-35-turbo": {"input": 0.0005, "output": 0.0015},
     
     # Local/Self-hosted (free)
+    
+    # Google Gemini models
+    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated July 31, 2026)
+    #         https://ai.google.dev/gemini-api/docs/pricing#gemini-3.7-flash
+    # Prices per 1M tokens in API docs, converted to per 1K here.
+    # Preview variants (e.g. gemini-3.7-flash-preview) are resolved automatically
+    # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
+    # Gemini 3.7 models
+    "gemini-3.7-flash": {"input": 0.00075, "output": 0.00375},    # $0.75/$3.75 per 1M (prompts <= 128k)
+    "gemini-3.7-flash-thinking": {"input": 0.00075, "output": 0.00375},
+    # Gemini 3.6 models
+    "gemini-3.6-flash": {"input": 0.0015, "output": 0.0075},      # $1.50/$7.50 per 1M
+    # Gemini 3.5 models
+    "gemini-3.5-flash": {"input": 0.0015, "output": 0.009},       # $1.50/$9.00 per 1M
+    "gemini-3.5-flash-lite": {"input": 0.0003, "output": 0.0025}, # $0.30/$2.50 per 1M
+    # Gemini 3.1 models
+    "gemini-3.1-pro": {"input": 0.002, "output": 0.012},        # $2.00/$12.00 per 1M (<= 200k prompts)
+    "gemini-3.1-flash-lite": {"input": 0.00025, "output": 0.0015},  # $0.25/$1.50 per 1M
+    # Gemini 3 models
+    "gemini-3-flash": {"input": 0.0005, "output": 0.003},        # $0.50/$3.00 per 1M
+    # Gemini 2.5 models
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},        # $1.25/$10.00 per 1M (<= 200k prompts)
+    "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},     # $0.30/$2.50 per 1M
+    "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},  # $0.10/$0.40 per 1M
+    # Gemma models (open models, free)
+    "gemma-4": {"input": 0.0, "output": 0.0},
+    
+    # Anthropic Claude models
+    # Source: https://platform.claude.com/docs/en/about-claude/pricing (updated July 31, 2026)
+    # Prices per 1M tokens in API docs, converted to per 1K here.
+    # Claude Series 5 models
+    "claude-opus-5": {"input": 0.005, "output": 0.025},     # $5/$25 per 1M
+    "claude-sonnet-5": {"input": 0.002, "output": 0.01},    # $2/$10 per 1M (introductory pricing)
+    # Claude Series 4.x models
+    "claude-opus-4-7": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-opus-4-6": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-opus-4-5": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
+    "claude-sonnet-4-7": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
+    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
+    "claude-sonnet-4-5": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
+    "claude-sonnet-4-5-20250929": {"input": 0.003, "output": 0.015},
+    "claude-haiku-4-5": {"input": 0.001, "output": 0.005},  # $1/$5 per 1M
+    "claude-haiku-4-5-20251001": {"input": 0.001, "output": 0.005},
+    
+    # Azure OpenAI (same as OpenAI pricing)
+    "azure-gpt-4": {"input": 0.03, "output": 0.06},
+    "azure-gpt-4o": {"input": 0.005, "output": 0.015},
+    "azure-gpt-35-turbo": {"input": 0.0005, "output": 0.0015},
+    
+    # Local/Self-hosted (free)
     "ollama": {"input": 0.0, "output": 0.0},
 
     # OVHcloud AI Endpoints
@@ -90,21 +140,32 @@ LLM_PRICING = {
     "Qwen3.5-9B": {"input": 0.00011, "output": 0.000165},        # 0.10€/$0.15€ per 1M tokens
     "Qwen3.5-397B-A17B": {"input": 0.00066, "output": 0.00396},  # 0.60€/3.60€ per 1M tokens
 
-    # DeepInfra multimodal Qwen models
-    # Source: https://deepinfra.com/Qwen/Qwen3-VL-30B-A3B-Instruct/api
+    # DeepInfra multimodal Qwen & Mistral models
+    # Source: https://deepinfra.com/models/details?model=mistralai/Mistral-Small-3.2-24B-Instruct-2506
+    #         https://deepinfra.com/models/details?model=mistralai/Mistral-Small-24B-Instruct-2501
+    #         https://deepinfra.com/Qwen/Qwen3-VL-30B-A3B-Instruct/api
     #         https://deepinfra.com/Qwen/Qwen3-VL-235B-A22B-Instruct/api
-    # Standard-tier prices per 1M tokens, converted to per 1K here.
+    # Prices per 1M tokens, converted to per 1K here.
+    "mistralai/mistral-small-3.2-24b-instruct-2506": {"input": 0.00007, "output": 0.00014},  # $0.07/$0.14 per 1M
+    "mistralai/mistral-small-24b-instruct-2501": {"input": 0.00007, "output": 0.00014},      # $0.07/$0.14 per 1M
+    "mistralai/mistral-small-24b-instruct": {"input": 0.00007, "output": 0.00014},
+    "deepinfra/mistralai/mistral-small-3.2-24b-instruct-2506": {"input": 0.00007, "output": 0.00014},
+    "deepinfra/mistralai/mistral-small-24b-instruct-2501": {"input": 0.00007, "output": 0.00014},
     "qwen/qwen3-vl-30b-a3b-instruct": {"input": 0.00015, "output": 0.00060},
     "qwen/qwen3-vl-235b-a22b-instruct": {"input": 0.00020, "output": 0.00088},
 
     # Mistral AI models
     # Source: https://mistral.ai/pricing#api (updated May 2026)
+    #         https://docs.mistral.ai/models/mistral-small-4-0-26-03
     # Prices per 1M tokens → converted to per 1K by dividing by 1000.
     # Ministral (edge) models — text + vision + agentic
     "ministral-3b-latest": {"input": 0.0001, "output": 0.0001},        # $0.10/$0.10 per 1M
     "ministral-8b-latest": {"input": 0.00015, "output": 0.00015},      # $0.15/$0.15 per 1M
     "ministral-14b-latest": {"input": 0.0002, "output": 0.0002},       # $0.20/$0.20 per 1M
     # Mistral Small — multimodal, reasoning, lightweight
+    "mistral-small-4-0-26-03": {"input": 0.0001, "output": 0.0003},    # $0.10/$0.30 per 1M
+    "mistral-small-2506": {"input": 0.0001, "output": 0.0003},         # $0.10/$0.30 per 1M
+    "mistral-small-2501": {"input": 0.0001, "output": 0.0003},         # $0.10/$0.30 per 1M
     "mistral-small-latest": {"input": 0.00015, "output": 0.0006},      # $0.15/$0.60 per 1M
     # Mistral Medium — multimodal, agentic
     "mistral-medium-latest": {"input": 0.0015, "output": 0.0075},      # $1.50/$7.50 per 1M
