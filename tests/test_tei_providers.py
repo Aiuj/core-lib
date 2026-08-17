@@ -11,6 +11,7 @@ from core_lib.config.embeddings_settings import EmbeddingsSettings
 from core_lib.embeddings.base import BaseEmbeddingClient
 from core_lib.embeddings.factory import EmbeddingFactory
 from core_lib.embeddings.fallback_client import FallbackEmbeddingClient
+from core_lib.embeddings.openai_provider import OpenAIEmbeddingClient
 from core_lib.embeddings.tei_provider import TEIEmbeddingClient
 from core_lib.reranker.factory import RerankerFactory
 from core_lib.reranker.base import BaseRerankerClient, RerankResult
@@ -328,3 +329,58 @@ def test_tei_reranker_wol_immediately_falls_through_and_recovers(monkeypatch) ->
     assert third[0].index == 0
     assert post.call_count == 2
     assert secondary.calls == 2
+
+
+def test_tei_wol_with_deepinfra_fallback_instantiation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Ensure deepinfra provider initializes cleanly even when preceding tei config has wake_on_lan."""
+    config_file = tmp_path / "providers.yaml"
+    config_file.write_text(
+        """
+embedding_providers:
+  - provider: tei
+    enabled: true
+    priority: 5
+    model: Qwen/Qwen3-Embedding-0.6B
+    embedding_dimension: 384
+    base_url: http://82.66.214.52:8110
+    wake_on_lan:
+      enabled: true
+      initial_timeout_seconds: 0.5
+      warmup_seconds: 60
+      broadcast_ip: 82.66.214.52
+      mac_address: FC:34:97:9E:C8:AF
+      port: 7777
+
+  - provider: deepinfra
+    enabled: true
+    priority: 8
+    model: Qwen/Qwen3-Embedding-0.6B
+    embedding_dimension: 384
+    base_url: https://api.deepinfra.com/v1/openai
+    api_key: test-deepinfra-key
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LLM_PROVIDERS_FILE", str(config_file))
+    monkeypatch.setenv("DEEPINFRA_API_KEY", "test-deepinfra-key")
+
+    from core_lib.embeddings import create_client_from_env, EmbeddingFactory
+
+    settings = EmbeddingsSettings.from_env(load_dotenv=False)
+    assert settings.provider == "tei"
+    assert settings.infinity_wake_on_lan is not None
+
+    # Verify fallback client initializes with both providers without TypeError
+    client = create_client_from_env()
+    assert isinstance(client, FallbackEmbeddingClient)
+    assert len(client.providers) == 2
+    assert isinstance(client.providers[0], TEIEmbeddingClient)
+    assert isinstance(client.providers[1], OpenAIEmbeddingClient)
+
+    # Verify direct from_config with deepinfra and wake_on_lan present in settings
+    deepinfra_settings = EmbeddingsSettings.from_env(load_dotenv=False, provider="deepinfra", api_key="test-key")
+    deepinfra_client = EmbeddingFactory.from_config(config=deepinfra_settings)
+    assert isinstance(deepinfra_client, OpenAIEmbeddingClient)
+

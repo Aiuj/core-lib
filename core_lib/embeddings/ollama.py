@@ -23,7 +23,8 @@ class OllamaEmbeddingClient(BaseEmbeddingClient):
         use_l2_norm: bool = False,
         norm_method: str | None = None,
         base_url: str | None = None,
-        timeout: int | None = None
+        timeout: int | None = None,
+        **kwargs,
     ):
         # If model/embedding_dim are not provided, BaseEmbeddingClient will
         # fall back to values from `settings`.

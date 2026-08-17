@@ -29,6 +29,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
         base_url: Optional[str] = None,
         organization: Optional[str] = None,
         project: Optional[str] = None,
+        **kwargs,
     ):
         """Initialize OpenAI embedding client.
         
@@ -40,6 +41,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
             base_url: Custom base URL for OpenAI-compatible APIs
             organization: OpenAI organization ID
             project: OpenAI project ID
+            **kwargs: Additional parameters (e.g. wake_on_lan, ignored)
         """
         if openai is None:
             raise ImportError(

@@ -40,10 +40,12 @@ class LocalEmbeddingClient(BaseEmbeddingClient):
         model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
         use_l2_norm: bool = True,
+        norm_method: Optional[str] = None,
         device: Optional[str] = None,
         cache_dir: Optional[str] = None,
         trust_remote_code: bool = False,
         use_sentence_transformers: bool = True,
+        **kwargs,
     ):
         """Initialize local embedding client.
         
@@ -51,12 +53,19 @@ class LocalEmbeddingClient(BaseEmbeddingClient):
             model: Model name from HuggingFace (e.g., 'sentence-transformers/all-MiniLM-L6-v2')
             embedding_dim: Target embedding dimension
             use_l2_norm: Whether to apply L2 normalization
+            norm_method: Normalization method (None for auto-detection)
             device: Device to run the model on ('cpu', 'cuda', 'auto')
             cache_dir: Directory to cache downloaded models
             trust_remote_code: Whether to trust remote code when loading models
             use_sentence_transformers: Whether to use sentence-transformers library (if available)
+            **kwargs: Additional parameters (ignored)
         """
-        super().__init__(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm)
+        super().__init__(
+            model=model,
+            embedding_dim=embedding_dim,
+            use_l2_norm=use_l2_norm,
+            norm_method=norm_method,
+        )
         
         # Set default model if not provided
         if not self.model:

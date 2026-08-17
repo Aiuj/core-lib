@@ -26,9 +26,11 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
         model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
         use_l2_norm: bool = True,
+        norm_method: Optional[str] = None,
         api_key: Optional[str] = None,
         task_type: Optional[str] = None,
         title: Optional[str] = None,
+        **kwargs,
     ):
         """Initialize Google GenAI embedding client.
         
@@ -36,9 +38,11 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
             model: Model name (e.g., 'text-embedding-004')
             embedding_dim: Target embedding dimension
             use_l2_norm: Whether to apply L2 normalization
+            norm_method: Normalization method (None for auto-detection)
             api_key: Google API key
             task_type: Task type for embeddings (SEMANTIC_SIMILARITY, CLASSIFICATION, CLUSTERING, etc.)
             title: Optional title for the embedding task
+            **kwargs: Additional parameters (ignored)
         """
         if genai is None:
             raise ImportError(
@@ -46,7 +50,12 @@ class GoogleGenAIEmbeddingClient(BaseEmbeddingClient):
                 "Install with: pip install google-genai"
             )
 
-        super().__init__(model=model, embedding_dim=embedding_dim, use_l2_norm=use_l2_norm)
+        super().__init__(
+            model=model,
+            embedding_dim=embedding_dim,
+            use_l2_norm=use_l2_norm,
+            norm_method=norm_method,
+        )
         
         # Use provided API key or fall back to config
         self.api_key = api_key or embeddings_settings.google_api_key or embeddings_settings.api_key
