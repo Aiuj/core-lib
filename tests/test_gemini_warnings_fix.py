@@ -139,3 +139,30 @@ class TestGeminiWarningsFix:
 
         # Verify fallback was used when no text parts found
         assert result == "Fallback text"
+
+    @patch("google.genai", create=True)
+    @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
+    def test_dual_keys_prefers_gemini_and_preserves_google_key(self, mock_instrumentor, mock_genai):
+        """Verify that having both GOOGLE_API_KEY and GEMINI_API_KEY prefers GEMINI and preserves GOOGLE_API_KEY."""
+        import os
+        mock_client = Mock()
+        mock_genai.Client.return_value = mock_client
+        
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google_picker_key", "GEMINI_API_KEY": "gemini_key"}):
+            config = GeminiConfig.from_env()
+            assert config.api_key == "gemini_key"
+            provider = GoogleGenAIProvider(config)
+            mock_genai.Client.assert_called_once_with(
+                api_key="gemini_key",
+                http_options={"timeout": 60000, "retry_options": None},
+            )
+            # Ensure GOOGLE_API_KEY remains untouched in the environment
+            assert os.environ.get("GOOGLE_API_KEY") == "google_picker_key"
+            assert os.environ.get("GEMINI_API_KEY") == "gemini_key"
+
+    def test_gemini_config_from_env_fallback_to_google_api_key(self):
+        """Verify that GeminiConfig.from_env falls back to GOOGLE_API_KEY when GEMINI_API_KEY is not set."""
+        import os
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google_fallback_key"}, clear=True):
+            config = GeminiConfig.from_env()
+            assert config.api_key == "google_fallback_key"
