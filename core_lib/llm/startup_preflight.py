@@ -753,6 +753,12 @@ def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
             return "not_configured", None, "No API key"
         return _check_openai_compatible(provider.model, api_key, provider.host or "https://api.openai.com/v1")
 
+    if p == "mistral":
+        api_key = provider.api_key or os.getenv("MISTRAL_API_KEY") or ""
+        if not api_key:
+            return "not_configured", None, "No API key"
+        return _check_openai_compatible(provider.model, api_key, provider.host or "https://api.mistral.ai/v1")
+
     if p == "azure-openai":
         api_key = provider.api_key or ""
         endpoint = provider.azure_endpoint or ""

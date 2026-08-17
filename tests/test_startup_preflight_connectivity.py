@@ -154,3 +154,31 @@ def test_resolve_provider_identity_reads_only_non_secret_metadata(tmp_path):
         "service_account",
     )
 
+
+def test_probe_connectivity_mistral(monkeypatch):
+    calls = []
+
+    def _fake_http_get(url, headers, timeout=8):
+        calls.append(url)
+        assert headers["Authorization"] == "Bearer mistral-test-key"
+        return 200, b'{"data":[{"id":"ministral-8b-latest"},{"id":"mistral-small-latest"}]}'
+
+    monkeypatch.setattr(startup_preflight, "_http_get", _fake_http_get)
+
+    class FakeMistralProvider:
+        provider = "mistral"
+        model = "ministral-8b-latest"
+        api_key = "mistral-test-key"
+        host = None
+
+        def is_configured(self):
+            return True
+
+    status, details, error = startup_preflight._probe_connectivity(FakeMistralProvider())
+
+    assert status == "ok"
+    assert error is None
+    assert details == "2 model(s) available"
+    assert calls == ["https://api.mistral.ai/v1/models"]
+
+

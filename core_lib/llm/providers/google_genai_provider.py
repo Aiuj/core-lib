@@ -44,15 +44,17 @@ _instrumentation_initialized = False
 
 
 @contextmanager
-def _prefer_gemini_api_key_env(api_key: Optional[str]):
+def _prefer_gemini_api_key_env(api_key: Optional[str] = None):
     """Temporarily prefer GEMINI_API_KEY over GOOGLE_API_KEY for google.genai SDK.
 
     The google.genai SDK currently prefers GOOGLE_API_KEY when both variables are
     set, even when an explicit `api_key=` is passed to Client(...). To avoid
-    ambiguous runtime behavior, we temporarily remove GOOGLE_API_KEY and force
-    GEMINI_API_KEY to the selected provider key while constructing the client.
+    ambiguous runtime behavior and spurious warnings, we temporarily remove
+    GOOGLE_API_KEY and set GEMINI_API_KEY to the selected provider key while
+    constructing the client.
     """
-    if not api_key:
+    key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
         yield
         return
 
@@ -63,12 +65,12 @@ def _prefer_gemini_api_key_env(api_key: Optional[str]):
 
     try:
         if had_google and had_gemini and prev_google != prev_gemini:
-            logger.warning(
+            logger.debug(
                 "Both GOOGLE_API_KEY and GEMINI_API_KEY are set with different values. "
                 "Temporarily preferring configured Gemini key for client initialization."
             )
         os.environ.pop("GOOGLE_API_KEY", None)
-        os.environ["GEMINI_API_KEY"] = api_key
+        os.environ["GEMINI_API_KEY"] = key
         yield
     finally:
         if had_google:
@@ -195,7 +197,7 @@ class GeminiConfig(LLMConfig):
                     return val
             return default
 
-        api_key = get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY", default=None)
+        api_key = get_env("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_API_KEY", default=None)
         model = get_env("GEMINI_MODEL", "GOOGLE_GENAI_MODEL", "GOOGLE_GENAI_MODEL_DEFAULT", default="gemini-1.5-flash")
         temperature = float(get_env("GEMINI_TEMPERATURE", "GOOGLE_GENAI_TEMPERATURE", default="0.1"))
         max_tokens_env = get_env("GEMINI_MAX_TOKENS", "GOOGLE_GENAI_MAX_TOKENS")
