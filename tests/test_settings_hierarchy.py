@@ -22,6 +22,12 @@ from core_lib.config.api_settings import ApiSettings
 from core_lib.config.standard_settings import StandardSettings
 
 
+@pytest.fixture(autouse=True)
+def isolate_project_root(tmp_path, monkeypatch):
+    """Ensure hierarchy unit tests run in an isolated temp directory without ambient pyproject.toml."""
+    monkeypatch.chdir(tmp_path)
+
+
 class TestSettingsHierarchyInheritance:
     """Test that the settings hierarchy inheritance is correct."""
     
