@@ -408,3 +408,62 @@ class TestOcrCacheFailureGuards:
 
         assert result.total_images_cached == 0
         assert result.pages[0].raw_text == "Recovered text"
+
+
+class TestCollapseDegenerateRepetition:
+    """Tests for the vision-LLM generation-loop safeguard.
+
+    Reproduces a real failure observed while OCR'ing GreenEnergy Dynamics'
+    scanned technical documentation: the model got stuck generating a
+    hex-like Messageid value and repeated "0a" ~950 times (1904 characters)
+    before recovering and continuing with the real page content.
+    """
+
+    def _collapse(self, text: str) -> str:
+        return OcrService._collapse_degenerate_repetition(text)
+
+    def test_collapses_long_hex_like_repetition_loop(self):
+        garbage = "0a" * 950
+        text = (
+            "Messageid: msg-3a5c4b1a-9b2b-4a4b-9b2a-"
+            f"{garbage}\n\nState: OPEN\nAssetid: a1b2c3d4-1111"
+        )
+        result = self._collapse(text)
+
+        assert "0a" * 950 not in result
+        assert "0a0a" in result  # collapsed to 2 repetitions, not deleted
+        assert result.count("0a") <= 4
+        # Real content on either side of the loop is preserved untouched.
+        assert "Messageid: msg-3a5c4b1a-9b2b-4a4b-9b2a-" in result
+        assert "State: OPEN\nAssetid: a1b2c3d4-1111" in result
+
+    def test_end_to_end_via_ocr_via_vision_llm(self, settings, tiny_image):
+        """The garbage never reaches the stored raw_text for a real page."""
+        raw = "Messageid: msg-abc-" + ("0a" * 900) + "\nState: OPEN"
+        service = _make_service(settings, {"content": raw, "error": None})
+
+        page = service._ocr_via_vision_llm(tiny_image, mime_type="image/png")
+
+        assert "0a" * 900 not in page.raw_text
+        assert "State: OPEN" in page.raw_text
+        assert len(page.raw_text) < 200  # garbage collapsed, not left near-full-length
+
+    def test_does_not_touch_table_rule_dashes(self):
+        """A long run of a punctuation-only unit (table dividers, leader
+        dots) has no alphanumeric character and must survive untouched —
+        this is legitimate markdown formatting, not a generation loop.
+        """
+        text = "Plan | Price\n" + "-" * 60 + "\nBasic | $10"
+        assert self._collapse(text) == text
+
+    def test_does_not_touch_short_legitimate_repeats(self):
+        """A handful of repetitions (below the loop threshold) is normal
+        content (e.g. a repeated bullet marker or short recurring label)
+        and must be left alone.
+        """
+        text = "ok " * 5
+        assert self._collapse(text) == text
+
+    def test_preserves_content_with_no_repetition(self):
+        text = "Quels sont les objectifs RTO et RPO de la plateforme?"
+        assert self._collapse(text) == text

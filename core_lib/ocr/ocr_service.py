@@ -301,9 +301,11 @@ class OcrService:
     # Vision LLM fallback
     # ------------------------------------------------------------------
 
-    # Included in cache keys so prompt improvements cannot reuse incomplete OCR
-    # produced by an older transcription policy.
-    _OCR_PROMPT_VERSION = "v2-peripheral-text"
+    # Included in cache keys so prompt improvements — and post-processing
+    # changes to how raw output is cleaned up, such as
+    # _collapse_degenerate_repetition — cannot reuse incomplete or
+    # garbage-laden OCR produced by an older transcription policy.
+    _OCR_PROMPT_VERSION = "v5-repetition-collapse"
 
     _OCR_ONLY_PROMPT = (
         "You are a document OCR engine. Transcribe every visible character from "
@@ -315,7 +317,31 @@ class OcrService:
         "tables as markdown tables without dropping rows or columns. Render formulas "
         "as LaTeX and keep the original language, spelling, punctuation, and numbers. "
         "For text that cannot be read confidently, write [illegible] instead of "
-        "guessing. Return only the transcription, with no preamble or code fences."
+        "guessing.\n\n"
+        "Each image is one page of a larger document — you are not necessarily "
+        "looking at the start of a section. Before transcribing, mentally list "
+        "every visually distinct bold/emphasized line on the page (by font "
+        "size, weight, or color relative to body text) and classify each one "
+        "individually as heading or field label — do not classify the page as "
+        "a whole (e.g. 'this whole page is one field list'), since a page can "
+        "densely repeat the same component -> field-label pattern several "
+        "times and still contain a real heading before each repetition. Use "
+        "'#'/'##'/'###' markdown headings only for the document's own titled "
+        "sections and subsections (match heading depth to visual prominence). "
+        "A heading can be short (a single word, or a two-letter label like "
+        "'OT'/'IT' naming a subsystem or interface category) or long (a full "
+        "phrase with a parenthetical, e.g. 'Stream Processor (Kafka + Flink)') "
+        "— judge by visual prominence and position, not by length or word "
+        "count. A short line ending in a colon that introduces a single value "
+        "(e.g. 'Vendor:', 'RTO RPO:', 'In Transit:') is a field label, not a "
+        "heading — render it as bold inline text ('**Vendor:**') followed by "
+        "its value on the same or next line, never as a heading. Conversely, if "
+        "a visually distinct new named component, subsystem, or topic begins "
+        "partway down the page — even with no heading above it on this page — "
+        "still mark it with the appropriate heading level; do not fold it "
+        "silently into the paragraph above just because the page itself opens "
+        "without a heading.\n\n"
+        "Return only the transcription, with no preamble or code fences."
     )
 
     _ENRICHED_PROMPT = (
@@ -399,6 +425,13 @@ class OcrService:
         # Strip markdown code fences that some LLMs add around their output
         # (e.g. ```html\n<table>...</table>\n```) even when not asked to.
         raw_text = self._strip_code_fences(raw_text)
+
+        # Vision LLMs occasionally fall into a degenerate generation loop —
+        # typically while attempting a long hex/UUID-like ID value — and
+        # repeat a short unit hundreds of times (e.g. "0a0a0a0a..."). Collapse
+        # that before it's stored, rather than indexing thousands of
+        # characters of garbage that dilute embeddings and chunk word counts.
+        raw_text = self._collapse_degenerate_repetition(raw_text)
 
         if enrich:
             desc = ""
@@ -546,6 +579,39 @@ class OcrService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    # A short (2-40 char) unit repeated at least 15 times contiguously. The
+    # unit is captured non-greedily and matched on a single line — a real
+    # degenerate loop repeats within one run of generation, not across
+    # paragraph breaks — and the replacement callback additionally requires
+    # the unit to contain an alphanumeric character, so legitimate
+    # single-character formatting (table-rule dashes, table-of-contents
+    # leader dots) is a single-char unit and never matches here at all,
+    # while intentional short repeated tokens without any letter/digit are
+    # left untouched too.
+    _DEGENERATE_REPEAT_RE = re.compile(r'([^\n]{2,40}?)\1{14,}')
+
+    @classmethod
+    def _collapse_degenerate_repetition(cls, text: str) -> str:
+        """Collapse a vision-LLM generation loop down to two repetitions.
+
+        Vision LLMs occasionally get stuck repeating a short unit hundreds
+        of times mid-generation — observed in practice while attempting a
+        long hex/UUID-like ID value, producing output like
+        "...msg-3a5c4b1a-9b2b-4a4b-9b2a-0a0a0a0a0a0a0a0a0a0a...0a" with
+        "0a" repeated 900+ times. This is a distinct failure mode from
+        heading-depth confusion: the model doesn't stop or fall back, it
+        just wastes its output-token budget on garbage that would otherwise
+        get indexed and dilute embeddings/search relevance for the rest of
+        the page's real content.
+        """
+        def _replace(match: "re.Match[str]") -> str:
+            unit = match.group(1)
+            if not any(ch.isalnum() for ch in unit):
+                return match.group(0)
+            return unit * 2
+
+        return cls._DEGENERATE_REPEAT_RE.sub(_replace, text)
 
     @staticmethod
     def _strip_code_fences(text: str) -> str:
