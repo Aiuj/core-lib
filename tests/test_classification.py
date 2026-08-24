@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core_lib.classification import DocumentClassifier, DocumentClassificationResult
+from core_lib.classification.classifier import _DocumentStructureResult
 from core_lib.config.doc_categories import DOC_CATEGORIES
 
 
@@ -274,6 +275,88 @@ class TestDocumentClassifierClassifyHappyPath:
             clf._client = _mock_client(_make_result(category_id=key))
             result = clf.classify(filename="x.pdf", content_excerpt="content")
             assert result.category_id == key, f"Expected {key!r}, got {result.category_id!r}"
+
+    def test_rechecks_repeated_qa_when_combined_classifier_says_prose(self):
+        initial = _make_result(
+            primary_topics=["security"],
+            capabilities=["security controls"],
+            content_structure="prose",
+            structure_confidence=1.0,
+            pairing_pattern="unknown",
+        )
+        focused = _DocumentStructureResult(
+            content_structure="qa_pairs",
+            structure_confidence=0.97,
+            pairing_pattern="alternating_blocks",
+        )
+        excerpt = (
+            "Do you hold security certifications?\n"
+            "Yes. We hold ISO 27001 and SOC 2 certifications.\n"
+            "Do you conduct annual penetration tests?\n"
+            "Yes. An external firm performs them annually.\n"
+            "Do you maintain an information security policy?\n"
+            "Yes. Senior management reviews it every year."
+        )
+        clf = DocumentClassifier()
+        clf._client = MagicMock()
+        clf._client.chat.side_effect = [
+            {"content": initial},
+            {"content": focused},
+        ]
+
+        result = clf.classify(filename="avalara.docx", content_excerpt=excerpt)
+
+        assert clf._client.chat.call_count == 2
+        assert result.content_structure == "qa_pairs"
+        assert result.structure_confidence == 0.97
+        assert result.pairing_pattern == "alternating_blocks"
+        assert clf._client.chat.call_args.kwargs["structured_output"] is _DocumentStructureResult
+
+    def test_focused_structure_check_can_confirm_prose(self):
+        initial = _make_result(
+            primary_topics=["support"],
+            capabilities=["troubleshooting"],
+            content_structure="prose",
+            structure_confidence=0.9,
+        )
+        focused = _DocumentStructureResult(
+            content_structure="prose",
+            structure_confidence=0.96,
+            pairing_pattern="unknown",
+        )
+        excerpt = (
+            "Why does setup matter?\nThis chapter explains the background.\n"
+            "What should teams consider?\nThe discussion continues below.\n"
+            "Where can readers learn more?\nSee the reference chapter."
+        )
+        clf = DocumentClassifier()
+        clf._client = MagicMock()
+        clf._client.chat.side_effect = [
+            {"content": initial},
+            {"content": focused},
+        ]
+
+        result = clf.classify(filename="guide.docx", content_excerpt=excerpt)
+
+        assert result.content_structure == "prose"
+        assert result.structure_confidence == 0.9
+
+    def test_does_not_recheck_sparse_question_punctuation(self):
+        initial = _make_result(
+            primary_topics=["installation"],
+            capabilities=["setup"],
+            content_structure="prose",
+            structure_confidence=0.95,
+        )
+        clf = self._classifier_with_result(initial)
+
+        result = clf.classify(
+            filename="guide.docx",
+            content_excerpt="Why install it?\nThe remainder is ordinary explanatory prose.",
+        )
+
+        assert result.content_structure == "prose"
+        assert clf._client.chat.call_count == 1
 
 
 # ---------------------------------------------------------------------------

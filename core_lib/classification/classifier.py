@@ -1,7 +1,10 @@
 """LLM-based document classifier with RAG description generation."""
 from __future__ import annotations
 
-from typing import Optional
+import re
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
 
 from core_lib.config.doc_categories import DOC_CATEGORIES
 from core_lib.llm import create_fallback_llm_client
@@ -10,6 +13,27 @@ from core_lib.tracing import get_module_logger
 from .schemas import DocumentClassificationResult
 
 logger = get_module_logger()
+
+
+class _DocumentStructureResult(BaseModel):
+    """Focused result used to verify a suspicious combined classification."""
+
+    content_structure: Literal[
+        "prose", "qa_pairs", "table", "list", "presentation", "mixed", "unknown"
+    ]
+    structure_confidence: float = Field(ge=0.0, le=1.0)
+    pairing_pattern: Literal[
+        "alternating_blocks", "table_columns", "labeled_fields", "mixed", "unknown"
+    ] = "unknown"
+
+
+_STRUCTURE_SYSTEM_PROMPT = """Classify only the structure of the supplied document excerpt.
+Return content_structure, structure_confidence, and pairing_pattern. Use qa_pairs when the
+excerpt repeatedly alternates an actual question or prompt with its answer, even when answers
+are long, contain lists, or dominate the word count. Use mixed when at least two such pairs
+coexist with substantial unrelated content. Use prose for ordinary narrative, including
+rhetorical questions and question-shaped headings without answers. Pairing patterns are
+alternating_blocks, table_columns, labeled_fields, mixed, or unknown."""
 
 # Build the category list once at import time so the prompt stays in sync with DOC_CATEGORIES.
 _CATEGORIES_LIST = "\n".join(
@@ -194,6 +218,10 @@ class DocumentClassifier:
                     citation_mode_confidence=result.citation_mode_confidence,
                 )
 
+            result = self._verify_suspicious_structure(
+                client, result, filename, content_excerpt, language, file_type,
+            )
+
             result = self._enrich_missing_scope_terms(
                 client, result, filename, content_excerpt, language, file_type,
                 document_role,
@@ -217,6 +245,95 @@ class DocumentClassifier:
                 usage="classify",
             )
         return self._client
+
+    @staticmethod
+    def _has_repeated_qa_boundaries(content_excerpt: str) -> bool:
+        """Return whether an excerpt has enough boundary evidence to merit verification.
+
+        This is deliberately only a retry gate, not a structure classifier. The focused
+        LLM still makes the semantic decision about whether prompts have real answers.
+        """
+        lines = [line.strip() for line in (content_excerpt or "").splitlines() if line.strip()]
+        question_indexes = [
+            index for index, line in enumerate(lines)
+            if re.search(r"[?？](?:[\s'\"’”]*)$", line)
+        ]
+        if len(question_indexes) < 3:
+            return False
+
+        answered_boundaries = 0
+        for position, question_index in enumerate(question_indexes):
+            next_question = (
+                question_indexes[position + 1]
+                if position + 1 < len(question_indexes)
+                else len(lines)
+            )
+            if any(
+                not re.search(r"[?？](?:[\s'\"’”]*)$", line)
+                for line in lines[question_index + 1:next_question]
+            ):
+                answered_boundaries += 1
+        return answered_boundaries >= 3
+
+    def _verify_suspicious_structure(
+        self,
+        client,
+        result: DocumentClassificationResult,
+        filename: str,
+        content_excerpt: str,
+        language: str,
+        file_type: Optional[str],
+    ) -> DocumentClassificationResult:
+        """Run one focused LLM check when repeated Q&A evidence contradicts the result."""
+        if result.content_structure in {"qa_pairs", "mixed"}:
+            return result
+        if not self._has_repeated_qa_boundaries(content_excerpt):
+            return result
+
+        try:
+            response = client.chat(
+                messages=[
+                    {"role": "system", "content": _STRUCTURE_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Document: {filename}"
+                            f"{f' ({file_type.upper()} file)' if file_type else ''}"
+                            f"{f', language: {language}' if language and language != 'unknown' else ''}"
+                            f"\n\nContent excerpt:\n{content_excerpt}"
+                        ),
+                    },
+                ],
+                structured_output=_DocumentStructureResult,
+            )
+            focused = response.get("content") if isinstance(response, dict) else None
+            if isinstance(focused, dict):
+                focused = _DocumentStructureResult.model_validate(focused)
+            if not isinstance(focused, _DocumentStructureResult):
+                return result
+            if (
+                focused.content_structure not in {"qa_pairs", "mixed"}
+                or focused.structure_confidence < 0.65
+            ):
+                return result
+
+            logger.info(
+                "Focused structure verification corrected '%s' from %s to %s (confidence=%.2f)",
+                filename,
+                result.content_structure,
+                focused.content_structure,
+                focused.structure_confidence,
+            )
+            return result.model_copy(
+                update={
+                    "content_structure": focused.content_structure,
+                    "structure_confidence": focused.structure_confidence,
+                    "pairing_pattern": focused.pairing_pattern,
+                }
+            )
+        except Exception as exc:
+            logger.warning("Focused structure verification failed for '%s': %s", filename, exc)
+            return result
 
     @staticmethod
     def _coerce_result(response) -> Optional[DocumentClassificationResult]:
