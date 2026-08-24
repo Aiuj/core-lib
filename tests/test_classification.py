@@ -56,6 +56,18 @@ class TestDocumentClassificationResultSchema:
         assert result.pairing_pattern == "unknown"
         assert result.prospect_document_type is None
         assert result.prospect_document_type_confidence == 0.0
+        assert result.citation_mode == "knowledge"
+        assert result.citation_mode_confidence == 0.0
+
+    def test_citation_mode_is_validated(self):
+        result = _make_result(citation_mode="reference", citation_mode_confidence=0.9)
+        assert result.citation_mode == "reference"
+        assert result.citation_mode_confidence == 0.9
+
+    def test_invalid_citation_mode_is_rejected(self):
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            _make_result(citation_mode="maybe")
 
     def test_structure_fields_are_topic_independent(self):
         result = _make_result(
@@ -219,6 +231,8 @@ class TestDocumentClassifierClassifyHappyPath:
     def test_retries_once_when_scope_terms_are_missing(self):
         initial = _make_result(
             description="Security compliance evidence for customer audits.",
+            citation_mode="reference",
+            citation_mode_confidence=0.87,
         )
         enriched = _make_result(
             primary_topics=["cybersecurity compliance"],
@@ -233,6 +247,10 @@ class TestDocumentClassifierClassifyHappyPath:
         assert clf._client.chat.call_count == 2
         assert result.primary_topics == ["cybersecurity compliance"]
         assert result.capabilities == ["ISO 27001 and SOC 2 audit evidence"]
+        # citation_mode from the initial classification must survive the
+        # enrichment reconstruction, not silently reset to the schema default.
+        assert result.citation_mode == "reference"
+        assert result.citation_mode_confidence == 0.87
 
     def test_calls_chat_with_system_and_user_messages(self):
         clf = self._classifier_with_result(_make_result())
@@ -278,6 +296,8 @@ class TestDocumentClassifierCategoryValidation:
             description="some description",
             prospect_document_type="requirements_specification",
             prospect_document_type_confidence=0.91,
+            citation_mode="reference",
+            citation_mode_confidence=0.73,
         )
         clf = DocumentClassifier()
         clf._client = _mock_client(bad_result)
@@ -289,6 +309,10 @@ class TestDocumentClassifierCategoryValidation:
         assert result.detection_method == "llm"  # stays llm, not default
         assert result.prospect_document_type == "requirements_specification"
         assert result.prospect_document_type_confidence == 0.91
+        # citation_mode must survive the invalid-category-id reconstruction,
+        # not silently reset to the schema default ("knowledge").
+        assert result.citation_mode == "reference"
+        assert result.citation_mode_confidence == 0.73
 
 
 # ---------------------------------------------------------------------------
