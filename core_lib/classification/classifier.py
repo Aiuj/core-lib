@@ -67,6 +67,16 @@ French, etc.
   technical, security, evaluation, or timeline sections.
 - prospect_document_type_confidence: confidence between 0.0 and 1.0 in the
   prospect_document_type; use 0.0 when prospect_document_type is null
+- citation_mode: how this document's content should be cited when it answers a
+  question, exactly one of "knowledge" or "reference". Use "reference" for
+  signed contracts, certifications, compliance/audit reports, and formal
+  policies — documents whose exact wording and section is what should be
+  pointed to rather than paraphrased. Use "knowledge" for everything else
+  (product descriptions, marketing material, FAQs, technical guides,
+  general documentation) that is meant to be freely synthesized into
+  answers. When the document mixes both, judge by its dominant, primary
+  purpose.
+- citation_mode_confidence: confidence between 0.0 and 1.0 in citation_mode
 
 `primary_topics` and `capabilities` are required whenever the excerpt contains
 enough information to identify them. Return 1-5 concise terms for each; do not
@@ -180,6 +190,8 @@ class DocumentClassifier:
                     pairing_pattern=result.pairing_pattern,
                     prospect_document_type=result.prospect_document_type,
                     prospect_document_type_confidence=result.prospect_document_type_confidence,
+                    citation_mode=result.citation_mode,
+                    citation_mode_confidence=result.citation_mode_confidence,
                 )
 
             result = self._enrich_missing_scope_terms(
@@ -268,6 +280,8 @@ class DocumentClassifier:
                 pairing_pattern=result.pairing_pattern,
                 prospect_document_type=result.prospect_document_type,
                 prospect_document_type_confidence=result.prospect_document_type_confidence,
+                citation_mode=result.citation_mode,
+                citation_mode_confidence=result.citation_mode_confidence,
             )
         except Exception as exc:
             logger.warning("Failed to enrich document scope for '%s': %s", filename, exc)

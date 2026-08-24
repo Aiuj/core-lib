@@ -164,6 +164,21 @@ class DocumentClassificationResult(BaseModel):
         le=1.0,
         description="Confidence in prospect_document_type",
     )
+    citation_mode: Literal["knowledge", "reference"] = Field(
+        default="knowledge",
+        description=(
+            "How this document's content should be cited in answers: 'reference' "
+            "when it should be pointed to instead of quoted (contracts, "
+            "certifications, signed policies), 'knowledge' when it should be "
+            "freely paraphrased into synthesized answers"
+        ),
+    )
+    citation_mode_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in citation_mode",
+    )
 
     def to_topic_profile(self, language: str = "unknown") -> TopicProfile:
         return TopicProfile(
