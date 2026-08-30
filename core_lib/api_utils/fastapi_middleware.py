@@ -57,10 +57,15 @@ class FromContextMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process the request and inject 'from' context.
-        
-        Automatically generates a unique ``process_id`` for each request so that
-        all log records emitted while handling this request can be correlated.
-        
+
+        Ensures a ``process_id`` is present for the duration of this request so
+        that all log records emitted while handling it can be correlated.
+        ``process_id`` identifies one task, which may span multiple HTTP hops
+        (e.g. saas-admin calling agent-rfx calling mcp-doc-qa for the same
+        logical operation): if the caller already supplied one in the ``from``
+        context, it is preserved; only requests with no inbound process_id get
+        a freshly generated one here.
+
         Args:
             request: The incoming request
             call_next: The next middleware/handler in the chain
@@ -70,11 +75,14 @@ class FromContextMiddleware(BaseHTTPMiddleware):
         """
         from_raw = request.query_params.get("from")
         from_dict = parse_from(from_raw)
-        
-        # Generate a unique process_id for this request
-        process_id = generate_process_id()
-        from_dict['process_id'] = process_id
-        
+
+        # process_id identifies one task/operation. If the caller already
+        # supplied one (e.g. forwarded from an upstream service handling the
+        # same logical task), preserve it instead of overwriting it, so a
+        # single task spanning multiple HTTP hops keeps one process_id.
+        from_dict.setdefault('process_id', generate_process_id())
+        process_id = from_dict['process_id']
+
         # Extract intelligence_level from query params if present
         intelligence_level_raw = request.query_params.get("intelligence_level")
         if intelligence_level_raw is not None:
@@ -86,13 +94,13 @@ class FromContextMiddleware(BaseHTTPMiddleware):
             except (ValueError, TypeError):
                 # Ignore invalid intelligence_level values
                 pass
-        
+
         # Attach to request state for downstream usage
         try:
             request.state.from_dict = from_dict  # type: ignore[attr-defined]
         except Exception:
             pass
-        
+
         try:
             # Use LoggingContext to inject fields into all log records
             with LoggingContext(from_dict):
@@ -155,11 +163,14 @@ async def inject_from_logging_context(
     """
     from_raw = request.query_params.get("from")
     from_dict = parse_from(from_raw)
-    
-    # Generate a unique process_id for this request
-    process_id = generate_process_id()
-    from_dict['process_id'] = process_id
-    
+
+    # process_id identifies one task/operation. If the caller already
+    # supplied one (e.g. forwarded from an upstream service handling the
+    # same logical task), preserve it instead of overwriting it, so a
+    # single task spanning multiple HTTP hops keeps one process_id.
+    from_dict.setdefault('process_id', generate_process_id())
+    process_id = from_dict['process_id']
+
     # Extract intelligence_level from query params if present
     intelligence_level_raw = request.query_params.get("intelligence_level")
     if intelligence_level_raw is not None:
@@ -171,13 +182,13 @@ async def inject_from_logging_context(
         except (ValueError, TypeError):
             # Ignore invalid intelligence_level values
             pass
-    
+
     # Attach to request state for downstream usage
     try:
         request.state.from_dict = from_dict  # type: ignore[attr-defined]
     except Exception:
         pass
-    
+
     try:
         with LoggingContext(from_dict):
             if tracing_client and from_dict:

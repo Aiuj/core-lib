@@ -149,6 +149,22 @@ def test_middleware_process_id_unique_per_request(app):
     assert len(ids) == 10
 
 
+def test_middleware_preserves_inbound_process_id(app):
+    """An inbound process_id in `from` is preserved (one task, many hops)."""
+    client = TestClient(app)
+    inbound_pid = str(uuid.uuid4())
+    from_param = f'{{"process_id":"{inbound_pid}"}}'
+
+    response = client.get(f'/test?from={from_param}')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["context"]["process_id"] == inbound_pid
+    # The response header must match the preserved id, not a freshly
+    # generated one, so downstream/response-side correlation stays correct.
+    assert response.headers["X-Process-ID"] == inbound_pid
+
+
 def test_class_middleware_injects_process_id():
     """Test FromContextMiddleware class also generates process_id."""
     app = FastAPI()
