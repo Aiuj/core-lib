@@ -40,13 +40,18 @@ _logging_context: ContextVar[Dict[str, Any]] = ContextVar('logging_context', def
 
 
 def generate_process_id() -> str:
-    """Generate a unique process ID for correlating logs within a single operation.
-    
-    A process_id identifies all log records produced while handling one API call,
-    background job, or MCP tool invocation.  Unlike session_id (which is
-    client-provided and spans multiple requests), process_id is server-generated
-    and scoped to exactly one execution.
-    
+    """Generate a unique process ID for correlating logs within a single task.
+
+    A process_id identifies all log records produced while carrying out one
+    task -- e.g. ingesting one document, processing one RFx, answering one
+    question -- which may itself involve several API calls, background jobs,
+    or MCP tool invocations across multiple services. Unlike session_id
+    (client-provided, scoped to one user session and spanning many tasks),
+    process_id is generated once at the origin of a task and should be
+    forwarded unchanged by every hop that continues the same task (see
+    ``FromContextMiddleware``, which preserves an inbound process_id via
+    ``setdefault`` instead of regenerating one on every request).
+
     Returns:
         A UUID4 string, e.g. ``"a1b2c3d4-e5f6-7890-abcd-ef1234567890"``.
     

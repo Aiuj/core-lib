@@ -109,6 +109,8 @@ class OllamaProvider(BaseProvider):
     _THINKING_MODEL_HINTS = (
         "deepseek-r1",
         "qwen3",
+        "granite-4.2",
+        "granite4.2",
     )
 
     def __init__(self, config: OllamaConfig) -> None:  # type: ignore[override]
@@ -158,6 +160,21 @@ class OllamaProvider(BaseProvider):
             return True
 
         return "responseerror" in error_type and has_missing_model_text
+
+    @staticmethod
+    def _is_schema_grammar_error(error: Exception) -> bool:
+        """Return True when Ollama cannot compile a JSON Schema into grammar.
+
+        Some Ollama/model combinations reject otherwise valid Pydantic JSON
+        Schemas (for example schemas containing nested references).  Retrying
+        with Ollama's JSON-only format still leaves the normal Pydantic output
+        validation in place, without disabling structured output globally.
+        """
+        error_text = str(error).lower()
+        return (
+            "failed to initialize samplers" in error_text
+            and "failed to parse grammar" in error_text
+        )
 
     def _extract_missing_model_name(self, error: Exception) -> str:
         """Best-effort extraction of missing model name from Ollama error text."""
@@ -428,7 +445,20 @@ class OllamaProvider(BaseProvider):
             try:
                 resp = self._chat_once(payload, effective_timeout)
             except Exception as first_error:
-                if self._is_connection_or_timeout_error(first_error):
+                if (
+                    structured_output is not None
+                    and isinstance(payload.get("format"), dict)
+                    and self._is_schema_grammar_error(first_error)
+                ):
+                    # Keep structured parsing/validation below, but use the
+                    # broadly supported JSON mode when this server cannot
+                    # compile the Pydantic schema into a grammar.
+                    logger.warning(
+                        "ollama rejected structured-output grammar; retrying with format='json'"
+                    )
+                    json_only_payload = {**payload, "format": "json"}
+                    resp = self._chat_once(json_only_payload, effective_timeout)
+                elif self._is_connection_or_timeout_error(first_error):
                     wake_result = self._wake_on_lan.maybe_wake(base_url_for_wol, first_error)
                     if wake_result.succeeded:
                         if wake_result.warmup_seconds:
@@ -541,7 +571,7 @@ class OllamaProvider(BaseProvider):
                         "tool_calls": tool_calls or [],
                         "usage": usage,
                         "text": content_text,
-                        "content_json": _json.dumps(parsed, ensure_ascii=False),
+                        "content_json": _json.dumps(parsed, ensure_ascii=False, default=str),
                     }
                 else:
                     # Could not validate the model output against the schema even

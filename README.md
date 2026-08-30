@@ -154,15 +154,15 @@ export OTLP_LOG_CHANNEL=faciliter
 
 ### Contextual Logging (Request Metadata):
 
-Add request-specific metadata (user ID, session ID, company ID) to all logs. The middleware also auto-generates a unique `process_id` per request for precise log correlation:
+Add request-specific metadata (user ID, session ID, company ID) to all logs. The middleware ensures a task-scoped `process_id`: it preserves an inbound ID when a request continues the same logical task across services, or generates one at the task origin.
 
 ```python
 from core_lib.api_utils.fastapi_middleware import FromContextMiddleware
 
-# Recommended: use the built-in middleware (auto-generates process_id)
+# Recommended: use the built-in middleware (preserves or generates process_id)
 app.add_middleware(FromContextMiddleware)
 # Every log record now includes: process.id, session.id, user.id, organization.id, etc.
-# The process_id is returned in the X-Process-ID response header.
+# The effective process_id is returned in the X-Process-ID response header.
 ```
 
 For manual usage:
@@ -173,7 +173,7 @@ from core_lib.tracing import LoggingContext, FROM_FIELD_DESCRIPTION, parse_from,
 @app.post("/endpoint")
 async def endpoint(from_: Optional[str] = Query(None, alias="from", description=FROM_FIELD_DESCRIPTION)):
     from_dict = parse_from(from_)  # Parse JSON metadata
-    from_dict["process_id"] = generate_process_id()  # Unique ID for this call
+    from_dict.setdefault("process_id", generate_process_id())  # Preserve an upstream task ID
     
     with LoggingContext(from_dict):
         logger.info("Processing request")
@@ -181,6 +181,8 @@ async def endpoint(from_: Optional[str] = Query(None, alias="from", description=
 ```
 
 See **[Centralized Logging Guide](docs/centralized-logging.md)** for FastAPI, MCP, CLI, and web app examples.
+
+Completed business/system actions can also emit one dashboard-friendly event with `log_usage_event()` and the canonical names in `core_lib.tracing.usage_actions`. See **[Service Usage Tracking](docs/SERVICE_USAGE_TRACKING.md#business-action-usage-events)**.
 
 ---
 

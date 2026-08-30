@@ -39,6 +39,8 @@ from .service_pricing import (
     get_reranker_pricing,
     get_ocr_pricing,
 )
+from .usage_events import log_usage_event
+from . import usage_actions
 
 __all__ = [
     "TracingManager",
@@ -83,4 +85,6 @@ __all__ = [
     "get_embedding_pricing",
     "get_reranker_pricing",
     "get_ocr_pricing",
+    "log_usage_event",
+    "usage_actions",
 ]

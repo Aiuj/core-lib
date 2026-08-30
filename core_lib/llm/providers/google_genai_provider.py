@@ -102,12 +102,31 @@ def _get_http_timeout_ms() -> int:
     return 60_000
 
 
+_GEMINI_UNSUPPORTED_SCHEMA_KEYS = {
+    "additionalProperties",
+    "pattern",
+    "minLength",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+}
+
+
 def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove additionalProperties from JSON schema recursively and add propertyOrdering.
+    """Remove additionalProperties and complex constraints from JSON schema recursively.
     
-    The Gemini API does not support the 'additionalProperties' field in JSON schemas.
-    When Pydantic models have extra='forbid', they generate additionalProperties: false,
-    which causes Gemini API errors. This function recursively removes that field.
+    The Gemini API does not support 'additionalProperties' and has strict state limits
+    on its finite-state grammar compiler. Complex value matchers (regex patterns,
+    string length bounds, min/max numbers, and array item limits) cause 400 INVALID_ARGUMENT
+    ('The specified schema produces a constraint that has too many states for serving').
+    
+    This function recursively strips those keys while preserving type, properties,
+    required, items, enum, and description for reliable structured decoding.
     
     Additionally, Gemini 2.0 requires an explicit 'propertyOrdering' list to define
     the preferred structure. We derive this from the keys of the 'properties' dict.
@@ -116,15 +135,15 @@ def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
         schema: JSON schema dictionary (from Pydantic's model_json_schema())
         
     Returns:
-        Cleaned schema without additionalProperties and with propertyOrdering
+        Cleaned schema without unsupported constraints and with propertyOrdering
     """
     if not isinstance(schema, dict):
         return schema
     
     cleaned = {}
     for key, value in schema.items():
-        # Skip additionalProperties entirely
-        if key == "additionalProperties":
+        # Skip unsupported / state-heavy schema fields entirely
+        if key in _GEMINI_UNSUPPORTED_SCHEMA_KEYS:
             continue
         # Recursively clean nested dicts
         if isinstance(value, dict):
@@ -143,6 +162,7 @@ def _clean_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
         cleaned["propertyOrdering"] = list(cleaned["properties"].keys())
         
     return cleaned
+
 
 
 @dataclass
@@ -985,71 +1005,101 @@ class GoogleGenAIProvider(BaseProvider):
                 and isinstance(single_user_content, str)
             )
 
-            # If using fallback, augment the last user message with JSON schema
             working_messages = messages
-            if use_fallback_json and structured_output:
-                working_messages = list(messages)
-                for i in range(len(working_messages) - 1, -1, -1):
-                    if working_messages[i].get("role") == "user":
-                        working_messages[i] = {
-                            **working_messages[i],
-                            "content": augment_prompt_for_json(
-                                working_messages[i].get("content", ""),
-                                structured_output
-                            )
-                        }
-                        break
-                user_messages = [m for m in working_messages if m.get("role") == "user"]
 
-            if is_single_turn_text_only:
-                user_text = user_messages[0].get("content", "")
-                extra = self._build_config(
-                    structured_output=structured_output if not use_fallback_json else None,
-                    tools=tools,
-                    system_message=effective_system_message,
-                    use_search_grounding=use_search_grounding,
-                    thinking_enabled_override=thinking_enabled,
-                    cached_content=cached_content,
-                )
-                start = time.perf_counter()
-                
-                # Call generate_content (streaming only if explicitly requested)
-                resp = self._client.models.generate_content(
-                    model=self.config.model,
-                    contents=user_text,
-                    **extra,
-                )
-                latency_ms = (time.perf_counter() - start) * 1000
-                chunks = [resp] if resp else []
-                     
-            else:
-                prompt = self._to_genai_messages(working_messages)
-                extra = self._build_config(
-                    structured_output=structured_output if not use_fallback_json else None,
-                    tools=tools,
-                    system_message=effective_system_message,
-                    use_search_grounding=use_search_grounding,
-                    thinking_enabled_override=thinking_enabled,
-                    cached_content=cached_content,
-                )
-                chat = self._client.chats.create(model=self.config.model)
-                start = time.perf_counter()
-                
-                try:
-                    stream = chat.send_message_stream(prompt, **extra)  # type: ignore[arg-type]
-                    chunks = list(stream) if stream else []
-                except (AttributeError, TypeError):
-                    chunks = []
-                
-                if not chunks:
-                    resp = chat.send_message(prompt, **extra)
-                    chunks = [resp] if resp else []
+            def _execute_call():
+                nonlocal user_messages, working_messages, is_single_turn_text_only
+                if use_fallback_json and structured_output:
+                    working_messages = list(messages)
+                    for i in range(len(working_messages) - 1, -1, -1):
+                        if working_messages[i].get("role") == "user":
+                            working_messages[i] = {
+                                **working_messages[i],
+                                "content": augment_prompt_for_json(
+                                    working_messages[i].get("content", ""),
+                                    structured_output
+                                )
+                            }
+                            break
+                    user_messages = [m for m in working_messages if m.get("role") == "user"]
+                    is_single_turn_text_only = (
+                        len(user_messages) == 1
+                        and len(assistant_messages) == 0
+                        and len(messages) <= 2
+                        and isinstance(user_messages[0].get("content", ""), str)
+                    )
 
-                latency_ms = (time.perf_counter() - start) * 1000
-                
-                resp = chunks[-1] if chunks else None
-                if not resp:
-                     raise RuntimeError("Empty response stream from Google GenAI")
+                if is_single_turn_text_only:
+                    user_text = user_messages[0].get("content", "")
+                    extra = self._build_config(
+                        structured_output=structured_output if not use_fallback_json else None,
+                        tools=tools,
+                        system_message=effective_system_message,
+                        use_search_grounding=use_search_grounding,
+                        thinking_enabled_override=thinking_enabled,
+                        cached_content=cached_content,
+                    )
+                    start = time.perf_counter()
+                    resp = self._client.models.generate_content(
+                        model=self.config.model,
+                        contents=user_text,
+                        **extra,
+                    )
+                    lat = (time.perf_counter() - start) * 1000
+                    return ([resp] if resp else []), lat
+                else:
+                    prompt = self._to_genai_messages(working_messages)
+                    extra = self._build_config(
+                        structured_output=structured_output if not use_fallback_json else None,
+                        tools=tools,
+                        system_message=effective_system_message,
+                        use_search_grounding=use_search_grounding,
+                        thinking_enabled_override=thinking_enabled,
+                        cached_content=cached_content,
+                    )
+                    chat = self._client.chats.create(model=self.config.model)
+                    start = time.perf_counter()
+                    try:
+                        stream = chat.send_message_stream(prompt, **extra)  # type: ignore[arg-type]
+                        chunks_list = list(stream) if stream else []
+                    except (AttributeError, TypeError):
+                        chunks_list = []
+
+                    if not chunks_list:
+                        resp = chat.send_message(prompt, **extra)
+                        chunks_list = [resp] if resp else []
+
+                    lat = (time.perf_counter() - start) * 1000
+                    return chunks_list, lat
+
+            try:
+                chunks, latency_ms = _execute_call()
+            except Exception as call_exc:
+                err_msg = str(call_exc).lower()
+                is_schema_err = (
+                    structured_output is not None
+                    and not use_fallback_json
+                    and (
+                        "schema" in err_msg
+                        or "constraint" in err_msg
+                        or "too many states" in err_msg
+                        or "invalid_argument" in err_msg
+                    )
+                )
+                if is_schema_err:
+                    logger.warning(
+                        "Google GenAI native structured schema rejected by API (%s); "
+                        "falling back to prompt-augmented JSON mode",
+                        call_exc,
+                    )
+                    use_fallback_json = True
+                    chunks, latency_ms = _execute_call()
+                else:
+                    raise
+
+            resp = chunks[-1] if chunks else None
+            if not resp:
+                raise RuntimeError("Empty response stream from Google GenAI")
 
             # Aggregate content from chunks
             # text: concatenate all chunks
@@ -1302,7 +1352,7 @@ class GoogleGenAIProvider(BaseProvider):
                     result["content"] = parsed_result
                 result["structured"] = True
                 result["text"] = extracted_text
-                result["content_json"] = json.dumps(result["content"], ensure_ascii=False)
+                result["content_json"] = json.dumps(result["content"], ensure_ascii=False, default=str)
             else:
                 result["structured"] = False
 

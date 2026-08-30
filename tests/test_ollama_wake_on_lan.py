@@ -6,6 +6,7 @@ import time
 import types
 
 import pytest
+from pydantic import BaseModel
 
 from core_lib.api_utils.wake_on_lan import WakeResult
 from core_lib.llm.provider_registry import ProviderConfig
@@ -326,6 +327,14 @@ def test_ollama_config_from_env_reads_api_key(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_granite_42_is_detected_as_thinking_capable():
+    """Granite 4.2 Ollama tags should receive the native think flag."""
+    provider = OllamaProvider.__new__(OllamaProvider)
+    provider.config = OllamaConfig(model="granite4.2:8b")
+
+    assert provider._supports_thinking()
+
+
 def test_think_false_sent_for_non_hinted_model_with_thinking_disabled(monkeypatch):
     """think:false must be sent even when the model is not in _THINKING_MODEL_HINTS.
 
@@ -540,6 +549,46 @@ def test_ollama_parses_text_tool_calls_from_content_when_structured_missing(monk
     assert result["tool_calls"][0]["function"]["arguments"] == '{"limit": 5}'
     # Tool-call markup should be removed from returned content
     assert result["content"] == ""
+
+
+def test_ollama_retries_json_only_when_schema_grammar_is_rejected(monkeypatch):
+    """A schema compiler failure must not make structured answers unavailable."""
+
+    payloads = []
+
+    class GrammarError(Exception):
+        pass
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            self.host = host
+
+        def chat(self, **payload):
+            payloads.append(payload)
+            if isinstance(payload.get("format"), dict):
+                raise GrammarError(
+                    "Failed to initialize samplers: failed to parse grammar"
+                )
+            return {
+                "message": {"content": '{"answer":"ok"}'},
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+
+    class Answer(BaseModel):
+        answer: str
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(Client=FakeClient))
+    provider = OllamaProvider(OllamaConfig(model="ministral-3"))
+
+    result = provider.chat(
+        messages=[{"role": "user", "content": "Return JSON."}],
+        structured_output=Answer,
+    )
+
+    assert isinstance(payloads[0]["format"], dict)
+    assert payloads[1]["format"] == "json"
+    assert result["structured"] is True
+    assert result["content"] == {"answer": "ok"}
 
 
 def test_convert_messages_tool_call_arguments_string_to_dict():

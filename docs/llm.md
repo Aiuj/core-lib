@@ -160,6 +160,15 @@ if response["structured"] and not response.get("error"):
     print(f"{report['location']}: {report['temperature']}°C, {report['condition']}")
 ```
 
+Provider adapters validate the returned instance against the supplied Pydantic model. Structured-output transport is resilient but does not weaken validation:
+
+- Ollama first uses its native JSON-schema grammar. If the server cannot compile that grammar, core-lib retries once with `format="json"`, applies the schema-aware JSON prompt, and validates the result locally.
+- Google GenAI removes unsupported schema-only constraints before native submission. If the API still rejects a complex schema, it retries in prompt-augmented JSON mode and validates the recovered object locally.
+- Recovery handles fenced JSON, key casing, nested response objects, literal casing, and schema-as-instance output from smaller models. A schema definition echoed as an answer is discarded.
+- If no candidate validates, the provider returns `structured=False` with text content. Callers must treat structured metadata as unavailable and apply their own fail-closed policy where required.
+
+These fallbacks address provider grammar/schema compatibility. They do not execute model-generated code or accept an object that fails the requested Pydantic schema.
+
 ### Tool / Function Calling
 
 ```python

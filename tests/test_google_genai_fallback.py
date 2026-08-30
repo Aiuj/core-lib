@@ -194,6 +194,91 @@ class TestGeminiJSONModeFallback:
             assert result["structured"] is True
             assert result["content"] == {"result": "success", "score": 0.95}
 
+    def test_clean_schema_for_gemini_removes_unsupported_constraints(self):
+        """Test that _clean_schema_for_gemini strips pattern, min/max length, min/max bounds, array bounds."""
+        from core_lib.llm.providers.google_genai_provider import _clean_schema_for_gemini
+        raw_schema = {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": r"^[A-Z][a-z]+$",
+                    "minLength": 1,
+                    "maxLength": 50,
+                },
+                "age": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 120,
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 20},
+                    "minItems": 1,
+                    "maxItems": 10,
+                },
+            },
+            "additionalProperties": False,
+            "required": ["name"],
+        }
+        cleaned = _clean_schema_for_gemini(raw_schema)
+
+        assert "additionalProperties" not in cleaned
+        assert "pattern" not in cleaned["properties"]["name"]
+        assert "minLength" not in cleaned["properties"]["name"]
+        assert "maxLength" not in cleaned["properties"]["name"]
+        assert "minimum" not in cleaned["properties"]["age"]
+        assert "maximum" not in cleaned["properties"]["age"]
+        assert "minItems" not in cleaned["properties"]["tags"]
+        assert "maxItems" not in cleaned["properties"]["tags"]
+        assert "maxLength" not in cleaned["properties"]["tags"]["items"]
+        assert cleaned["propertyOrdering"] == ["name", "age", "tags"]
+        assert cleaned["properties"]["name"]["type"] == "string"
+
+    def test_gemini_schema_rejection_falls_back_to_prompt_json(self):
+        """Test that when native schema call fails with 400 schema error, fallback to prompt JSON occurs."""
+        config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash-lite")
+
+        with patch('google.genai.Client') as mock_client_class, \
+             patch('openinference.instrumentation.google_genai.GoogleGenAIInstrumentor'):
+
+            provider = GoogleGenAIProvider(config)
+            mock_client = mock_client_class.return_value
+
+            success_chunk = SimpleNamespace(
+                candidates=[
+                    SimpleNamespace(
+                        content=SimpleNamespace(
+                            parts=[SimpleNamespace(text='{"result": "recovered", "score": 1.0}')]
+                        )
+                    )
+                ],
+                function_calls=None,
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=10,
+                    candidates_token_count=5,
+                    total_token_count=15,
+                ),
+                parsed=None,
+            )
+
+            # First call with native schema fails with 400 schema constraint error
+            # Second call (with use_fallback_json) succeeds
+            mock_client.models.generate_content.side_effect = [
+                Exception("400 INVALID_ARGUMENT. The specified schema produces a constraint that has too many states for serving."),
+                success_chunk,
+            ]
+
+            result = provider.chat(
+                messages=[{"role": "user", "content": "test"}],
+                structured_output=SampleSchema,
+            )
+
+            assert result["structured"] is True
+            assert result["content"]["result"] == "recovered"
+            assert result["content"]["score"] == 1.0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

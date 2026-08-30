@@ -599,3 +599,28 @@ def test_openai_provider_does_not_send_chat_template_kwargs_for_mistral(monkeypa
 
     call_kwargs = completions.calls[0]
     assert "extra_body" not in call_kwargs
+
+
+def test_openai_provider_sends_granite_thinking_controls_to_deepinfra():
+    """Granite 4.2 uses chat-template kwargs on DeepInfra for all thinking modes."""
+    provider = OpenAIProvider.__new__(OpenAIProvider)
+    provider.config = OpenAIConfig(
+        api_key="fake-key",
+        model="ibm-granite/granite-4.2-8b",
+        base_url="https://api.deepinfra.com/v1/openai",
+        thinking_config={"enabled": True, "low_effort": True},
+    )
+
+    create_kwargs = {}
+    provider._apply_thinking_mode(create_kwargs, use_thinking=True)
+
+    assert create_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": True, "low_effort": True}
+    }
+
+    create_kwargs = {}
+    provider._apply_thinking_mode(create_kwargs, use_thinking=False)
+
+    assert create_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
