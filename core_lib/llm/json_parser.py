@@ -523,8 +523,22 @@ def _build_json_prompt_template(schema: Type[BaseModel]) -> str:
     """
     schema_json = schema.model_json_schema()
     properties = schema_json.get("properties", {})
+    definitions = schema_json.get("$defs", {})
 
-    def _example_for_field(field_name: str, field_schema: Dict[str, Any]) -> Any:
+    def _resolve_ref(field_schema: Dict[str, Any]) -> Dict[str, Any]:
+        ref = field_schema.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            resolved = definitions.get(ref.rsplit("/", 1)[-1])
+            if isinstance(resolved, dict):
+                return resolved
+        return field_schema
+
+    def _example_for_field(
+        field_name: str,
+        field_schema: Dict[str, Any],
+        depth: int = 0,
+    ) -> Any:
+        field_schema = _resolve_ref(field_schema)
         enum_values = field_schema.get("enum")
         if enum_values is not None:
             return "|".join(str(v) for v in enum_values)
@@ -537,34 +551,43 @@ def _build_json_prompt_template(schema: Type[BaseModel]) -> str:
             if isinstance(t, dict) and t.get("type") != "null"
         ]
 
-        # Use explicit default when present
+        effective_schema = non_null_types[0] if non_null_types else field_schema
+        effective_schema = _resolve_ref(effective_schema)
+        field_type = effective_schema.get("type", "string")
+
+        # Array defaults are commonly [] even when the model must populate the
+        # field for a successful response.  Showing the item shape is much more
+        # useful than an empty list in JSON-only fallbacks, especially for
+        # nested claim/citation metadata.
+        if field_type == "array":
+            items_schema = effective_schema.get("items", {})
+            if isinstance(items_schema, dict):
+                return [_example_for_field(f"{field_name}_item", items_schema, depth + 1)]
+            return [f"<{field_name}_item>"]
+
+        # Use explicit scalar/object defaults after arrays have exposed their
+        # item shape. Nullable fields intentionally remain null.
         if "default" in field_schema:
             return field_schema["default"]
         if is_nullable:
             return None
 
-        effective_schema = non_null_types[0] if non_null_types else field_schema
-        field_type = effective_schema.get("type", "string")
-
         if field_type == "boolean":
             return True
         if field_type in ("integer", "number"):
             return 0
-        if field_type == "array":
-            items_schema = effective_schema.get("items", {})
-            if isinstance(items_schema, dict):
-                item_type = items_schema.get("type", "string")
-                item_enum = items_schema.get("enum")
-                if item_enum is not None:
-                    return ["|".join(str(v) for v in item_enum)]
-                if item_type in ("integer", "number"):
-                    return [0]
-                if item_type == "boolean":
-                    return [True]
-                if item_type == "object":
-                    return [{}]
-            return [f"<{field_name}_item>"]
         if field_type == "object":
+            nested_properties = effective_schema.get("properties", {})
+            if isinstance(nested_properties, dict) and depth < 6:
+                return {
+                    nested_name: _example_for_field(
+                        nested_name,
+                        nested_schema,
+                        depth + 1,
+                    )
+                    for nested_name, nested_schema in nested_properties.items()
+                    if isinstance(nested_schema, dict)
+                }
             return {}
         return f"<{field_name}>"
 

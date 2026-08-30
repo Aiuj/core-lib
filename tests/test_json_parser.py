@@ -149,6 +149,26 @@ class TestAugmentPromptForJson:
         assert isinstance(template.get("missing_information"), list)
         assert isinstance(template.get("recommendations"), list)
 
+    def test_augment_prompt_expands_nested_array_item_shape(self):
+        """JSON-only providers must show nested fields instead of an empty list."""
+        class Claim(BaseModel):
+            text: str
+            evidence_refs: list[str] = Field(default_factory=list)
+
+        class GroundedAnswer(BaseModel):
+            answer: str
+            grounding_claims: list[Claim] = Field(default_factory=list)
+
+        result = augment_prompt_for_json("Answer", GroundedAnswer)
+        template = json.loads(result[result.find("{"):])
+
+        assert template["grounding_claims"] == [
+            {
+                "text": "<text>",
+                "evidence_refs": ["<evidence_refs_item>"],
+            }
+        ]
+
 
 class TestStripMarkdownCodeBlock:
     """Tests for _strip_markdown_code_block helper."""

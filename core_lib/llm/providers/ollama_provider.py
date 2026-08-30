@@ -159,6 +159,21 @@ class OllamaProvider(BaseProvider):
 
         return "responseerror" in error_type and has_missing_model_text
 
+    @staticmethod
+    def _is_schema_grammar_error(error: Exception) -> bool:
+        """Return True when Ollama cannot compile a JSON Schema into grammar.
+
+        Some Ollama/model combinations reject otherwise valid Pydantic JSON
+        Schemas (for example schemas containing nested references).  Retrying
+        with Ollama's JSON-only format still leaves the normal Pydantic output
+        validation in place, without disabling structured output globally.
+        """
+        error_text = str(error).lower()
+        return (
+            "failed to initialize samplers" in error_text
+            and "failed to parse grammar" in error_text
+        )
+
     def _extract_missing_model_name(self, error: Exception) -> str:
         """Best-effort extraction of missing model name from Ollama error text."""
         message = str(error)
@@ -428,7 +443,20 @@ class OllamaProvider(BaseProvider):
             try:
                 resp = self._chat_once(payload, effective_timeout)
             except Exception as first_error:
-                if self._is_connection_or_timeout_error(first_error):
+                if (
+                    structured_output is not None
+                    and isinstance(payload.get("format"), dict)
+                    and self._is_schema_grammar_error(first_error)
+                ):
+                    # Keep structured parsing/validation below, but use the
+                    # broadly supported JSON mode when this server cannot
+                    # compile the Pydantic schema into a grammar.
+                    logger.warning(
+                        "ollama rejected structured-output grammar; retrying with format='json'"
+                    )
+                    json_only_payload = {**payload, "format": "json"}
+                    resp = self._chat_once(json_only_payload, effective_timeout)
+                elif self._is_connection_or_timeout_error(first_error):
                     wake_result = self._wake_on_lan.maybe_wake(base_url_for_wol, first_error)
                     if wake_result.succeeded:
                         if wake_result.warmup_seconds:
