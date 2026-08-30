@@ -18,6 +18,26 @@ These events include (deduped field set):
 - Feature flags (structured output, tools, search grounding)
 - Host and system identifiers (`gen_ai.host`, `gen_ai.system`) for multi-provider dashboards
 
+## Business action usage events
+
+Provider-cost telemetry above records calls to AI infrastructure. Applications can separately record one completed user/system action—such as a document ingestion or RFx questionnaire run—without introducing a new index or tracing backend:
+
+```python
+from core_lib.tracing import log_usage_event, usage_actions
+
+log_usage_event(
+    logger,
+    usage_actions.ACTION_DOCUMENT_INGESTED,
+    domain="ingestion",
+    document_id=document_id,
+    chunks_count=12,
+)
+```
+
+`log_usage_event()` emits one INFO record with `event.name`, `event.domain`, supplied non-null fields, and the active `LoggingContext`. Use constants from `usage_actions` instead of application-local strings so emitters and dashboards share the same taxonomy.
+
+Emit completion actions only after work succeeds. Request-side applications may emit the corresponding `*_REQUESTED` action when a user starts work. When both sides preserve the same task-scoped `process_id`, an observability dashboard can correlate the request, downstream calls, and completion without treating the broader `session_id` as one task.
+
 ## Field Reference (LLM logs)
 
 Each LLM event emitted by `log_llm_usage`/providers includes these standard attributes for dashboards:

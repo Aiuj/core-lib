@@ -38,6 +38,13 @@ Then commit, push and tag this new version in github and create a release for th
 - **`core_lib.tracing.log_usage_event(logger, action, domain, **fields)`**: generalizes the existing `extra_attrs`/`event.name` log-event pattern (previously only used ad hoc for LLM/embedding usage and mcp-doc-qa's answer-strategy logging) into a reusable helper for logging one structured line per completed user/system action — document ingested, RFx processed, question answered, etc. — so a dashboard can list "one row per action" the same way existing service-usage dashboards list "one row per provider call."
 - **`core_lib.tracing.usage_actions`**: canonical action-name constants shared across emitting services, so `log_usage_event()` calls and any dashboard filtering on `event.name` stay in sync.
 
+#### Structured-output provider resilience
+
+- **Ollama grammar fallback**: When an Ollama server rejects a complex JSON-schema grammar, the provider retries with JSON mode, keeps schema instructions in the prompt, and validates recovered output against the requested Pydantic model.
+- **Google GenAI schema fallback**: Sanitizes unsupported schema constraints for native structured output and automatically retries with prompt-augmented JSON when the API rejects the native schema.
+- **Safe recovery contract**: Expanded JSON recovery for fenced, nested, case-variant, literal-variant, and schema-as-instance responses while preventing schema echoes from surfacing as answers. Providers return `structured=False` when validation still fails.
+- **Model compatibility**: Added Granite 4.2 model recognition, provider thinking controls, JSON-safe serialization, and pricing metadata used by usage telemetry.
+
 ### v0.4.1 - Provider Expansion & Embedding Framework (Aug 11, 2026)
 
 #### New providers and retrieval improvements

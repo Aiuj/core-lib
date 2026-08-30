@@ -117,6 +117,11 @@ def test_colorized_console_formatter_uses_different_colors_for_warning_and_error
 def test_setup_logging_uses_color_formatter_for_tty_console(monkeypatch):
     from core_lib.tracing import logger as logger_module
 
+    # Exercise the TTY branch independently of the developer/CI shell's
+    # accessibility overrides. Separate tests cover the opt-out behavior.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    monkeypatch.delenv("LOG_CONSOLE_COLORS", raising=False)
     fake_stream = FakeTerminalStream(is_tty=True)
     monkeypatch.setattr(logger_module.sys, "stdout", fake_stream)
 
