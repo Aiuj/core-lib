@@ -109,6 +109,8 @@ class OllamaProvider(BaseProvider):
     _THINKING_MODEL_HINTS = (
         "deepseek-r1",
         "qwen3",
+        "granite-4.2",
+        "granite4.2",
     )
 
     def __init__(self, config: OllamaConfig) -> None:  # type: ignore[override]
@@ -569,7 +571,7 @@ class OllamaProvider(BaseProvider):
                         "tool_calls": tool_calls or [],
                         "usage": usage,
                         "text": content_text,
-                        "content_json": _json.dumps(parsed, ensure_ascii=False),
+                        "content_json": _json.dumps(parsed, ensure_ascii=False, default=str),
                     }
                 else:
                     # Could not validate the model output against the schema even

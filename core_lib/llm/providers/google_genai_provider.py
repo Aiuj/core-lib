@@ -1302,7 +1302,7 @@ class GoogleGenAIProvider(BaseProvider):
                     result["content"] = parsed_result
                 result["structured"] = True
                 result["text"] = extracted_text
-                result["content_json"] = json.dumps(result["content"], ensure_ascii=False)
+                result["content_json"] = json.dumps(result["content"], ensure_ascii=False, default=str)
             else:
                 result["structured"] = False
 

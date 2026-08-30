@@ -327,6 +327,14 @@ def test_ollama_config_from_env_reads_api_key(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_granite_42_is_detected_as_thinking_capable():
+    """Granite 4.2 Ollama tags should receive the native think flag."""
+    provider = OllamaProvider.__new__(OllamaProvider)
+    provider.config = OllamaConfig(model="granite4.2:8b")
+
+    assert provider._supports_thinking()
+
+
 def test_think_false_sent_for_non_hinted_model_with_thinking_disabled(monkeypatch):
     """think:false must be sent even when the model is not in _THINKING_MODEL_HINTS.
 

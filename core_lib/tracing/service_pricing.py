@@ -153,6 +153,11 @@ LLM_PRICING = {
     "deepinfra/mistralai/mistral-small-24b-instruct-2501": {"input": 0.00007, "output": 0.00014},
     "qwen/qwen3-vl-30b-a3b-instruct": {"input": 0.00015, "output": 0.00060},
     "qwen/qwen3-vl-235b-a22b-instruct": {"input": 0.00020, "output": 0.00088},
+    # Granite 4.2 8B on DeepInfra
+    # Source: https://deepinfra.com/ibm-granite/granite-4.2-8b
+    # Prices per 1M tokens, converted to per 1K here. Cached input is not
+    # represented by the legacy two-rate pricing schema.
+    "ibm-granite/granite-4.2-8b": {"input": 0.00006, "output": 0.00025},
 
     # Mistral AI models
     # Source: https://mistral.ai/pricing#api (updated May 2026)

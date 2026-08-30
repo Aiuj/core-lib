@@ -147,7 +147,7 @@ class OpenAIConfig(LLMConfig):
         that commonly expose an ``enable_thinking`` template flag.
         """
         model = (self.model or "").lower()
-        return any(token in model for token in ("qwen", "deepseek", "qwq"))
+        return any(token in model for token in ("qwen", "deepseek", "qwq", "granite-4.2"))
 
     @classmethod
     def from_env(cls) -> "OpenAIConfig":
@@ -332,6 +332,22 @@ class OpenAIProvider(BaseProvider):
             if use_thinking and self.config.thinking_budget is not None:
                 extra_body["thinking_budget"] = self.config.thinking_budget
             create_kwargs["extra_body"] = extra_body
+        elif (
+            self.config.is_deepinfra
+            and "granite-4.2" in (self.config.model or "").lower()
+        ):
+            # Granite 4.2 exposes thinking controls through its tokenizer chat
+            # template. DeepInfra accepts these OpenAI-compatible extra body
+            # fields and does not expose a provider-specific reasoning API.
+            chat_template_kwargs: Dict[str, Any] = {
+                "enable_thinking": bool(use_thinking)
+            }
+            thinking_config = self.config.thinking_config or {}
+            if use_thinking and thinking_config.get("low_effort"):
+                chat_template_kwargs["low_effort"] = True
+            create_kwargs["extra_body"] = {
+                "chat_template_kwargs": chat_template_kwargs
+            }
         elif self.config.is_ovh and self.config._thinking_explicitly_disabled():
             msgs = create_kwargs["messages"]
             if msgs and msgs[0].get("role") == "system":
@@ -543,7 +559,13 @@ class OpenAIProvider(BaseProvider):
             choice = completion.choices[0] if getattr(completion, "choices", []) else None
             message = getattr(choice, "message", {}) if choice else {}
             content_text = getattr(message, "content", None) or (message.get("content") if isinstance(message, dict) else None) or ""
-            reasoning_text = getattr(message, "reasoning", None) or (message.get("reasoning") if isinstance(message, dict) else None) or ""
+            reasoning_text = (
+                getattr(message, "reasoning", None)
+                or getattr(message, "reasoning_content", None)
+                or (message.get("reasoning") if isinstance(message, dict) else None)
+                or (message.get("reasoning_content") if isinstance(message, dict) else None)
+                or ""
+            )
 
             # Strip <think>...</think> blocks that some models (e.g. Qwen3 on
             # vLLM with thinking mode ON) embed in content.  This is the
@@ -664,7 +686,7 @@ class OpenAIProvider(BaseProvider):
                         "tool_calls": tool_calls or [],
                         "usage": usage,
                         "text": content_text,
-                        "content_json": _json.dumps(parsed_dict, ensure_ascii=False),
+                        "content_json": _json.dumps(parsed_dict, ensure_ascii=False, default=str),
                     }
 
                 # All recovery failed – return unstructured so callers can decide.

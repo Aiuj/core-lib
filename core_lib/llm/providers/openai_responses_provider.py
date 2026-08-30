@@ -508,7 +508,7 @@ class OpenAIResponsesProvider(BaseProvider):
                         "tool_calls": tool_calls,
                         "usage": usage,
                         "text": content_text,
-                        "content_json": _json.dumps(parsed_dict, ensure_ascii=False),
+                        "content_json": _json.dumps(parsed_dict, ensure_ascii=False, default=str),
                         "response_id": self.last_response_id,
                     }
 
