@@ -1,4 +1,4 @@
-﻿"""FastAPI middleware utilities for tracing and logging context."""
+"""FastAPI middleware utilities for tracing and logging context."""
 
 import logging
 from typing import Any, Optional, Callable
@@ -77,11 +77,15 @@ class FromContextMiddleware(BaseHTTPMiddleware):
         from_dict = parse_from(from_raw)
 
         # process_id identifies one task/operation. If the caller already
-        # supplied one (e.g. forwarded from an upstream service handling the
+        # supplied a valid one (e.g. forwarded from an upstream service handling the
         # same logical task), preserve it instead of overwriting it, so a
         # single task spanning multiple HTTP hops keeps one process_id.
-        from_dict.setdefault('process_id', generate_process_id())
-        process_id = from_dict['process_id']
+        inbound_pid = from_dict.get("process_id")
+        if isinstance(inbound_pid, str) and inbound_pid.strip():
+            process_id = inbound_pid.strip()
+        else:
+            process_id = generate_process_id()
+        from_dict["process_id"] = process_id
 
         # Extract intelligence_level from query params if present
         intelligence_level_raw = request.query_params.get("intelligence_level")
@@ -165,11 +169,15 @@ async def inject_from_logging_context(
     from_dict = parse_from(from_raw)
 
     # process_id identifies one task/operation. If the caller already
-    # supplied one (e.g. forwarded from an upstream service handling the
+    # supplied a valid one (e.g. forwarded from an upstream service handling the
     # same logical task), preserve it instead of overwriting it, so a
     # single task spanning multiple HTTP hops keeps one process_id.
-    from_dict.setdefault('process_id', generate_process_id())
-    process_id = from_dict['process_id']
+    inbound_pid = from_dict.get("process_id")
+    if isinstance(inbound_pid, str) and inbound_pid.strip():
+        process_id = inbound_pid.strip()
+    else:
+        process_id = generate_process_id()
+    from_dict["process_id"] = process_id
 
     # Extract intelligence_level from query params if present
     intelligence_level_raw = request.query_params.get("intelligence_level")

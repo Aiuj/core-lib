@@ -49,8 +49,8 @@ def generate_process_id() -> str:
     (client-provided, scoped to one user session and spanning many tasks),
     process_id is generated once at the origin of a task and should be
     forwarded unchanged by every hop that continues the same task (see
-    ``FromContextMiddleware``, which preserves an inbound process_id via
-    ``setdefault`` instead of regenerating one on every request).
+    ``FromContextMiddleware``, which preserves a valid inbound process_id
+    instead of regenerating one on every request).
 
     Returns:
         A UUID4 string, e.g. ``"a1b2c3d4-e5f6-7890-abcd-ef1234567890"``.

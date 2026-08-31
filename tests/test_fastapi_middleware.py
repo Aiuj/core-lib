@@ -185,5 +185,53 @@ def test_class_middleware_injects_process_id():
     uuid.UUID(data["context"]["process_id"])
 
 
+def test_middleware_handles_null_process_id(app):
+    """Test that an inbound null process_id is replaced with a freshly generated UUID."""
+    client = TestClient(app)
+    response = client.get('/test?from={"process_id":null}')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["context"]["process_id"] is not None
+    uuid.UUID(data["context"]["process_id"])
+    assert response.headers["X-Process-ID"] == data["context"]["process_id"]
+
+
+@pytest.mark.parametrize("invalid_pid", ["", "   ", 12345])
+def test_middleware_handles_empty_or_invalid_process_id(app, invalid_pid):
+    """Test that empty or non-string process_ids are treated as absent and generated."""
+    import json
+    client = TestClient(app)
+    from_param = json.dumps({"process_id": invalid_pid})
+    response = client.get(f'/test?from={from_param}')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["context"]["process_id"] != invalid_pid
+    uuid.UUID(data["context"]["process_id"])
+    assert response.headers["X-Process-ID"] == data["context"]["process_id"]
+
+
+def test_class_middleware_handles_invalid_process_id():
+    """Test FromContextMiddleware class handles null and empty process_ids."""
+    app = FastAPI()
+    app.add_middleware(FromContextMiddleware, tracing_client=None)
+
+    @app.get("/test")
+    async def test_endpoint():
+        context = get_current_logging_context()
+        return {"context": context}
+
+    client = TestClient(app)
+    response = client.get('/test?from={"process_id":null}')
+
+    assert response.status_code == 200
+    assert "X-Process-ID" in response.headers
+    data = response.json()
+    assert data["context"]["process_id"] is not None
+    uuid.UUID(data["context"]["process_id"])
+    assert response.headers["X-Process-ID"] == data["context"]["process_id"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
