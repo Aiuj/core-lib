@@ -151,3 +151,44 @@ def test_worker_refreshes_job_heartbeat_while_handler_runs():
     )]
     assert len(queue.heartbeats) >= 1
     assert set(queue.heartbeats) == {"job-heartbeat"}
+
+
+class _ContextVerifyingHandler(JobHandler):
+    def __init__(self):
+        self.captured_ctx = None
+
+    def get_job_type(self) -> str:
+        return "context-verify-test"
+
+    def handle(self, job: Job) -> dict:
+        from core_lib.tracing import get_current_logging_context
+        self.captured_ctx = get_current_logging_context()
+        return {"success": True}
+
+
+def test_worker_establishes_logging_context():
+    from core_lib.tracing import clear_logging_context
+    clear_logging_context()
+
+    queue = _Queue()
+    worker = JobWorker(job_queue=queue)
+    handler = _ContextVerifyingHandler()
+    worker.register_handler(handler)
+
+    job = Job(
+        job_id="job-ctx-1",
+        job_type="context-verify-test",
+        status=JobStatus.PROCESSING,
+        created_at="2026-08-02T00:00:00Z",
+        updated_at="2026-08-02T00:00:00Z",
+        company_id="comp-999",
+        user_id="user-888",
+        input_data={"from": '{"process_id": "pid-777", "session_id": "sess-666"}'},
+    )
+
+    assert worker._process_job(job) is True
+    assert handler.captured_ctx is not None
+    assert handler.captured_ctx["process_id"] == "pid-777"
+    assert handler.captured_ctx["session_id"] == "sess-666"
+    assert handler.captured_ctx["company_id"] == "comp-999"
+    assert handler.captured_ctx["user_id"] == "user-888"
