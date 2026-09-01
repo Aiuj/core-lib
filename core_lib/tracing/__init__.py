@@ -11,6 +11,7 @@ from .logging_context import (
     clear_logging_context,
     install_logging_context_filter,
     parse_from,
+    build_from_metadata,
 )
 from .observability_models import FromMetadata, FromMetadataSchema, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION
 from .service_usage import (
@@ -59,6 +60,7 @@ __all__ = [
     "clear_logging_context",
     "install_logging_context_filter",
     "parse_from",
+    "build_from_metadata",
     "FROM_FIELD_DESCRIPTION",
     "INTELLIGENCE_LEVEL_DESCRIPTION",
     "FromMetadata",

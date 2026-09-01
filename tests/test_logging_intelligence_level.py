@@ -1,5 +1,6 @@
 """Integration test for logging context with intelligence_level and process_id."""
 
+import json
 import logging
 import uuid
 import pytest
@@ -228,3 +229,27 @@ def test_set_logging_context_adds_process_id():
         ctx = get_current_logging_context()
         assert ctx["process_id"] == pid
         assert ctx["session_id"] == "sess-1"
+
+
+def test_build_from_metadata_shared_functionality():
+    """Test build_from_metadata in core_lib."""
+    from core_lib.tracing import build_from_metadata
+    clear_logging_context()
+
+    pid = generate_process_id()
+    with LoggingContext({"process_id": pid, "session_id": "sess-abc", "company_id": "c-123"}):
+        # 1. Inherit from active context
+        res1 = json.loads(build_from_metadata(None, app_name="ServiceA", app_version="1.0.0"))
+        assert res1["process_id"] == pid
+        assert res1["session_id"] == "sess-abc"
+        assert res1["company_id"] == "c-123"
+        assert res1["app_name"] == "ServiceA"
+
+        # 2. Chain app names
+        res2 = json.loads(build_from_metadata(json.dumps({"app_name": "Upstream"}), app_name="ServiceA", app_version="1.0.0"))
+        assert res2["app_name"] == "Upstream > ServiceA"
+        assert res2["process_id"] == pid
+
+        # 3. Prevent duplicate app names in chain
+        res3 = json.loads(build_from_metadata(json.dumps({"app_name": "Upstream > ServiceA"}), app_name="ServiceA"))
+        assert res3["app_name"] == "Upstream > ServiceA"

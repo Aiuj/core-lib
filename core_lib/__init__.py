@@ -1,4 +1,4 @@
-﻿"""core-lib: Shared library for MCP agent tools."""
+"""core-lib: Shared library for MCP agent tools."""
 
 from importlib import import_module
 
@@ -18,7 +18,7 @@ from .jobs import (
     JobWorker, JobHandler
 )
 from .mcp_utils import get_transport_from_args
-from .tracing import setup_tracing, setup_logging, get_logger, get_module_logger, get_last_logging_config, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION, LoggingContext, parse_from, generate_process_id
+from .tracing import setup_tracing, setup_logging, get_logger, get_module_logger, get_last_logging_config, FROM_FIELD_DESCRIPTION, INTELLIGENCE_LEVEL_DESCRIPTION, LoggingContext, parse_from, generate_process_id, get_current_logging_context, set_logging_context, build_from_metadata
 from .utils import LanguageUtils, HealthChecker, HealthCheckResult, HealthStatus, create_lazy_check, utc_now, parse_iso_datetime, to_iso_string
 from .tools import ExcelManager
 
@@ -136,6 +136,9 @@ __all__ = [
     "INTELLIGENCE_LEVEL_DESCRIPTION",
     "LoggingContext",
     "generate_process_id",
+    "get_current_logging_context",
+    "set_logging_context",
+    "build_from_metadata",
     
     # LLM
     "LLMClient",

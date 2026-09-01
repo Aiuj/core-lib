@@ -32,11 +32,69 @@ import json
 import logging
 import threading
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from contextvars import ContextVar
 
 # Thread-safe context storage using contextvars (works with asyncio)
 _logging_context: ContextVar[Dict[str, Any]] = ContextVar('logging_context', default={})
+
+
+def build_from_metadata(
+    from_: Optional[Union[str, Dict[str, Any]]] = None,
+    app_name: str = "core-lib",
+    app_version: str = "1.0.0",
+) -> Optional[str]:
+    """Build the 'from' parameter JSON for outbound cross-service API calls.
+
+    Merges the active thread/task LoggingContext (which holds process_id,
+    session_id, user_id, company_id, intelligence_level, etc.) with any
+    explicit incoming `from_` parameter, and appends `app_name` / `app_version`
+    to the service call chain without duplication.
+
+    Args:
+        from_: Optional incoming from parameter (JSON string, dict, or None)
+        app_name: Name of the calling service (e.g. "Agent-RFx")
+        app_version: Version of the calling service (e.g. "1.0.0")
+
+    Returns:
+        JSON string containing the merged context and updated app call chain.
+    """
+    from_data: Dict[str, Any] = {}
+
+    # 1. Start with active logging context if available
+    ctx = get_current_logging_context()
+    if ctx:
+        from_data.update(ctx)
+
+    # 2. Parse and merge incoming from_ if provided
+    if from_ is not None:
+        if isinstance(from_, str):
+            try:
+                parsed = json.loads(from_)
+                if isinstance(parsed, dict):
+                    from_data.update(parsed)
+            except Exception:
+                pass
+        elif isinstance(from_, dict):
+            from_data.update(from_)
+
+    # 3. Append app_name to the call chain
+    existing_app_name = from_data.get("app_name", "")
+    if existing_app_name:
+        if app_name not in existing_app_name:
+            from_data["app_name"] = f"{existing_app_name} > {app_name}"
+    else:
+        from_data["app_name"] = app_name
+
+    # 4. Update app_version to reflect the current service version
+    existing_app_version = from_data.get("app_version", "")
+    if existing_app_version:
+        if app_version not in existing_app_version:
+            from_data["app_version"] = f"{existing_app_version} > {app_version}"
+    else:
+        from_data["app_version"] = app_version
+
+    return json.dumps(from_data)
 
 
 def generate_process_id() -> str:
@@ -291,6 +349,7 @@ def install_logging_context_filter(logger: Optional[logging.Logger] = None):
 
 
 __all__ = [
+    'build_from_metadata',
     'LoggingContext',
     'LoggingContextFilter',
     'generate_process_id',
