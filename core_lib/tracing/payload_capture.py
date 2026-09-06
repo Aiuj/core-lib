@@ -22,6 +22,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import boto3
+
 from ..config.payload_capture_settings import PayloadCaptureSettings
 from .logger import get_module_logger
 
@@ -63,8 +65,8 @@ def capture_llm_payload(
     """Best-effort upload of an LLM call's full prompt/response to S3.
 
     No-op unless capture is enabled via settings/env. Never raises: any
-    error (missing boto3, missing credentials, network failure, etc.) is
-    caught and logged so it can never break the calling LLM request.
+    error (missing credentials, network failure, etc.) is caught and logged
+    so it can never break the calling LLM request.
 
     Args:
         call_id: The id returned by `log_llm_usage()` for this same call.
@@ -91,12 +93,6 @@ def capture_llm_payload(
             "metadata": metadata or {},
         }
         body = gzip.compress(json.dumps(payload, default=str).encode("utf-8"))
-
-        try:
-            import boto3  # type: ignore
-        except ImportError:
-            logger.debug("boto3 not installed; skipping LLM payload capture for call_id=%s", call_id)
-            return
 
         client_kwargs: Dict[str, Any] = {}
         if settings.s3_endpoint_url:
