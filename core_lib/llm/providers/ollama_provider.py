@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from core_lib import get_module_logger
 from core_lib.api_utils.wake_on_lan import WakeOnLanStrategy
 from core_lib.tracing.service_usage import log_llm_usage
+from core_lib.tracing.payload_capture import capture_llm_payload
 
 logger = get_module_logger()
 
@@ -536,7 +537,7 @@ class OllamaProvider(BaseProvider):
                     usage.setdefault("tokens_per_second", tokens_per_second)
 
             try:
-                log_llm_usage(
+                call_id = log_llm_usage(
                     provider="ollama",
                     model=self.config.model,
                     input_tokens=input_tokens,
@@ -547,6 +548,13 @@ class OllamaProvider(BaseProvider):
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
                     host=self.config.base_url,
+                )
+                capture_llm_payload(
+                    call_id=call_id,
+                    provider="ollama",
+                    model=self.config.model,
+                    messages=messages,
+                    response_text=content_text,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")
