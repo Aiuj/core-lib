@@ -31,6 +31,7 @@ from .tracing_settings import TracingSettings
 from .logger_settings import LoggerSettings
 from .database_settings import DatabaseSettings
 from .opensearch_settings import OpenSearchSettings
+from .payload_capture_settings import PayloadCaptureSettings
 from .mcp_settings import MCPServerSettings
 from .fastapi_settings import FastAPIServerSettings
 from .ocr_settings import OcrSettings
@@ -81,6 +82,7 @@ __all__ = [
     "DatabaseSettings",
     "OcrSettings",
     "OpenSearchSettings",
+    "PayloadCaptureSettings",
     "MCPServerSettings",
     "FastAPIServerSettings",
     "StandardSettings",

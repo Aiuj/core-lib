@@ -42,6 +42,7 @@ from .service_pricing import (
 )
 from .usage_events import log_usage_event
 from . import usage_actions
+from .payload_capture import capture_llm_payload
 
 __all__ = [
     "TracingManager",
@@ -89,4 +90,5 @@ __all__ = [
     "get_ocr_pricing",
     "log_usage_event",
     "usage_actions",
+    "capture_llm_payload",
 ]

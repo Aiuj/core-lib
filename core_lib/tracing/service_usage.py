@@ -44,6 +44,7 @@ The logs are sent to OpenSearch with structured attributes that enable queries l
 """
 
 import time
+import uuid
 from typing import Any, Dict, Optional
 from enum import Enum
 from contextvars import ContextVar
@@ -230,7 +231,7 @@ def log_llm_usage(
     intelligence_level: Optional[int] = None,
     metadata: Optional[Dict[str, Any]] = None,
     error: Optional[str] = None,
-) -> None:
+) -> str:
     """Log LLM usage to OpenTelemetry/OpenSearch.
     
     This function creates a structured log event with service usage metrics that
@@ -257,7 +258,12 @@ def log_llm_usage(
         metadata: Additional context (user_id, session_id, etc.) - automatically
                  included from LoggingContext if set
         error: Error message if the request failed
-        
+
+    Returns:
+        A generated call_id (UUID4 string) identifying this usage event, so
+        callers can correlate it with anything else keyed by the same id
+        (e.g. a captured prompt/response payload in object storage).
+
     Example:
         ```python
         log_llm_usage(
@@ -270,6 +276,8 @@ def log_llm_usage(
         )
         ```
     """
+    call_id = str(uuid.uuid4())
+
     # Calculate total if not provided
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
@@ -293,6 +301,7 @@ def log_llm_usage(
         "service.model": model,
         "gen_ai.request.model": model,  # OpenTelemetry semantic convention
         "gen_ai.system": provider,
+        "gen_ai.call_id": call_id,
         "gen_ai.usage.cost": round(cost, 6),
         "cost_usd": round(cost, 6),
     }
@@ -377,6 +386,8 @@ def log_llm_usage(
         f"LLM usage{purpose_str}{usage_type_str}: {provider}/{model}{host_str}{iq_str} - {token_summary}, ${cost:.6f}{selection_str}",
         extra={"extra_attrs": event}
     )
+
+    return call_id
 
 
 def log_embedding_usage(

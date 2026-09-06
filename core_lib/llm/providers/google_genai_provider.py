@@ -27,6 +27,7 @@ from typing import Optional, Dict, Any
 from core_lib import get_module_logger
 from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
+from core_lib.tracing.payload_capture import capture_llm_payload
 from core_lib.llm.rate_limiter import RateLimitConfig, RateLimiter
 from core_lib.llm.retry import RetryConfig, retry_handler
 from core_lib.llm.json_parser import (
@@ -1201,7 +1202,7 @@ class GoogleGenAIProvider(BaseProvider):
                 })
 
                 # Log to OTLP/OpenSearch via standard logger (independent of Langfuse)
-                log_llm_usage(
+                call_id = log_llm_usage(
                     provider="google_genai",
                     model=self.config.model,
                     input_tokens=input_tokens,
@@ -1217,6 +1218,13 @@ class GoogleGenAIProvider(BaseProvider):
                         else "https://generativelanguage.googleapis.com"
                     ),
                     region=self._location,
+                )
+                capture_llm_payload(
+                    call_id=call_id,
+                    provider="google_genai",
+                    model=self.config.model,
+                    messages=messages,
+                    response_text=full_text,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log usage metadata: {str(e)}")

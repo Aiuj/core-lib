@@ -50,6 +50,7 @@ from ..llm_config import LLMConfig
 from core_lib import get_module_logger
 from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
+from core_lib.tracing.payload_capture import capture_llm_payload
 
 logger = get_module_logger()
 
@@ -468,7 +469,7 @@ class OpenAIResponsesProvider(BaseProvider):
                     }.items() if v is not None}
                 )
 
-                log_llm_usage(
+                call_id = log_llm_usage(
                     provider="openai-responses",
                     model=cfg.model,
                     input_tokens=input_tokens,
@@ -479,6 +480,13 @@ class OpenAIResponsesProvider(BaseProvider):
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
                     host=cfg.base_url or "https://api.openai.com",
+                )
+                capture_llm_payload(
+                    call_id=call_id,
+                    provider="openai-responses",
+                    model=cfg.model,
+                    messages=input_messages,
+                    response_text=content_text,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")
