@@ -148,7 +148,7 @@ class TestGeminiWarningsFix:
         mock_client = Mock()
         mock_genai.Client.return_value = mock_client
         
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google_picker_key", "GEMINI_API_KEY": "gemini_key"}):
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "google_picker_key", "GEMINI_API_KEY": "gemini_key"}, clear=True):
             config = GeminiConfig.from_env()
             assert config.api_key == "gemini_key"
             provider = GoogleGenAIProvider(config)

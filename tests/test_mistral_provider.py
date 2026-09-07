@@ -287,7 +287,7 @@ class TestLLMFactoryMistral:
             LLMFactory.from_env()
             assert mock_cls.called
 
-    @patch.dict("os.environ", {"MISTRAL_API_KEY": "sk-auto"})
+    @patch.dict("os.environ", {"MISTRAL_API_KEY": "sk-auto"}, clear=True)
     def test_detect_provider_from_env_prefers_mistral(self):
         from core_lib.llm import LLMFactory
         provider = LLMFactory._detect_provider_from_env()

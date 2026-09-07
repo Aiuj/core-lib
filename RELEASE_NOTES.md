@@ -23,27 +23,51 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
-## August 2026
+## September 2026
 
-### v0.5.0 - Task-scoped process_id & usage-event logging (Aug 30, 2026)
+### v0.5.0 - Task-Scoped Observability, LLM Payload Capture & Provider Resilience (Sep 7, 2026)
 
 #### Behavior change: `process_id` now identifies one task, not one HTTP hop
 
-- **`FromContextMiddleware` / `inject_from_logging_context` now preserve an inbound `process_id`** instead of unconditionally overwriting it on every request. A `process_id` is still auto-generated when none is supplied, but a caller that forwards a `process_id` it received from an earlier hop of the same logical task (e.g. saas-admin calling agent-rfx calling mcp-doc-qa) will see that id preserved end-to-end, rather than getting a fresh one at every service boundary. The `X-Process-ID` response header now always reflects the id actually stored in the logging context.
+- **`FromContextMiddleware` / `inject_from_logging_context` now preserve an inbound `process_id`** instead of unconditionally overwriting it on every request. A `process_id` is still auto-generated when none is supplied, but a caller that forwards a `process_id` it received from an earlier hop of the same logical task (e.g., saas-admin calling agent-rfx calling mcp-doc-qa) will see that id preserved end-to-end, rather than getting a fresh one at every service boundary. The `X-Process-ID` response header now always reflects the id actually stored in the logging context.
 - This is a documented semantic change, not a silent patch — `session_id` continues to mean "one user session, many tasks"; `process_id` now means "one task, however many services/hops it takes." Updated `docs/FROM_FIELD_DESCRIPTION.md`, `docs/centralized-logging.md`, and `docs/observability-metadata.md` accordingly.
 - **Downstream repos consuming core-lib via an unpinned git dependency should pin to this tag** (or later) as part of adopting it, since the change affects cross-service log correlation behavior.
 
-#### New: shared usage-event logging
+#### Shared usage-event and error logging
 
-- **`core_lib.tracing.log_usage_event(logger, action, domain, **fields)`**: generalizes the existing `extra_attrs`/`event.name` log-event pattern (previously only used ad hoc for LLM/embedding usage and mcp-doc-qa's answer-strategy logging) into a reusable helper for logging one structured line per completed user/system action — document ingested, RFx processed, question answered, etc. — so a dashboard can list "one row per action" the same way existing service-usage dashboards list "one row per provider call."
-- **`core_lib.tracing.usage_actions`**: canonical action-name constants shared across emitting services, so `log_usage_event()` calls and any dashboard filtering on `event.name` stay in sync.
+- **`core_lib.tracing.log_usage_event(logger, action, domain, **fields)`**: Generalizes the existing `extra_attrs`/`event.name` log-event pattern into a reusable helper for logging structured events per completed user/system action — document ingested, RFx processed, question answered, etc. — allowing dashboards to list "one row per action" alongside "one row per provider call."
+- **`core_lib.tracing.log_usage_error_event(logger, action, domain, error_type, error_message, **fields)`**: Dedicated structured error event helper to log fallback triggers, provider failures, and operational errors consistently into usage telemetry.
+- **`core_lib.tracing.usage_actions`**: Canonical action-name constants shared across emitting services, keeping `log_usage_event()` calls and telemetry filtering synchronized.
+- **Logging context & worker propagation**: Centralized `build_from_metadata` and exported logging context helpers; established logging context and trace metadata in asynchronous job workers.
 
-#### Structured-output provider resilience
+#### LLM prompt & response payload capture to S3
+
+- **Opt-in S3 payload capture**: Added `core_lib.tracing.payload_capture.capture_llm_payload` to upload full prompt and response payloads to S3 across OpenAI, Azure OpenAI, Google GenAI, and Ollama providers.
+- **Safe, fail-soft execution**: S3 upload errors are caught and logged gracefully without interrupting LLM inference or raising unhandled exceptions to callers.
+- **Dependency update**: Added `boto3>=1.34.0` as a core dependency.
+
+#### Structured-output provider resilience & model support
 
 - **Ollama grammar fallback**: When an Ollama server rejects a complex JSON-schema grammar, the provider retries with JSON mode, keeps schema instructions in the prompt, and validates recovered output against the requested Pydantic model.
-- **Google GenAI schema fallback**: Sanitizes unsupported schema constraints for native structured output and automatically retries with prompt-augmented JSON when the API rejects the native schema.
+- **Google GenAI schema fallback**: Sanitizes unsupported schema constraints (e.g., regex patterns, length/item bounds) for native structured output and automatically retries with prompt-augmented JSON when the API rejects the native schema.
 - **Safe recovery contract**: Expanded JSON recovery for fenced, nested, case-variant, literal-variant, and schema-as-instance responses while preventing schema echoes from surfacing as answers. Providers return `structured=False` when validation still fails.
-- **Model compatibility**: Added Granite 4.2 model recognition, provider thinking controls, JSON-safe serialization, and pricing metadata used by usage telemetry.
+- **Model compatibility & thinking controls**: Added Granite 4.2 model recognition, provider thinking controls, and JSON-safe serialization.
+- **Mistral provider preflight**: Added connectivity check for Mistral provider in startup preflight checks.
+- **Pricing updates**: Added pricing entries for Gemini 3.7 Flash, DeepInfra Mistral Small, and Mistral Small 4.0.
+
+#### Document classification & OCR enhancements
+
+- **Citation mode & prospect RFx detection**: Added `citation_mode` as a document classification axis and introduced automated detection of prospect RFx document types with updated classifier schemas and tests.
+- **QA structure detection**: Tightened question-answer pair detection to recheck suspicious table/list layouts.
+- **OCR quality & failover**: Improved heading detection, prevented repetition-loop OCR artifacts, preserved evidence accuracy, and added DeepInfra Qwen VL failover.
+
+#### Retrieval & background jobs
+
+- **TEI retrieval & WoL**: Added Text Embeddings Inference (TEI) retrieval providers with request batching and unified Wake-on-LAN (WoL) health probe fallback.
+- **Constructor flexibility**: Accepted `**kwargs` in embedding client constructors to absorb WoL and provider-agnostic parameters.
+- **Background jobs & config**: Added heartbeat support for long-running background jobs and restored `app_name` auto-detection from `pyproject.toml`.
+
+---
 
 ### v0.4.1 - Provider Expansion & Embedding Framework (Aug 11, 2026)
 

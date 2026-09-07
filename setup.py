@@ -23,7 +23,9 @@ setup(
         'tabulate>=0.9.0',
         'numpy>=2.3.3',
         'pyjwt>=2.10.1',
-
+        'babel>=2.16.0',
+        'pyyaml>=6.0.3',
+        'boto3>=1.34.0',
     ],
     extras_require={
         'mcp': ['fastmcp>=3.4.4,<4'],
