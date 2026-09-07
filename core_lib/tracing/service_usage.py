@@ -50,6 +50,7 @@ from enum import Enum
 from contextvars import ContextVar
 
 from .logger import get_module_logger
+from .logging_context import get_current_logging_context
 from .service_pricing import (
     get_embedding_pricing,
     get_llm_pricing,
@@ -65,6 +66,34 @@ _embedding_purpose: ContextVar[Optional[str]] = ContextVar('embedding_purpose', 
 _intelligence_level: ContextVar[Optional[int]] = ContextVar('intelligence_level', default=None)
 _llm_selection_label: ContextVar[Optional[str]] = ContextVar('llm_selection_label', default=None)
 _llm_selection_kind: ContextVar[Optional[str]] = ContextVar('llm_selection_kind', default=None)
+
+
+def _merge_logging_context(event: Dict[str, Any]) -> None:
+    """Put ambient identity/correlation data on usage events explicitly.
+
+    Usage events provide ``extra_attrs`` themselves. Depending on a handler
+    filter to merge the active context is fragile because a deployment can
+    attach the OTLP handler without that filter. These attributes are needed
+    for tenant filtering and user-thread grouping, so make the event complete
+    before it reaches any logger or handler.
+    """
+    context = get_current_logging_context()
+    mappings = {
+        'process_id': 'process.id',
+        'session_id': 'session.id',
+        'user_id': 'user.id',
+        'user_name': 'user.name',
+        'company_id': 'organization.id',
+        'company_name': 'organization.name',
+        'project_id': 'rfx.project.id',
+        'generation_id': 'rfx.generation.id',
+        'operation': 'rfx.operation',
+        'document_type': 'rfx.document.type',
+    }
+    for source, destination in mappings.items():
+        value = context.get(source)
+        if value not in (None, ''):
+            event.setdefault(destination, value)
 
 
 def set_llm_purpose(purpose: str) -> None:
@@ -335,6 +364,11 @@ def log_llm_usage(
         event["gen_ai.usage.output_tokens"] = output_tokens
         event["tokens.output"] = output_tokens
 
+    if input_tokens is not None or output_tokens is not None:
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+        event["tokens.total"] = total_tokens
+        event["gen_ai.usage.total_tokens"] = total_tokens
+
     if total_tokens is not None:
         event["tokens.total"] = total_tokens
         event["gen_ai.usage.total_tokens"] = total_tokens
@@ -360,13 +394,18 @@ def log_llm_usage(
     
     if error:
         event["error"] = error
+        error_code = (metadata or {}).get("error_code")
+        if error_code:
+            event["error.code"] = error_code
         event["status"] = "error"
     else:
         event["status"] = "success"
     
-    # Log as INFO level with extra_attrs
-    # The LoggingContextFilter will automatically add user_id, session_id, etc.
-    # The OTLPHandler will send this to OpenSearch
+    # Make tenant and trace correlation independent of handler/filter setup.
+    _merge_logging_context(event)
+
+    # Log as INFO level with extra_attrs. The OTLP handler sends this to
+    # OpenSearch; context may also be merged by LoggingContextFilter.
     host_str = f" ({host})" if host else ""
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     usage_type_str = f" <{effective_usage_type}>" if effective_usage_type else ""
@@ -499,6 +538,7 @@ def log_embedding_usage(
     )
     # Keep embedding events on INFO so structured usage records are retained
     # by deployments whose log pipeline filters out ERROR messages.
+    _merge_logging_context(event)
     logger.info(message, extra={"extra_attrs": event})
 
 
@@ -574,6 +614,7 @@ def log_reranker_usage(
         
     host_str = f" ({host})" if host else ""
     region_str = f" [{region}]" if region else ""
+    _merge_logging_context(event)
     logger.info(
         f"Reranker usage: {provider}/{model}{host_str}{region_str} - {num_documents} documents, ${cost:.6f}",
         extra={"extra_attrs": event}
@@ -645,6 +686,7 @@ def log_ocr_usage(
         event["status"] = "success"
     
     cost_str = f"${cost_override:.6f}" if cost_override else "unknown cost"
+    _merge_logging_context(event)
     logger.info(
         f"OCR usage: {provider}/{model} - {num_pages or 0} pages, {cost_str}",
         extra={"extra_attrs": event}
@@ -719,6 +761,7 @@ def log_search_usage(
     
     cache_str = " (cached)" if cache_hit else ""
     latency_str = f", {latency_ms:.0f}ms" if latency_ms else ""
+    _merge_logging_context(event)
     logger.info(
         f"Search usage: {provider} - '{query_truncated}' -> {num_results}/{max_results} results{cache_str}{latency_str}",
         extra={"extra_attrs": event}

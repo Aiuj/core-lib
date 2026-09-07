@@ -654,6 +654,7 @@ class OllamaProvider(BaseProvider):
             return {
                 "error": str(e),
                 "error_code": "model_not_found" if self._is_model_not_found_error(e) else "provider_error",
+                "_usage_error_logged": True,
                 "content": None,
                 "structured": structured_output is not None,
                 "tool_calls": [],

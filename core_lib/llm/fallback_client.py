@@ -45,13 +45,22 @@ from pydantic import BaseModel
 
 from core_lib.api_utils import WarmupFallbackRouter
 from core_lib.tracing.logger import get_module_logger
-from core_lib.tracing.service_usage import set_intelligence_level, set_llm_selection
+from core_lib.tracing.service_usage import log_llm_usage, set_intelligence_level, set_llm_selection
 
 from .llm_client import LLMClient
 from .provider_health import classify_error, get_health_tracker, ProviderHealthTracker
 from .provider_registry import ProviderConfig, ProviderRegistry
 
 logger = get_module_logger()
+
+
+class LLMCallError(RuntimeError):
+    """A sanitized, externally detectable failure after fallback is exhausted."""
+
+    def __init__(self, message: str, *, error_code: str = 'provider_unavailable', attempts=None):
+        super().__init__(message)
+        self.error_code = error_code
+        self.attempts = attempts or []
 
 
 @dataclass
@@ -509,7 +518,11 @@ class FallbackLLMClient:
                     
                     # Check for error in response
                     if response.get("error"):
-                        raise RuntimeError(response["error"])
+                        provider_error = RuntimeError(response["error"])
+                        # Providers which already wrote an error usage event
+                        # mark their response to avoid duplicate telemetry.
+                        provider_error._usage_error_logged = bool(response.get('_usage_error_logged'))
+                        raise provider_error
                     
                     # Success! Mark healthy and record metadata
                     self._health_tracker.mark_healthy(config.provider, config.model)
@@ -559,6 +572,23 @@ class FallbackLLMClient:
                 except Exception as e:
                     last_error = e
                     error_reason = classify_error(e)
+
+                    # Providers do not all emit an error usage event (notably
+                    # SDK failures before a response exists).  The fallback
+                    # boundary sees every failed attempt, so it is the common
+                    # auditable place to record it.
+                    if not getattr(e, '_usage_error_logged', False):
+                        try:
+                            log_llm_usage(
+                                provider=config.provider, model=config.model,
+                                latency_ms=(time.time() - start_time) * 1000,
+                                structured=bool(structured_output), has_tools=bool(tools),
+                                search_grounding=use_search_grounding,
+                                metadata={'error_code': error_reason, 'fallback_attempt': attempts},
+                                error=str(e),
+                            )
+                        except Exception:
+                            logger.exception('Could not log failed LLM fallback attempt')
 
                     wake_on_lan_cfg = getattr(config, "wake_on_lan", None)
                     wol_enabled = isinstance(wake_on_lan_cfg, dict) and bool(
@@ -621,7 +651,11 @@ class FallbackLLMClient:
                 error=error_msg,
             )
         
-        raise RuntimeError(error_msg)
+        raise LLMCallError(
+            error_msg,
+            error_code=classify_error(last_error) if last_error else 'provider_unavailable',
+            attempts=providers_tried,
+        )
     
     def get_provider_status(self) -> List[Dict[str, Any]]:
         """Get health status for all configured providers.

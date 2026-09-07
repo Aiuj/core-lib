@@ -848,6 +848,7 @@ class GoogleGenAIProvider(BaseProvider):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """Main chat interface with rate limiting and retry logic."""
+        started = time.perf_counter()
         try:
             # Enforce model-specific RPM throttling before performing network call.
             self._acquire_rate_limit()
@@ -866,6 +867,24 @@ class GoogleGenAIProvider(BaseProvider):
             )
         except Exception as e:  # pragma: no cover - network errors
             error_reason = classify_error(e)
+
+            # A Vertex/GenAI exception can occur before a response object and
+            # token metadata exist.  Still emit an error-status usage event so
+            # monitoring and the fallback client can correlate the attempt.
+            try:
+                log_llm_usage(
+                    provider='google_genai', model=self.config.model,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    structured=bool(structured_output), has_tools=bool(tools),
+                    search_grounding=use_search_grounding,
+                    host=(f'https://{self._location}-aiplatform.googleapis.com'
+                          if self._is_vertex and self._location
+                          else 'https://generativelanguage.googleapis.com'),
+                    region=self._location,
+                    metadata={'error_code': error_reason}, error=str(e),
+                )
+            except Exception:
+                logger.exception('Could not log failed Google GenAI request')
 
             # Classify ServerError (503/504) and ClientError 499 CANCELLED as server-side
             # transient failures for clean logging (warning instead of full traceback).
@@ -933,6 +952,8 @@ class GoogleGenAIProvider(BaseProvider):
             
             return {
                 "error": str(e),
+                "error_code": error_reason,
+                "_usage_error_logged": True,
                 "content": None,
                 "structured": structured_output is not None,
                 "tool_calls": [],
@@ -1004,6 +1025,10 @@ class GoogleGenAIProvider(BaseProvider):
                 and len(assistant_messages) == 0
                 and len(messages) <= 2
                 and isinstance(single_user_content, str)
+                # The Google SDK warns that automatic function calling should
+                # use Chat.send_message rather than Models.generate_content.
+                # Route tool-enabled single turns through the chat path.
+                and not tools
             )
 
             working_messages = messages
@@ -1028,6 +1053,7 @@ class GoogleGenAIProvider(BaseProvider):
                         and len(assistant_messages) == 0
                         and len(messages) <= 2
                         and isinstance(user_messages[0].get("content", ""), str)
+                        and not tools
                     )
 
                 if is_single_turn_text_only:

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Union, Any, Tuple, Dict
 import hashlib
 import json
+import math
 
 from .reranker_config import reranker_settings
 from ..cache.cache_manager import cache_get, cache_set
@@ -96,6 +97,21 @@ class BaseRerankerClient:
         cache_string = json.dumps(cache_data, sort_keys=True)
         return f"rerank:{hashlib.sha256(cache_string.encode()).hexdigest()}"
 
+    @staticmethod
+    def _estimate_input_tokens(query: str, documents: List[str]) -> int:
+        """Estimate submitted cross-encoder tokens when a provider omits usage.
+
+        A reranker receives one ``(query, document)`` pair per candidate, so
+        the query is intentionally counted once for every document.  TEI does
+        not currently return token usage; byte-based estimation is stable and
+        multilingual-friendly, but is explicitly marked as an estimate in
+        telemetry rather than represented as provider-reported usage.
+        """
+        return sum(
+            math.ceil(len(f"{query}\n{document}".encode("utf-8")) / 4)
+            for document in documents
+        )
+
     def rerank(
         self,
         query: str,
@@ -139,15 +155,33 @@ class BaseRerankerClient:
         results, usage = self._rerank_raw(query, documents, top_k)
         latency_ms = (time.time() - start_time) * 1000
         
+        # TEI and several local rerankers return scores without token usage.
+        # Preserve provider-reported input usage where available; otherwise
+        # expose an explicit estimate of the submitted query/document pairs.
+        raw_usage = usage or {}
+        reported_input_tokens = raw_usage.get("input_tokens")
+        input_tokens_estimated = reported_input_tokens is None
+        input_tokens = (
+            int(reported_input_tokens)
+            if reported_input_tokens is not None
+            else self._estimate_input_tokens(query, documents)
+        )
+
+        # Cross-encoders produce relevance scores, not generated text.  A
+        # zero output token count is therefore an actual metric, not missing
+        # telemetry.  Retain a provider value if one is supplied for billing.
+        output_tokens = int(raw_usage.get("output_tokens") or 0)
+
         # Log usage
         log_reranker_usage(
             provider=self._telemetry_provider_name(),
             model=self.model,
             num_documents=len(documents),
-            input_tokens=usage.get("input_tokens") if usage else None,
-            output_tokens=usage.get("output_tokens") if usage else None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             latency_ms=latency_ms,
             host=self.host,
+            metadata={"input_tokens_estimated": input_tokens_estimated},
         )
         
         # Add document text if requested

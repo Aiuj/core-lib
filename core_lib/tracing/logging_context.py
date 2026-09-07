@@ -221,6 +221,21 @@ class LoggingContextFilter(logging.Filter):
             
             if 'intelligence_level' in context and context['intelligence_level'] is not None:
                 record.extra_attrs['intelligence.level'] = context['intelligence_level']
+
+            # RFx project work is asynchronous.  Preserve its durable business
+            # identifiers so a user-action event, the worker logs, and each
+            # provider call can be inspected as one trace in the dashboard.
+            if 'project_id' in context and context['project_id']:
+                record.extra_attrs['rfx.project.id'] = context['project_id']
+
+            if 'generation_id' in context and context['generation_id']:
+                record.extra_attrs['rfx.generation.id'] = context['generation_id']
+
+            if 'operation' in context and context['operation']:
+                record.extra_attrs['rfx.operation'] = context['operation']
+
+            if 'document_type' in context and context['document_type']:
+                record.extra_attrs['rfx.document.type'] = context['document_type']
         
         return True
 

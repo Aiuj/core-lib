@@ -50,6 +50,7 @@ from .provider_health import (
 from .fallback_client import (
     FallbackLLMClient,
     FallbackResult,
+    LLMCallError,
     create_fallback_llm_client,
 )
 from .startup_preflight import (
@@ -93,6 +94,7 @@ __all__ = [
     # Fallback client (automatic provider failover)
     "FallbackLLMClient",
     "FallbackResult",
+    "LLMCallError",
     "create_fallback_llm_client",
     "StartupValidationSummary",
     "get_cached_llm_provider_registry",
