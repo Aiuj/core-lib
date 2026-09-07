@@ -20,14 +20,22 @@ from __future__ import annotations
 import gzip
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from ..config.payload_capture_settings import PayloadCaptureSettings
 from .logger import get_module_logger
 
 logger = get_module_logger()
+
+_warned_missing_buckets: Set[str] = set()
+
+
+def _reset_warned_missing_buckets() -> None:
+    """Clear the cached set of missing buckets (used in tests)."""
+    _warned_missing_buckets.clear()
 
 
 def _s3_key_for(call_id: str, when: Optional[datetime] = None) -> str:
@@ -112,5 +120,37 @@ def capture_llm_payload(
             ContentType="application/json",
             ContentEncoding="gzip",
         )
-    except Exception:
-        logger.warning("Failed to capture LLM payload for call_id=%s", call_id, exc_info=True)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        error_msg = exc.response.get("Error", {}).get("Message", str(exc))
+        bucket = settings.s3_bucket if settings else "unknown"
+        if error_code == "NoSuchBucket":
+            if bucket not in _warned_missing_buckets:
+                _warned_missing_buckets.add(bucket)
+                logger.warning(
+                    "Failed to capture LLM payload for call_id=%s: S3 bucket '%s' does not exist (%s). "
+                    "Further NoSuchBucket warnings for this bucket will be suppressed.",
+                    call_id,
+                    bucket,
+                    error_msg,
+                )
+            else:
+                logger.debug(
+                    "Failed to capture LLM payload for call_id=%s: S3 bucket '%s' does not exist",
+                    call_id,
+                    bucket,
+                )
+        else:
+            logger.warning(
+                "Failed to capture LLM payload for call_id=%s (S3 %s: %s)",
+                call_id,
+                error_code or "ClientError",
+                error_msg,
+            )
+        logger.debug("S3 payload capture traceback for call_id=%s:", call_id, exc_info=True)
+    except BotoCoreError as exc:
+        logger.warning("Failed to capture LLM payload for call_id=%s: %s", call_id, exc)
+        logger.debug("S3 payload capture traceback for call_id=%s:", call_id, exc_info=True)
+    except Exception as exc:
+        logger.warning("Failed to capture LLM payload for call_id=%s: %s", call_id, exc)
+        logger.debug("Payload capture traceback for call_id=%s:", call_id, exc_info=True)
