@@ -40,7 +40,7 @@ from .service_pricing import (
     get_reranker_pricing,
     get_ocr_pricing,
 )
-from .usage_events import log_usage_event
+from .usage_events import log_usage_event, log_usage_error_event
 from . import usage_actions
 from .payload_capture import capture_llm_payload
 
@@ -89,6 +89,7 @@ __all__ = [
     "get_reranker_pricing",
     "get_ocr_pricing",
     "log_usage_event",
+    "log_usage_error_event",
     "usage_actions",
     "capture_llm_payload",
 ]

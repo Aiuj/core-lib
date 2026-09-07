@@ -30,6 +30,27 @@ pipeline is needed.
 import logging
 from typing import Any, Optional
 
+from .logging_context import get_current_logging_context
+
+
+def _merge_context(event: dict[str, Any]) -> None:
+    context = get_current_logging_context()
+    for source, destination in {
+        "process_id": "process.id",
+        "session_id": "session.id",
+        "user_id": "user.id",
+        "user_name": "user.name",
+        "company_id": "organization.id",
+        "company_name": "organization.name",
+        "project_id": "rfx.project.id",
+        "generation_id": "rfx.generation.id",
+        "operation": "rfx.operation",
+        "document_type": "rfx.document.type",
+    }.items():
+        value = context.get(source)
+        if value not in (None, ""):
+            event.setdefault(destination, value)
+
 
 def log_usage_event(
     logger: logging.Logger,
@@ -57,7 +78,42 @@ def log_usage_event(
         if value is not None:
             event[key] = value
 
+    _merge_context(event)
+
     logger.info(message or f"Usage event: {action}", extra={"extra_attrs": event})
 
 
-__all__ = ["log_usage_event"]
+def log_usage_error_event(
+    logger: logging.Logger,
+    action: str,
+    domain: str,
+    error_code: str,
+    error: str,
+    message: Optional[str] = None,
+    **fields: Any,
+) -> None:
+    """Emit a structured, non-exception operational failure event.
+
+    Use this when a completed provider call produces an unusable application
+    result (for example a draft that fails a deterministic business rule).
+    It intentionally does not raise or log a traceback: the caller can store
+    an actionable status while OpenSearch receives a filterable error event.
+    """
+    event = {
+        "event.name": action,
+        "event.domain": domain,
+        "status": "error",
+        "error.code": error_code,
+        "error": error,
+    }
+    for key, value in fields.items():
+        if value is not None:
+            event[key] = value
+    _merge_context(event)
+    logger.warning(
+        message or f"Usage error: {action} ({error_code})",
+        extra={"extra_attrs": event},
+    )
+
+
+__all__ = ["log_usage_event", "log_usage_error_event"]
