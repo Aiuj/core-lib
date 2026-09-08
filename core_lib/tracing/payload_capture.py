@@ -147,7 +147,11 @@ def capture_llm_payload(
                 error_code or "ClientError",
                 error_msg,
             )
-        logger.debug("S3 payload capture traceback for call_id=%s:", call_id, exc_info=True)
+        # ClientError is an expected S3 service response (for example, a
+        # misconfigured access key), rather than an application exception.
+        # The warning above contains the actionable code and message; do not
+        # attach ``exc_info`` because that emits a misleading traceback for a
+        # best-effort operation.
     except BotoCoreError as exc:
         logger.warning("Failed to capture LLM payload for call_id=%s: %s", call_id, exc)
         logger.debug("S3 payload capture traceback for call_id=%s:", call_id, exc_info=True)

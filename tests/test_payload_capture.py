@@ -139,6 +139,34 @@ class TestPayloadCapture(unittest.TestCase):
             rendered = warning_call[0][0] % warning_call[0][1:]
             self.assertIn("AccessDenied", rendered)
             self.assertNotIn("exc_info", warning_call.kwargs)
+            self.assertFalse(mock_logger.debug.called)
+
+    def test_invalid_access_key_is_logged_without_a_traceback(self):
+        settings = PayloadCaptureSettings(enabled=True, s3_bucket="payload-bucket")
+        mock_s3 = MagicMock()
+        error_response = {
+            "Error": {
+                "Code": "InvalidAccessKeyId",
+                "Message": "The AWS Access Key Id you provided does not exist in our records.",
+            }
+        }
+        mock_s3.put_object.side_effect = ClientError(error_response, "PutObject")
+
+        with patch("boto3.client", return_value=mock_s3), \
+             patch("core_lib.tracing.payload_capture.logger") as mock_logger:
+            # This must remain a no-throw, best-effort operation.
+            capture_llm_payload(
+                call_id="call-invalid-key",
+                provider="openai",
+                model="gpt-4o",
+                settings=settings,
+            )
+
+            mock_logger.warning.assert_called_once()
+            rendered = mock_logger.warning.call_args[0][0] % mock_logger.warning.call_args[0][1:]
+            self.assertIn("InvalidAccessKeyId", rendered)
+            self.assertIn("does not exist in our records", rendered)
+            self.assertFalse(mock_logger.debug.called)
 
     def test_botocore_error_handled_gracefully(self):
         settings = PayloadCaptureSettings(enabled=True, s3_bucket="my-bucket")
