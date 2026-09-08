@@ -73,8 +73,9 @@ class OpenAIConfig(LLMConfig):
         azure_api_version: Optional[str] = None,
         timeout: int = 60,
         wake_on_lan: Optional[Dict[str, Any]] = None,
+        payload_capture: Optional[bool] = None,
     ):
-        super().__init__("openai", model, temperature, max_tokens, thinking_enabled)
+        super().__init__("openai", model, temperature, max_tokens, thinking_enabled, payload_capture)
         self.api_key = api_key
         self.thinking_budget = thinking_budget
         self.thinking_config = thinking_config or {}
@@ -663,6 +664,7 @@ class OpenAIProvider(BaseProvider):
                     model=self.config.model,
                     messages=messages,
                     response_text=content_text,
+                    force_enabled=self.config.payload_capture,
                 )
             except Exception as e:
                 # Service usage logging should never break the call

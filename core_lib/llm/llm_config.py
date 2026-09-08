@@ -24,12 +24,17 @@ class LLMConfig(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
+        payload_capture: Optional[bool] = None,
     ):
         self.provider = provider
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.thinking_enabled = thinking_enabled
+        # Per-model override for LLM_PAYLOAD_CAPTURE_ENABLED (S3 prompt/response
+        # capture). None = use the global setting; True/False forces it on/off
+        # for this model regardless of the global env var.
+        self.payload_capture = payload_capture
 
     @classmethod
     @abstractmethod

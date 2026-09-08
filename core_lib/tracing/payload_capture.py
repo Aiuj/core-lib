@@ -17,10 +17,13 @@ Design goals:
 
 from __future__ import annotations
 
+import atexit
 import gzip
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -36,6 +39,71 @@ _warned_missing_buckets: Set[str] = set()
 def _reset_warned_missing_buckets() -> None:
     """Clear the cached set of missing buckets (used in tests)."""
     _warned_missing_buckets.clear()
+
+
+# Uploads run on a small background pool so a slow/remote S3 endpoint never
+# adds latency to the LLM call that triggered the capture (see log_llm_usage,
+# which is already non-blocking for the same reason).
+_executor: Optional[ThreadPoolExecutor] = None
+_executor_lock = threading.Lock()
+
+# One boto3 S3 client per distinct endpoint/credential combination, reused
+# across calls instead of rebuilt (and re-connected) on every capture.
+_s3_client_cache: Dict[Tuple[Optional[str], Optional[str], Optional[str], Optional[str]], Any] = {}
+_s3_client_lock = threading.Lock()
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        with _executor_lock:
+            if _executor is None:
+                _executor = ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="llm-payload-capture"
+                )
+                atexit.register(_executor.shutdown, wait=False)
+    return _executor
+
+
+def _get_s3_client(settings: PayloadCaptureSettings) -> Any:
+    key = (
+        settings.s3_endpoint_url,
+        settings.s3_region,
+        settings.aws_access_key_id,
+        settings.aws_secret_access_key,
+    )
+    client = _s3_client_cache.get(key)
+    if client is not None:
+        return client
+    with _s3_client_lock:
+        client = _s3_client_cache.get(key)
+        if client is None:
+            client_kwargs: Dict[str, Any] = {}
+            if settings.s3_endpoint_url:
+                client_kwargs["endpoint_url"] = settings.s3_endpoint_url
+            if settings.s3_region:
+                client_kwargs["region_name"] = settings.s3_region
+            if settings.aws_access_key_id and settings.aws_secret_access_key:
+                client_kwargs["aws_access_key_id"] = settings.aws_access_key_id
+                client_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+            client = boto3.client("s3", **client_kwargs)
+            _s3_client_cache[key] = client
+        return client
+
+
+def _reset_s3_client_cache() -> None:
+    """Clear the cached S3 clients (used in tests)."""
+    with _s3_client_lock:
+        _s3_client_cache.clear()
+
+
+def _wait_for_pending_captures() -> None:
+    """Block until all queued payload-capture uploads finish (used in tests)."""
+    global _executor
+    with _executor_lock:
+        if _executor is not None:
+            _executor.shutdown(wait=True)
+            _executor = None
 
 
 def _s3_key_for(call_id: str, when: Optional[datetime] = None) -> str:
@@ -69,12 +137,16 @@ def capture_llm_payload(
     response_text: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     settings: Optional[PayloadCaptureSettings] = None,
+    force_enabled: Optional[bool] = None,
 ) -> None:
-    """Best-effort upload of an LLM call's full prompt/response to S3.
+    """Best-effort, non-blocking upload of an LLM call's prompt/response to S3.
 
-    No-op unless capture is enabled via settings/env. Never raises: any
-    error (missing credentials, network failure, etc.) is caught and logged
-    so it can never break the calling LLM request.
+    No-op unless capture is enabled via settings/env (or forced on for this
+    call). The actual upload runs on a background thread pool so a slow or
+    remote S3 endpoint never adds latency to the LLM call that triggered the
+    capture; any error (missing credentials, network failure, etc.) is caught
+    and logged in that worker thread and can never break the calling LLM
+    request.
 
     Args:
         call_id: The id returned by `log_llm_usage()` for this same call.
@@ -85,12 +157,41 @@ def capture_llm_payload(
         metadata: Any additional context to store alongside the payload.
         settings: Optional pre-built settings (mainly for tests); defaults
             to `PayloadCaptureSettings.from_env()`.
+        force_enabled: Per-model override (from `llm_providers.yaml`'s
+            `payload_capture: true/false`) that takes precedence over
+            `settings.enabled`. `None` (the default) means "use the global
+            setting"; `True`/`False` forces capture on/off for this call
+            regardless of the global `LLM_PAYLOAD_CAPTURE_ENABLED` value.
     """
-    try:
-        settings = settings or PayloadCaptureSettings.from_env()
-        if not settings.enabled or not settings.s3_bucket:
-            return
+    settings = settings or PayloadCaptureSettings.from_env()
+    enabled = settings.enabled if force_enabled is None else force_enabled
+    if not enabled:
+        return
+    if not settings.s3_bucket:
+        if force_enabled:
+            logger.warning(
+                "LLM payload capture forced enabled for call_id=%s but no S3 bucket is "
+                "configured (LLM_PAYLOAD_S3_BUCKET); skipping upload.",
+                call_id,
+            )
+        return
 
+    _get_executor().submit(
+        _do_capture, call_id, provider, model, messages, response_text, metadata, settings
+    )
+
+
+def _do_capture(
+    call_id: str,
+    provider: str,
+    model: str,
+    messages: Optional[List[Dict[str, Any]]],
+    response_text: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    settings: PayloadCaptureSettings,
+) -> None:
+    """Perform the actual S3 upload. Runs on the background pool."""
+    try:
         max_chars = settings.max_chars
         payload = {
             "call_id": call_id,
@@ -102,16 +203,7 @@ def capture_llm_payload(
         }
         body = gzip.compress(json.dumps(payload, default=str).encode("utf-8"))
 
-        client_kwargs: Dict[str, Any] = {}
-        if settings.s3_endpoint_url:
-            client_kwargs["endpoint_url"] = settings.s3_endpoint_url
-        if settings.s3_region:
-            client_kwargs["region_name"] = settings.s3_region
-        if settings.aws_access_key_id and settings.aws_secret_access_key:
-            client_kwargs["aws_access_key_id"] = settings.aws_access_key_id
-            client_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
-
-        s3_client = boto3.client("s3", **client_kwargs)
+        s3_client = _get_s3_client(settings)
         key = _s3_key_for(call_id)
         s3_client.put_object(
             Bucket=settings.s3_bucket,

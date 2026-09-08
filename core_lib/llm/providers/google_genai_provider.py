@@ -191,8 +191,9 @@ class GeminiConfig(LLMConfig):
         location: Optional[str] = None,
         service_account_file: Optional[str] = None,
         http_timeout_ms: Optional[int] = None,
+        payload_capture: Optional[bool] = None,
     ):
-        super().__init__("gemini", model, temperature, max_tokens, thinking_enabled)
+        super().__init__("gemini", model, temperature, max_tokens, thinking_enabled, payload_capture)
         self.api_key = api_key
         self.base_url = base_url
         self.safety_settings = safety_settings or {
@@ -1251,6 +1252,7 @@ class GoogleGenAIProvider(BaseProvider):
                     model=self.config.model,
                     messages=messages,
                     response_text=full_text,
+                    force_enabled=self.config.payload_capture,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log usage metadata: {str(e)}")

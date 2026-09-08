@@ -9,7 +9,9 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from core_lib.config.payload_capture_settings import PayloadCaptureSettings
 from core_lib.tracing.payload_capture import (
+    _reset_s3_client_cache,
     _reset_warned_missing_buckets,
+    _wait_for_pending_captures,
     capture_llm_payload,
 )
 
@@ -17,9 +19,12 @@ from core_lib.tracing.payload_capture import (
 class TestPayloadCapture(unittest.TestCase):
     def setUp(self):
         _reset_warned_missing_buckets()
+        _reset_s3_client_cache()
 
     def tearDown(self):
+        _wait_for_pending_captures()
         _reset_warned_missing_buckets()
+        _reset_s3_client_cache()
 
     def test_capture_disabled_noop(self):
         settings = PayloadCaptureSettings(enabled=False, s3_bucket="my-bucket")
@@ -32,6 +37,7 @@ class TestPayloadCapture(unittest.TestCase):
                 response_text="world",
                 settings=settings,
             )
+            _wait_for_pending_captures()
             mock_boto.assert_not_called()
 
     def test_capture_no_bucket_noop(self):
@@ -45,7 +51,55 @@ class TestPayloadCapture(unittest.TestCase):
                 response_text="world",
                 settings=settings,
             )
+            _wait_for_pending_captures()
             mock_boto.assert_not_called()
+
+    def test_force_enabled_overrides_disabled_setting(self):
+        settings = PayloadCaptureSettings(enabled=False, s3_bucket="test-bucket")
+        mock_s3 = MagicMock()
+        with patch("boto3.client", return_value=mock_s3):
+            capture_llm_payload(
+                call_id="call-1",
+                provider="openai",
+                model="gpt-4o",
+                messages=[{"role": "user", "content": "hello"}],
+                response_text="world",
+                settings=settings,
+                force_enabled=True,
+            )
+            _wait_for_pending_captures()
+            mock_s3.put_object.assert_called_once()
+
+    def test_force_disabled_overrides_enabled_setting(self):
+        settings = PayloadCaptureSettings(enabled=True, s3_bucket="test-bucket")
+        mock_s3 = MagicMock()
+        with patch("boto3.client", return_value=mock_s3):
+            capture_llm_payload(
+                call_id="call-1",
+                provider="openai",
+                model="gpt-4o",
+                messages=[{"role": "user", "content": "hello"}],
+                response_text="world",
+                settings=settings,
+                force_enabled=False,
+            )
+            _wait_for_pending_captures()
+            mock_s3.put_object.assert_not_called()
+
+    def test_force_enabled_without_bucket_warns_and_noops(self):
+        settings = PayloadCaptureSettings(enabled=False, s3_bucket="")
+        with patch("boto3.client") as mock_boto, \
+             patch("core_lib.tracing.payload_capture.logger") as mock_logger:
+            capture_llm_payload(
+                call_id="call-1",
+                provider="openai",
+                model="gpt-4o",
+                settings=settings,
+                force_enabled=True,
+            )
+            _wait_for_pending_captures()
+            mock_boto.assert_not_called()
+            mock_logger.warning.assert_called_once()
 
     def test_capture_success(self):
         settings = PayloadCaptureSettings(enabled=True, s3_bucket="test-bucket")
@@ -60,6 +114,7 @@ class TestPayloadCapture(unittest.TestCase):
                 metadata={"user_id": "u1"},
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             mock_s3.put_object.assert_called_once()
             call_kwargs = mock_s3.put_object.call_args.kwargs
@@ -95,6 +150,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             self.assertEqual(mock_logger.warning.call_count, 1)
             warning_call = mock_logger.warning.call_args
@@ -109,6 +165,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             self.assertEqual(mock_logger.warning.call_count, 1)
             mock_logger.debug.assert_called()
@@ -133,6 +190,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             self.assertEqual(mock_logger.warning.call_count, 1)
             warning_call = mock_logger.warning.call_args
@@ -161,6 +219,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             mock_logger.warning.assert_called_once()
             rendered = mock_logger.warning.call_args[0][0] % mock_logger.warning.call_args[0][1:]
@@ -182,6 +241,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             self.assertEqual(mock_logger.warning.call_count, 1)
             warning_call = mock_logger.warning.call_args
@@ -201,6 +261,7 @@ class TestPayloadCapture(unittest.TestCase):
                 model="gpt-4o",
                 settings=settings,
             )
+            _wait_for_pending_captures()
 
             self.assertEqual(mock_logger.warning.call_count, 1)
             warning_call = mock_logger.warning.call_args

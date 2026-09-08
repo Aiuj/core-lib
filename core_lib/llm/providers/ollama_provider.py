@@ -54,8 +54,9 @@ class OllamaConfig(LLMConfig):
         top_p: Optional[float] = None,
         thinking_config: Optional[Dict[str, Any]] = None,
         wake_on_lan: Optional[Dict[str, Any]] = None,
+        payload_capture: Optional[bool] = None,
     ):
-        super().__init__("ollama", model, temperature, max_tokens, thinking_enabled)
+        super().__init__("ollama", model, temperature, max_tokens, thinking_enabled, payload_capture)
         self.base_url = base_url
         self.api_key = api_key or None
         self.timeout = timeout
@@ -555,6 +556,7 @@ class OllamaProvider(BaseProvider):
                     model=self.config.model,
                     messages=messages,
                     response_text=content_text,
+                    force_enabled=self.config.payload_capture,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")

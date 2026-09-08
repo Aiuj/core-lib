@@ -42,6 +42,7 @@ class MistralConfig(OpenAIConfig):
         max_tokens: Optional[int] = None,
         thinking_enabled: bool = False,
         timeout: int = 60,
+        payload_capture: Optional[bool] = None,
     ):
         super().__init__(
             api_key=api_key,
@@ -51,6 +52,7 @@ class MistralConfig(OpenAIConfig):
             thinking_enabled=thinking_enabled,
             base_url=MISTRAL_BASE_URL,
             timeout=timeout,
+            payload_capture=payload_capture,
         )
         # OpenAIConfig.__init__ sets provider="openai"; override to "mistral".
         self.provider = "mistral"

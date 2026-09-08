@@ -109,6 +109,7 @@ class AzureOpenAIConfig(OpenAIConfig):
         thinking_budget: Optional[int] = None,
         organization: Optional[str] = None,
         project: Optional[str] = None,
+        payload_capture: Optional[bool] = None,
     ) -> None:
         # Call OpenAIConfig.__init__ — sets self.provider = "openai" first …
         super().__init__(
@@ -123,6 +124,7 @@ class AzureOpenAIConfig(OpenAIConfig):
             project=project,
             azure_endpoint=azure_endpoint,
             azure_api_version=azure_api_version,
+            payload_capture=payload_capture,
         )
         # … then override to make the provider identity explicit.
         self.provider = "azure"

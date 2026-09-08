@@ -114,8 +114,9 @@ class OpenAIResponsesConfig(LLMConfig):
         reasoning_effort: str = "medium",
         thinking_budget: Optional[int] = None,
         is_alibaba: Optional[bool] = None,
+        payload_capture: Optional[bool] = None,
     ):
-        super().__init__("openai-responses", model, temperature, max_tokens, thinking_enabled)
+        super().__init__("openai-responses", model, temperature, max_tokens, thinking_enabled, payload_capture)
         self.api_key = api_key
         self.base_url = base_url
         self.organization = organization
@@ -487,6 +488,7 @@ class OpenAIResponsesProvider(BaseProvider):
                     model=cfg.model,
                     messages=input_messages,
                     response_text=content_text,
+                    force_enabled=cfg.payload_capture,
                 )
             except Exception as e:
                 logger.warning(f"Failed to log LLM usage: {e}")

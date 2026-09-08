@@ -184,6 +184,13 @@ class ProviderConfig:
     # Usage-based routing: filter providers by purpose (e.g. "ocr", "vision", "chat")
     # None or empty means the provider is available for any usage.
     usage: Optional[Union[str, List[str]]] = None
+
+    # Per-model override for LLM_PAYLOAD_CAPTURE_ENABLED (S3 prompt/response
+    # capture, see core_lib.tracing.payload_capture). None = use the global
+    # env setting; True/False forces capture on/off for this model only.
+    # Embeddings and reranking are never captured to S3 regardless of this
+    # setting — only LLM chat/completion calls support payload capture.
+    payload_capture: Optional[bool] = None
     
     _missing_service_account_logged: ClassVar[Set[str]] = set()
     
@@ -382,7 +389,22 @@ class ProviderConfig:
         if isinstance(supports_tools, str):
             supports_tools = supports_tools.lower() in ("true", "1", "yes")
         normalized["supports_tools"] = bool(supports_tools)
-        
+
+        # Per-model S3 payload capture override (tri-state: absent/None means
+        # "use the global LLM_PAYLOAD_CAPTURE_ENABLED setting").
+        payload_capture = (
+            data.get("payload_capture")
+            if "payload_capture" in data
+            else data.get("payloadCapture") if "payloadCapture" in data
+            else data.get("trace_payload") if "trace_payload" in data
+            else data.get("tracePayload") if "tracePayload" in data
+            else None
+        )
+        if payload_capture is not None:
+            if isinstance(payload_capture, str):
+                payload_capture = payload_capture.lower() in ("true", "1", "yes")
+            normalized["payload_capture"] = bool(payload_capture)
+
         # Collect remaining keys as extra
         known_keys = {
             "provider", "type", "model", "model_name", "api_key", "apiKey", "key",
@@ -397,6 +419,7 @@ class ProviderConfig:
             "http_timeout_ms", "httpTimeoutMs", "timeout_ms",
             "usage", "use_case", "usecase", "purpose", "task",
             "supports_tools", "supportsTools",
+            "payload_capture", "payloadCapture", "trace_payload", "tracePayload",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
@@ -431,6 +454,7 @@ class ProviderConfig:
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
                 service_account_file=service_account,
                 http_timeout_ms=self.http_timeout_ms,
+                payload_capture=self.payload_capture,
             )
 
         elif self.provider == "vertex":
@@ -450,8 +474,9 @@ class ProviderConfig:
                 location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION") or os.getenv("GOOGLE_CLOUD_REGION"),
                 service_account_file=service_account,
                 http_timeout_ms=self.http_timeout_ms,
+                payload_capture=self.payload_capture,
             )
-        
+
         elif self.provider == "azure-openai":
             from .providers.azure_openai_provider import AzureOpenAIConfig
             api_key = (
@@ -479,6 +504,7 @@ class ProviderConfig:
                 thinking_budget=thinking_budget,
                 organization=self.organization,
                 project=self.project,
+                payload_capture=self.payload_capture,
             )
 
         elif self.provider == "openai":
@@ -510,8 +536,9 @@ class ProviderConfig:
                 azure_api_version=self.azure_api_version or "2024-08-01-preview",
                 timeout=timeout,
                 wake_on_lan=self.wake_on_lan,
+                payload_capture=self.payload_capture,
             )
-        
+
         elif self.provider == "ollama":
             from .providers.ollama_provider import OllamaConfig
             return OllamaConfig(
@@ -527,8 +554,9 @@ class ProviderConfig:
                 )}
                 ,
                 wake_on_lan=self.wake_on_lan,
+                payload_capture=self.payload_capture,
             )
-        
+
         elif self.provider == "openai-responses":
             from .providers.openai_responses_provider import OpenAIResponsesConfig
             api_key = (
@@ -553,6 +581,7 @@ class ProviderConfig:
                 organization=self.organization,
                 project=self.project,
                 reasoning_effort=reasoning_effort,
+                payload_capture=self.payload_capture,
             )
 
         elif self.provider == "openrouter":
@@ -572,6 +601,7 @@ class ProviderConfig:
                 organization=self.organization,
                 project=self.project,
                 timeout=timeout,
+                payload_capture=self.payload_capture,
             )
 
         elif self.provider == "mistral":
@@ -589,6 +619,7 @@ class ProviderConfig:
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
                 timeout=timeout,
+                payload_capture=self.payload_capture,
             )
         
         else:
