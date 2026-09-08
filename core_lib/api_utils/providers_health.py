@@ -42,6 +42,7 @@ logger = get_module_logger()
 def _build_llm_section(llm_results: List[Any]) -> Dict[str, Any]:
     return {
         "healthy": all(r.healthy for r in llm_results) if llm_results else False,
+        "degraded": any(getattr(r, "status", "ok") == "degraded" for r in llm_results),
         "providers": [
             {
                 "provider": r.provider,
@@ -51,6 +52,8 @@ def _build_llm_section(llm_results: List[Any]) -> Dict[str, Any]:
                 "healthy": r.healthy,
                 "error": r.error,
                 "latency_ms": r.latency_ms,
+                "status": getattr(r, "status", "ok" if r.healthy else "down"),
+                "latency_threshold_ms": getattr(r, "latency_threshold_ms", None),
                 **({"url": r.url} if r.url else {}),
                 **({"region": r.location} if r.location else {}),
                 **({"project": getattr(r, "project", None)} if getattr(r, "project", None) else {}),

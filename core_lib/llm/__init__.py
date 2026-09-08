@@ -63,6 +63,8 @@ from .startup_preflight import (
     check_llm_providers_health,
     ConnectivityResult,
     check_llm_connectivity,
+    DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS,
+    get_llm_health_check_max_latency_ms,
 )
 from .json_parser import clean_and_parse_json_response
 
@@ -103,6 +105,8 @@ __all__ = [
     "run_llm_startup_preflight",
     "ProviderHealthResult",
     "check_llm_providers_health",
+    "DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS",
+    "get_llm_health_check_max_latency_ms",
     
     # Provider registry (multi-provider configuration)
     "ProviderConfig",

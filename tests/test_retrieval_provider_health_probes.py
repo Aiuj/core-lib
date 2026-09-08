@@ -1,12 +1,16 @@
 """Tests for live embedding and reranker provider health probes."""
 
+import time
 from unittest.mock import Mock, patch
 
 from core_lib.embeddings.health_probe import check_embedding_providers_health
 from core_lib.reranker.health_probe import check_reranker_providers_health
 from core_lib.reranker.base import RerankResult
 from core_lib.llm.provider_registry import ProviderConfig
-from core_lib.llm.startup_preflight import check_llm_providers_health
+from core_lib.llm.startup_preflight import (
+    check_llm_connectivity,
+    check_llm_providers_health,
+)
 
 
 def test_embedding_probe_uses_public_generation_path() -> None:
@@ -95,3 +99,43 @@ def test_llm_probe_disables_wol_when_requested() -> None:
 
     assert result[0].healthy is True
     assert observed["wake_on_lan"] == {"enabled": False}
+
+
+def test_live_llm_probe_is_degraded_when_latency_exceeds_threshold(monkeypatch) -> None:
+    provider = ProviderConfig(provider="openai", model="qwen", api_key="key")
+    client = Mock()
+    client.chat.return_value = {"choices": [{"message": {"content": "OK"}}]}
+    monkeypatch.setenv("LLM_HEALTH_CHECK_MAX_LATENCY_MS", "100")
+
+    with (
+        patch.object(ProviderConfig, "to_client", return_value=client),
+        patch(
+            "core_lib.llm.startup_preflight.time.monotonic",
+            side_effect=[10.0, 10.2],
+        ),
+    ):
+        result = check_llm_providers_health([provider], enable_wol=False)[0]
+
+    assert result.healthy is True
+    assert result.status == "degraded"
+    assert result.latency_ms == 200.0
+    assert result.latency_threshold_ms == 100.0
+
+
+def test_connectivity_probe_reports_latency_and_degraded_status(monkeypatch) -> None:
+    provider = ProviderConfig(provider="openai", model="qwen", api_key="key")
+    monkeypatch.setenv("LLM_HEALTH_CHECK_MAX_LATENCY_MS", "1")
+
+    def slow_probe(_provider):
+        time.sleep(0.01)
+        return "ok", "1 model available", None
+
+    with patch(
+        "core_lib.llm.startup_preflight._probe_connectivity",
+        side_effect=slow_probe,
+    ):
+        result = check_llm_connectivity([provider])[0]
+
+    assert result.status == "degraded"
+    assert result.latency_ms > 1
+    assert result.latency_threshold_ms == 1.0

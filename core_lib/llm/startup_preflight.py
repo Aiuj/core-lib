@@ -35,6 +35,48 @@ _MODEL_HINTS = {
 }
 
 
+# A health probe that completes after this limit confirms availability but not
+# acceptable responsiveness.  Applications can tune it for their own SLO
+# without having to reimplement provider health-check handling.
+DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS = 5000.0
+
+
+def get_llm_health_check_max_latency_ms() -> float:
+    """Return the latency warning threshold for LLM health probes.
+
+    ``LLM_HEALTH_CHECK_MAX_LATENCY_MS`` is deliberately shared by both the
+    lightweight connectivity checks and live completion probes.  Zero or a
+    negative value disables the latency warning, which is useful for providers
+    intentionally kept cold behind Wake-on-LAN.
+    """
+    raw = os.getenv("LLM_HEALTH_CHECK_MAX_LATENCY_MS")
+    if raw is None:
+        return DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "LLM health check: invalid LLM_HEALTH_CHECK_MAX_LATENCY_MS=%r; using %.0fms",
+            raw,
+            DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS,
+        )
+        return DEFAULT_LLM_HEALTH_CHECK_MAX_LATENCY_MS
+
+
+def _health_status_for_latency(
+    status: str, latency_ms: Optional[float], threshold_ms: float
+) -> str:
+    """Downgrade a successful probe to ``degraded`` when it is too slow."""
+    if (
+        status == "ok"
+        and threshold_ms > 0
+        and latency_ms is not None
+        and latency_ms > threshold_ms
+    ):
+        return "degraded"
+    return status
+
+
 @dataclass
 class StartupValidationSummary:
     configured_providers: int
@@ -59,6 +101,8 @@ class ProviderHealthResult:
     credential_project: Optional[str] = None
     service_account_email: Optional[str] = None
     credential_type: Optional[str] = None
+    status: str = "ok"  # "ok", "degraded", or "down"
+    latency_threshold_ms: Optional[float] = None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -384,6 +428,7 @@ def check_llm_providers_health(
             return []
 
     configured = list(providers)
+    latency_threshold_ms = get_llm_health_check_max_latency_ms()
     results: List[ProviderHealthResult] = []
     # (provider, warmup_seconds, index_in_results) for WoL retry candidates
     wol_retry_candidates: list[tuple] = []
@@ -406,6 +451,10 @@ def check_llm_providers_health(
                 healthy=error is None,
                 error=error,
                 latency_ms=elapsed_ms,
+                status=_health_status_for_latency(
+                    "ok" if error is None else "down", elapsed_ms, latency_threshold_ms
+                ),
+                latency_threshold_ms=latency_threshold_ms,
                 url=resolved_url,
                 location=resolved_region,
                 project=project,
@@ -458,6 +507,10 @@ def check_llm_providers_health(
                 healthy=error is None,
                 error=error,
                 latency_ms=elapsed_ms,
+                status=_health_status_for_latency(
+                    "ok" if error is None else "down", elapsed_ms, latency_threshold_ms
+                ),
+                latency_threshold_ms=latency_threshold_ms,
                 url=resolved_url,
                 location=resolved_region,
                 project=project,
@@ -500,6 +553,8 @@ class ConnectivityResult:
     details: Optional[str] = None
     error: Optional[str] = None
     host: Optional[str] = None
+    latency_ms: Optional[float] = None
+    latency_threshold_ms: Optional[float] = None
 
 
 def _http_get(url: str, headers: dict, timeout: int = 8) -> tuple[int, bytes]:
@@ -797,14 +852,17 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
             return []
 
     configured = [p for p in providers if getattr(p, "enabled", True)]
+    latency_threshold_ms = get_llm_health_check_max_latency_ms()
     if not configured:
         return []
 
     def _run(provider) -> ConnectivityResult:
+        started = time.monotonic()
         try:
             status, details, error = _probe_connectivity(provider)
         except Exception as exc:
             status, details, error = "down", None, str(exc)
+        latency_ms = round((time.monotonic() - started) * 1000, 1)
         resolved_host, _ = _resolve_provider_endpoint_and_region(provider)
         return ConnectivityResult(
             provider=provider.provider,
@@ -813,10 +871,12 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
             priority=getattr(provider, "priority", 100),
             min_intelligence_level=getattr(provider, "min_intelligence_level", 0),
             max_intelligence_level=getattr(provider, "max_intelligence_level", 10),
-            status=status,
+            status=_health_status_for_latency(status, latency_ms, latency_threshold_ms),
             details=details,
             error=error,
             host=resolved_host,
+            latency_ms=latency_ms,
+            latency_threshold_ms=latency_threshold_ms,
         )
 
     results: List[ConnectivityResult] = []
@@ -837,6 +897,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
                         max_intelligence_level=getattr(p, "max_intelligence_level", 10),
                         status="down", error=str(exc),
                         host=resolved_host,
+                        latency_threshold_ms=latency_threshold_ms,
                     ))
         except concurrent.futures.TimeoutError:
             for future, p in futures.items():
@@ -850,6 +911,7 @@ def check_llm_connectivity(providers: Optional[Iterable] = None) -> List[Connect
                         max_intelligence_level=getattr(p, "max_intelligence_level", 10),
                         status="unknown", error="Connectivity check timed out",
                         host=resolved_host,
+                        latency_threshold_ms=latency_threshold_ms,
                     ))
 
     results.sort(key=lambda r: r.priority)
