@@ -1,0 +1,47 @@
+# Lockfiles (use uv tree / uv pip show instead of reading lockfiles)
+uv.lock
+package-lock.json
+
+# Logs
+*.log
+*.log.*
+logs/
+
+# Coverage and testing binaries
+.coverage
+*.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+
+# Python / build / caches
+__pycache__/
+*.py[codz]
+*$py.class
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+var/
+wheels/
+share/python-wheels/
+
+# Virtual environments
+.venv/
+env/
+venv/
+node_modules/
+
+# Secrets
+.env
+.env.*
+!.env*.example
+
+# Stray dumps
+temp_output/
+tmp/
+.tmp/
