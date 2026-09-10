@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv tree:*)",
+      "Bash(uv pip show:*)",
+      "Bash(uv lock --check)",
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git describe:*)",
+      "Bash(ls:*)",
+      "Bash(pwd)",
+      "Read(//c/Dev/github/core-lib/**)",
+      "Grep",
+      "Glob"
+    ],
+    "deny": [
+      "Read(//c/Dev/github/core-lib/.env)",
+      "Read(//c/Dev/github/core-lib/.env.*)"
+    ]
+  }
+}
