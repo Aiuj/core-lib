@@ -308,7 +308,19 @@ class ProviderConfig:
             if "enabled" in thinking:
                 normalized["thinking_enabled"] = bool(thinking.get("enabled"))
         elif isinstance(thinking, bool):
+            # A bare `thinking: true|false` is a deliberate, explicit choice —
+            # not the class default merely going unset — so it must also land
+            # in thinking_config["enabled"]. The Gemini/Vertex request builder
+            # (google_genai_provider.py) only honors an explicit *disable* via
+            # thinking_config.get("enabled") is False; the top-level
+            # thinking_enabled flag alone is indistinguishable from "never
+            # configured" there (its dataclass default is also False), so
+            # without this a plain `thinking: false` was silently ignored and
+            # Gemini 2.5 fell back to its own default (dynamic thinking on),
+            # which can consume an entire small max_tokens budget on hidden
+            # reasoning and return empty visible output.
             normalized["thinking_enabled"] = thinking
+            thinking_cfg["enabled"] = thinking
         elif isinstance(thinking, (int, float)):
             budget = int(thinking)
             thinking_cfg["budget"] = budget
@@ -316,7 +328,9 @@ class ProviderConfig:
         elif isinstance(thinking, str):
             thinking_lc = thinking.lower().strip()
             if thinking_lc in {"true", "false"}:
-                normalized["thinking_enabled"] = thinking_lc == "true"
+                enabled = thinking_lc == "true"
+                normalized["thinking_enabled"] = enabled
+                thinking_cfg["enabled"] = enabled
             else:
                 thinking_cfg["level"] = thinking_lc
                 normalized["thinking_enabled"] = thinking_lc not in {"off", "none", "disabled", "disable", "0"}
