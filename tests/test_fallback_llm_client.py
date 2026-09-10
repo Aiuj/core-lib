@@ -826,3 +826,111 @@ class TestFallbackLLMClientUsageFiltering:
         assert "rag-model" in providers_tried
         assert "vision-model" not in providers_tried
 
+
+class TestFallbackLLMClientContextWindowFiltering:
+    """Providers whose configured context_window can't hold the prompt are skipped."""
+
+    @staticmethod
+    def _reg(*specs) -> ProviderRegistry:
+        registry = ProviderRegistry()
+        for s in specs:
+            registry.add(ProviderConfig(
+                provider=s.get("provider", "gemini"),
+                model=s["model"],
+                api_key=s.get("api_key", "test-key"),
+                priority=s.get("priority", 1),
+                context_window=s.get("context_window"),
+                max_tokens=s.get("max_tokens"),
+            ))
+        return registry
+
+    def test_small_context_provider_skipped_for_large_prompt(self, mock_health_tracker):
+        registry = self._reg(
+            {"model": "small-model", "context_window": 2000, "priority": 1},
+            {"model": "big-model", "context_window": 200_000, "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        huge_prompt = "x" * 40_000  # ~10k estimated tokens, over small-model's window
+        providers = list(client._iter_providers(prompt_tokens=len(huge_prompt) // 4))
+        models = [c.model for c, _ in providers]
+
+        assert "small-model" not in models
+        assert models == ["big-model"]
+
+    def test_small_prompt_keeps_priority_order(self, mock_health_tracker):
+        registry = self._reg(
+            {"model": "small-model", "context_window": 2000, "priority": 1},
+            {"model": "big-model", "context_window": 200_000, "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers = list(client._iter_providers(prompt_tokens=50))
+        models = [c.model for c, _ in providers]
+
+        assert models[0] == "small-model"
+
+    def test_unconfigured_context_window_never_excluded(self, mock_health_tracker):
+        """A provider with no context_window set is treated as unbounded."""
+        registry = self._reg(
+            {"model": "unbounded-model", "context_window": None, "priority": 1},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers = list(client._iter_providers(prompt_tokens=1_000_000))
+        assert [c.model for c, _ in providers] == ["unbounded-model"]
+
+    def test_all_too_small_falls_back_to_full_list_as_last_resort(self, mock_health_tracker, caplog):
+        """Never a total blackout: if every provider's window is too small, try anyway."""
+        registry = self._reg(
+            {"model": "small-model", "context_window": 1000, "priority": 1},
+            {"model": "also-small-model", "context_window": 1500, "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        with caplog.at_level("WARNING"):
+            providers = list(client._iter_providers(prompt_tokens=100_000))
+        models = [c.model for c, _ in providers]
+
+        assert set(models) == {"small-model", "also-small-model"}
+        assert "exceeds every configured" in caplog.text
+
+    def test_reserved_output_tokens_counted_against_window(self, mock_health_tracker):
+        """A provider's own max_tokens is reserved from its context window."""
+        registry = self._reg(
+            {"model": "tight-model", "context_window": 1100, "max_tokens": 200, "priority": 1},
+            {"model": "roomy-model", "context_window": 200_000, "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        # 1000 prompt tokens + 200 reserved output = 1200 > tight-model's 1100 window.
+        providers = list(client._iter_providers(prompt_tokens=1000))
+        models = [c.model for c, _ in providers]
+
+        assert "tight-model" not in models
+        assert models == ["roomy-model"]
+
+    def test_chat_routes_past_small_context_provider(self, mock_health_tracker):
+        """End-to-end: chat() estimates the prompt itself and skips a too-small provider."""
+        registry = self._reg(
+            {"model": "small-model", "context_window": 500, "priority": 1},
+            {"model": "big-model", "context_window": 200_000, "priority": 2},
+        )
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        providers_tried = []
+
+        def mock_get_client(config):
+            providers_tried.append(config.model)
+            mock = MagicMock()
+            mock.is_in_warmup.return_value = False
+            mock.chat.return_value = {
+                "content": "ok", "usage": {}, "tool_calls": [], "structured": False,
+            }
+            return mock
+
+        client._get_client = mock_get_client
+        client.chat("y" * 4000)  # ~1000 estimated tokens, over small-model's 500-token window
+
+        assert providers_tried == ["big-model"]
+

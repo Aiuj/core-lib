@@ -161,7 +161,14 @@ class ProviderConfig:
     min_intelligence_level: int = 0   # Minimum level this provider handles
     max_intelligence_level: int = 10  # Maximum level this provider handles
     tier: str = "standard"            # "low", "standard", "high"
-    
+
+    # Total context window (input + output tokens) this model actually supports,
+    # e.g. 8192 for a small local model. None means unknown/unbounded: such a
+    # provider is never skipped on context-size grounds alone. Accepts
+    # `context_window`, `context_length`, `max_context_tokens`, or Ollama's
+    # `num_ctx` in YAML/dict config (see from_dict below).
+    context_window: Optional[int] = None
+
     extra: Dict[str, Any] = field(default_factory=dict)
 
     # Per-provider HTTP timeout override (ms). Gemini-only for now.
@@ -369,6 +376,18 @@ class ProviderConfig:
         tier = data.get("tier") or data.get("model_tier") or data.get("modelTier")
         if tier:
             normalized["tier"] = str(tier).lower()
+
+        # Context window (total tokens the model supports). `num_ctx` doubles
+        # as Ollama's own request parameter, so it is intentionally left in
+        # `extra` too (see the known_keys set below) rather than consumed here.
+        context_window = (
+            data.get("context_window") or data.get("contextWindow")
+            or data.get("context_length") or data.get("contextLength")
+            or data.get("max_context_tokens") or data.get("maxContextTokens")
+            or data.get("num_ctx")
+        )
+        if context_window is not None:
+            normalized["context_window"] = int(context_window)
         
         # Per-provider HTTP timeout override (ms)
         http_timeout_ms = data.get("http_timeout_ms") or data.get("httpTimeoutMs") or data.get("timeout_ms")
@@ -434,6 +453,8 @@ class ProviderConfig:
             "usage", "use_case", "usecase", "purpose", "task",
             "supports_tools", "supportsTools",
             "payload_capture", "payloadCapture", "trace_payload", "tracePayload",
+            "context_window", "contextWindow", "context_length", "contextLength",
+            "max_context_tokens", "maxContextTokens",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
         normalized["extra"] = extra
@@ -728,6 +749,24 @@ class ProviderConfig:
         """
         return self.min_intelligence_level <= level <= self.max_intelligence_level
     
+    def fits_prompt_tokens(self, prompt_tokens: int, *, reserved_output_tokens: int = 0) -> bool:
+        """Check whether an estimated prompt fits this provider's context window.
+
+        Args:
+            prompt_tokens: Estimated size of the outgoing request (messages +
+                system message + tools), in tokens.
+            reserved_output_tokens: Tokens to reserve for the response, e.g.
+                this provider's own `max_tokens` cap.
+
+        Returns:
+            True when `context_window` is unset (unknown/unbounded — never
+            skip a provider on context-size grounds alone) or when the
+            estimated total fits within it.
+        """
+        if self.context_window is None:
+            return True
+        return (prompt_tokens + max(0, reserved_output_tokens)) <= self.context_window
+
     def is_high_tier(self) -> bool:
         """Check if this is a high-tier (more capable) model."""
         return self.tier == "high"
@@ -869,6 +908,26 @@ class ProviderRegistry:
         providers = self.get_providers_for_level(intelligence_level)
         return providers[0] if providers else None
     
+    def get_providers_for_context(self, prompt_tokens: int) -> List[ProviderConfig]:
+        """Get providers whose context window can hold an estimated prompt.
+
+        A provider with no configured `context_window` is always included
+        (unknown/unbounded, never excluded on this basis alone). Each
+        provider reserves its own `max_tokens` (if set) for the response
+        when checking whether the prompt fits.
+
+        Args:
+            prompt_tokens: Estimated size of the outgoing request, in tokens.
+
+        Returns:
+            Matching providers sorted by priority.
+        """
+        matching = [
+            p for p in self.providers
+            if p.fits_prompt_tokens(prompt_tokens, reserved_output_tokens=p.max_tokens or 0)
+        ]
+        return sorted(matching, key=lambda p: p.priority)
+
     def get_providers_for_usage(self, usage: str) -> List[ProviderConfig]:
         """Get providers that match a specific usage tag.
 

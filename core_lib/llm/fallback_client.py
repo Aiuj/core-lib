@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import time
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
@@ -52,6 +53,49 @@ from .provider_health import classify_error, get_health_tracker, ProviderHealthT
 from .provider_registry import ProviderConfig, ProviderRegistry
 
 logger = get_module_logger()
+
+# Conservative, provider-agnostic estimate (~4 characters/token is the
+# standard rule of thumb for English text across GPT/Gemini/Claude-family
+# tokenizers). This only needs to be good enough to rule out providers whose
+# configured context_window clearly cannot hold the request — not an exact
+# count, which would require each provider's own tokenizer.
+_CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+def _estimate_message_tokens(messages: Union[str, List[Dict[str, Any]]]) -> int:
+    if isinstance(messages, str):
+        return len(messages) // _CHARS_PER_TOKEN_ESTIMATE
+    total_chars = 0
+    for message in messages or []:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            # Multimodal content parts (OpenAI/Anthropic-style blocks); only
+            # text parts contribute to this rough estimate.
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    total_chars += len(part["text"])
+    return total_chars // _CHARS_PER_TOKEN_ESTIMATE
+
+
+def _estimate_prompt_tokens(
+    messages: Union[str, List[Dict[str, Any]]],
+    system_message: Optional[str] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Rough token estimate for an outgoing request, used only to skip
+    providers whose context window plainly cannot hold it — see
+    ProviderConfig.fits_prompt_tokens()."""
+    total_chars = 0
+    if system_message:
+        total_chars += len(system_message)
+    if tools:
+        try:
+            total_chars += len(json.dumps(tools))
+        except (TypeError, ValueError):
+            pass
+    return _estimate_message_tokens(messages) + total_chars // _CHARS_PER_TOKEN_ESTIMATE
 
 
 class LLMCallError(RuntimeError):
@@ -267,16 +311,20 @@ class FallbackLLMClient:
         self,
         intelligence_level: Optional[int] = None,
         usage: Optional[str] = None,
+        prompt_tokens: Optional[int] = None,
     ) -> Iterator[Tuple[ProviderConfig, bool]]:
         """Iterate through providers in health-aware order.
-        
+
         Yields healthy providers first, then unhealthy ones as last resort.
-        
+
         Args:
             intelligence_level: Optional filter by intelligence level
             usage: Optional usage tag filter (e.g. "rag", "chat"). Providers
                 without a usage tag always match any requested usage.
-            
+            prompt_tokens: Optional estimated size of the outgoing request.
+                Providers with a configured context_window too small to hold
+                it are skipped (see ProviderConfig.fits_prompt_tokens).
+
         Yields:
             Tuple of (ProviderConfig, is_fallback)
         """
@@ -333,7 +381,35 @@ class FallbackLLMClient:
                             f"No providers match usage='{effective_usage}'; "
                             "falling back to all level-filtered providers as last resort."
                         )
-        
+
+        # Further filter out providers whose configured context_window plainly
+        # cannot hold this prompt (see ProviderConfig.fits_prompt_tokens). A
+        # provider with no configured context_window is never excluded here —
+        # only providers that explicitly declare a window get skipped, so an
+        # oversized prompt routes past a small local model straight to one
+        # that can actually hold it instead of failing/truncating silently.
+        if prompt_tokens is not None:
+            fits = [
+                p for p in providers
+                if p.fits_prompt_tokens(prompt_tokens, reserved_output_tokens=p.max_tokens or 0)
+            ]
+            if fits:
+                if len(fits) < len(providers):
+                    skipped = [p.name for p in providers if p not in fits]
+                    logger.info(
+                        f"Prompt (~{prompt_tokens} tokens) exceeds context_window for "
+                        + ", ".join(skipped) + "; routing to a provider with room for it."
+                    )
+                providers = fits
+            else:
+                # Every remaining provider declares a window too small for this
+                # prompt. Trying anyway (and likely failing/truncating on the
+                # provider side) beats a total blackout when no candidate fits.
+                logger.warning(
+                    f"Prompt (~{prompt_tokens} tokens) exceeds every configured "
+                    "context_window; trying providers anyway as last resort."
+                )
+
         # Separate healthy and unhealthy
         healthy = self._health_tracker.filter_healthy(providers)
         unhealthy = [p for p in providers if p not in healthy]
@@ -421,7 +497,8 @@ class FallbackLLMClient:
         
         level = intelligence_level or self._default_intelligence_level
         effective_usage = usage or self._default_usage
-        
+        prompt_tokens = _estimate_prompt_tokens(messages, system_message, tools)
+
         # Log provider selection context
         if level is not None:
             eligible_providers = self._registry.get_providers_for_level(level)
@@ -444,7 +521,7 @@ class FallbackLLMClient:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
         provider_entries = self._warmup_router.prioritize_recovered(
-            list(self._iter_providers(level, usage=effective_usage)),
+            list(self._iter_providers(level, usage=effective_usage, prompt_tokens=prompt_tokens)),
             key=lambda entry: self._build_cache_key(entry[0]),
             provider=lambda entry: self._get_client(entry[0]),
         )
