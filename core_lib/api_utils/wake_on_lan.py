@@ -336,12 +336,12 @@ class WakeOnLanStrategy:
         # classic blocking mode where the caller is about to stall.
         if not is_warmup_mode:
             logger.info(
-                f"Infinity host appears unavailable ({base_url}): {error}. "
+                f"Host appears unavailable ({base_url}): {error}. "
                 f"Attempting Wake-on-LAN for host '{target_host}'"
             )
         else:
             logger.debug(
-                f"Infinity host appears unavailable ({base_url}): {error}. "
+                f"Host appears unavailable ({base_url}): {error}. "
                 f"Attempting Wake-on-LAN for host '{target_host}'"
             )
 
