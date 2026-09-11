@@ -158,6 +158,9 @@ LLM_PRICING = {
     # Prices per 1M tokens, converted to per 1K here. Cached input is not
     # represented by the legacy two-rate pricing schema.
     "ibm-granite/granite-4.2-8b": {"input": 0.00006, "output": 0.00025},
+    # DeepSeek-V4.1-Flash on DeepInfra (standard tier)
+    # Source: https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash
+    "deepseek-ai/deepseek-v4.1-flash": {"input": 0.0002, "output": 0.0006},  # $0.20/$0.60 per 1M
 
     # Mistral AI models
     # Source: https://mistral.ai/pricing#api (updated May 2026)
