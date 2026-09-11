@@ -6,7 +6,7 @@ format='json'.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 import time
 import re
 import json
@@ -24,6 +24,27 @@ from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.tracing.payload_capture import capture_llm_payload
 
 logger = get_module_logger()
+
+# Conservative, provider-agnostic estimate (~4 chars/token) used only to size
+# the dynamic timeout below -- not an exact count.
+_CHARS_PER_TOKEN_ESTIMATE = 4
+
+# Local Ollama models run on modest hardware (CPU or a small GPU) and are far
+# slower than hosted APIs. These throughput assumptions are deliberately
+# conservative so the computed timeout has headroom rather than clipping a
+# slow-but-successful generation.
+_PREFILL_TOKENS_PER_SECOND = 200.0
+_GENERATION_TOKENS_PER_SECOND = 15.0
+_DEFAULT_EXPECTED_OUTPUT_TOKENS = 512
+_DEFAULT_THINKING_BUDGET_TOKENS = 1024
+_TIMEOUT_FLOOR_SECONDS = 30.0
+_TIMEOUT_SAFETY_MARGIN_SECONDS = 15.0
+
+# Levels Ollama's `think` field accepts as a string (in addition to a plain
+# bool) for models that support graduated reasoning effort -- see
+# https://docs.ollama.com/capabilities/thinking. Sent as-is when configured;
+# retried as a boolean if the server rejects the string for this model.
+_THINK_LEVEL_STRINGS = {"low", "medium", "high", "max"}
 
 @dataclass
 class OllamaConfig(LLMConfig):
@@ -314,7 +335,11 @@ class OllamaProvider(BaseProvider):
         client = Client(**client_kwargs)
         return client.chat(**payload)
 
-    def _build_options(self) -> Dict[str, Any]:
+    def _build_options(
+        self,
+        think_value: Optional[Union[bool, str]] = None,
+        expected_output_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         # Map config to ollama options when available
         options: Dict[str, Any] = {
             "temperature": self.config.temperature,
@@ -331,13 +356,42 @@ class OllamaProvider(BaseProvider):
             options["top_k"] = self.config.top_k
         if self.config.top_p is not None:
             options["top_p"] = self.config.top_p
+
+        # When thinking is enabled and nothing already caps generation length
+        # (max_tokens/num_predict), bound it to the configured thinking budget
+        # plus expected output so a model can't reason indefinitely and blow
+        # past the client timeout. Thinking tokens share the same num_predict
+        # budget as the final answer in Ollama.
+        if think_value and "num_predict" not in options:
+            cfg_thinking = getattr(self.config, "thinking_config", None) or {}
+            budget = cfg_thinking.get("budget") if isinstance(cfg_thinking, dict) else None
+            try:
+                thinking_budget = int(budget) if budget is not None else _DEFAULT_THINKING_BUDGET_TOKENS
+            except Exception:
+                thinking_budget = _DEFAULT_THINKING_BUDGET_TOKENS
+            output_budget = expected_output_tokens or _DEFAULT_EXPECTED_OUTPUT_TOKENS
+            options["num_predict"] = thinking_budget + output_budget
+
         return options
 
     def _supports_thinking(self) -> bool:
         model_lc = (self.config.model or "").lower()
         return any(hint in model_lc for hint in self._THINKING_MODEL_HINTS)
 
-    def _resolve_think_flag(self, thinking_enabled_override: Optional[bool]) -> Optional[bool]:
+    def _resolve_think_value(
+        self, thinking_enabled_override: Optional[bool]
+    ) -> Optional[Union[bool, str]]:
+        """Resolve the value to send as Ollama's `think` field.
+
+        Returns ``True``/``False`` for on/off, or one of ``_THINK_LEVEL_STRINGS``
+        when the config specifies a graduated level (e.g. "low") and thinking is
+        enabled -- some models (gpt-oss requires it; Qwen3/DeepSeek/Granite
+        accept it optionally) use this to bound reasoning-trace length instead
+        of just an on/off switch. Previously this level was parsed only to
+        decide the boolean on/off state and then discarded, so a configured
+        "low" budget had no effect on Ollama and the model reasoned at full,
+        unbounded depth -- a likely source of local-model timeouts.
+        """
         cfg_thinking = getattr(self.config, "thinking_config", None) or {}
         if not isinstance(cfg_thinking, dict):
             cfg_thinking = {}
@@ -355,16 +409,82 @@ class OllamaProvider(BaseProvider):
                 budget = None
 
         if thinking_enabled_override is not None:
-            return bool(thinking_enabled_override)
-        if "enabled" in cfg_thinking:
-            return bool(cfg_thinking.get("enabled"))
-        if level in disable_levels:
+            enabled = bool(thinking_enabled_override)
+        elif "enabled" in cfg_thinking:
+            enabled = bool(cfg_thinking.get("enabled"))
+        elif level in disable_levels:
+            enabled = False
+        elif budget is not None:
+            enabled = budget > 0
+        elif level is not None:
+            enabled = True
+        else:
+            enabled = bool(getattr(self.config, "thinking_enabled", False))
+
+        if not enabled:
             return False
-        if budget is not None:
-            return budget > 0
-        if level is not None:
-            return True
-        return bool(getattr(self.config, "thinking_enabled", False))
+        if level in _THINK_LEVEL_STRINGS:
+            return level
+        return True
+
+    @staticmethod
+    def _is_unsupported_think_value_error(error: Exception) -> bool:
+        """Return True when Ollama rejected a string `think` level for this model."""
+        error_text = str(error).lower()
+        return "think" in error_text and (
+            "invalid" in error_text or "unsupported" in error_text or "unknown" in error_text
+        )
+
+    def _estimate_prompt_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        total_chars = 0
+        for message in messages or []:
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        total_chars += len(part["text"])
+        return total_chars // _CHARS_PER_TOKEN_ESTIMATE
+
+    def _compute_dynamic_timeout(
+        self,
+        messages: List[Dict[str, Any]],
+        think_value: Optional[Union[bool, str]],
+        expected_output_tokens: Optional[int],
+    ) -> float:
+        """Size the request timeout to the work being asked of a local model.
+
+        The configured `timeout` is treated as a floor, not a ceiling: a large
+        prompt and/or thinking mode can legitimately take much longer than a
+        short interactive chat, so we scale up from conservative local
+        throughput assumptions rather than failing a slow-but-successful call.
+        """
+        prompt_tokens = self._estimate_prompt_tokens(messages)
+        prefill_seconds = prompt_tokens / _PREFILL_TOKENS_PER_SECOND
+
+        output_tokens = expected_output_tokens
+        if output_tokens is None:
+            output_tokens = self.config.num_predict or self.config.max_tokens or _DEFAULT_EXPECTED_OUTPUT_TOKENS
+
+        thinking_tokens = 0
+        if think_value:
+            cfg_thinking = getattr(self.config, "thinking_config", None) or {}
+            budget = cfg_thinking.get("budget") if isinstance(cfg_thinking, dict) else None
+            try:
+                thinking_tokens = int(budget) if budget is not None else _DEFAULT_THINKING_BUDGET_TOKENS
+            except Exception:
+                thinking_tokens = _DEFAULT_THINKING_BUDGET_TOKENS
+
+        generation_seconds = (output_tokens + thinking_tokens) / _GENERATION_TOKENS_PER_SECOND
+
+        computed = (
+            _TIMEOUT_FLOOR_SECONDS
+            + prefill_seconds
+            + generation_seconds
+            + _TIMEOUT_SAFETY_MARGIN_SECONDS
+        )
+        return max(float(self.config.timeout), computed)
 
     def chat(
         self,
@@ -375,6 +495,7 @@ class OllamaProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        expected_output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
             logger.debug(
@@ -389,10 +510,22 @@ class OllamaProvider(BaseProvider):
                 },
             )
 
+            # Thinking support per https://docs.ollama.com/capabilities/thinking
+            # `think` is a bool for most models; gpt-oss requires (and
+            # Qwen3/DeepSeek/Granite optionally accept) a "low"/"medium"/"high"
+            # level string to bound reasoning-trace length instead of just
+            # on/off. When think_value is truthy, only set it if the model is
+            # known to support thinking (avoid sending unsupported params to
+            # non-thinking models). When False, always send it explicitly so
+            # that models capable of thinking (but not in our hints list) are
+            # told to disable it.
+            think_value = self._resolve_think_value(thinking_enabled)
+            model_supports_thinking = self._supports_thinking()
+
             payload: Dict[str, Any] = {
                 "model": self.config.model,
                 "messages": self._convert_messages_to_ollama_format(messages),
-                "options": self._build_options(),
+                "options": self._build_options(think_value, expected_output_tokens),
             }
             if tools:
                 payload["tools"] = tools
@@ -423,22 +556,17 @@ class OllamaProvider(BaseProvider):
                         break
                 payload["messages"] = augmented_messages
 
-            # Thinking support per https://ollama.com/blog/thinking
-            # Ollama Python/HTTP uses top-level `think: bool`.
-            # When think_flag is True, only set it if the model is known to support
-            # thinking (to avoid sending unsupported params to non-thinking models).
-            # When think_flag is False, always send it explicitly so that models
-            # capable of thinking (but not in our hints list) are told to disable it.
-            think_flag = self._resolve_think_flag(thinking_enabled)
-            if think_flag is True and self._supports_thinking():
-                payload["think"] = True
-            elif think_flag is False:
+            if think_value and model_supports_thinking:
+                payload["think"] = think_value
+            elif think_value is False:
                 payload["think"] = False
 
             # Execute API call with latency measurement
             start = time.perf_counter()
             base_url_for_wol = self.config.base_url or ""
-            default_timeout = float(self.config.timeout)
+            default_timeout = self._compute_dynamic_timeout(
+                payload["messages"], think_value, expected_output_tokens
+            )
             effective_timeout = self._wake_on_lan.maybe_get_initial_timeout(
                 base_url_for_wol,
                 default_timeout,
@@ -448,6 +576,19 @@ class OllamaProvider(BaseProvider):
                 resp = self._chat_once(payload, effective_timeout)
             except Exception as first_error:
                 if (
+                    isinstance(payload.get("think"), str)
+                    and self._is_unsupported_think_value_error(first_error)
+                ):
+                    # This model doesn't accept a string think level -- fall
+                    # back to a plain boolean and retry once.
+                    logger.warning(
+                        "ollama rejected think level %r for %s; retrying with think=True",
+                        payload.get("think"),
+                        self.config.model,
+                    )
+                    bool_payload = {**payload, "think": True}
+                    resp = self._chat_once(bool_payload, effective_timeout)
+                elif (
                     structured_output is not None
                     and isinstance(payload.get("format"), dict)
                     and self._is_schema_grammar_error(first_error)
@@ -549,6 +690,9 @@ class OllamaProvider(BaseProvider):
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
                     host=self.config.base_url,
+                    thinking_enabled=bool(think_value) if think_value is not None else None,
+                    thinking_level=think_value if isinstance(think_value, str) else None,
+                    response_format="structured" if structured_output is not None else "text",
                 )
                 capture_llm_payload(
                     call_id=call_id,
@@ -642,6 +786,7 @@ class OllamaProvider(BaseProvider):
                 logger.exception("ollama.chat failed")
 
             try:
+                _think_value = locals().get("think_value")
                 log_llm_usage(
                     provider="ollama",
                     model=self.config.model,
@@ -649,6 +794,9 @@ class OllamaProvider(BaseProvider):
                     has_tools=bool(tools),
                     error=str(e),
                     host=self.config.base_url,
+                    thinking_enabled=bool(_think_value) if _think_value is not None else None,
+                    thinking_level=_think_value if isinstance(_think_value, str) else None,
+                    response_format="structured" if structured_output is not None else "text",
                 )
             except Exception:
                 pass

@@ -64,6 +64,7 @@ class LLMClient:
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
         usage: Optional[str] = None,
+        expected_output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Send a chat message to the LLM.
         
@@ -77,7 +78,9 @@ class LLMClient:
             system_message: Optional system message to prepend
             usage: How the LLM is being used (e.g., "chat", "vision", "classify", "extract").
                    Logged as metadata alongside token usage.
-            
+            expected_output_tokens: Optional hint for the expected response length,
+                   used by providers that size request timeouts locally (e.g. Ollama).
+
         Returns:
             Dictionary containing the response, usage info, and any tool calls
         """
@@ -150,6 +153,7 @@ class LLMClient:
                         system_message=system_message,
                         use_search_grounding=use_search_grounding,
                         thinking_enabled=thinking_enabled,
+                        expected_output_tokens=expected_output_tokens,
                     )
 
                 # Post-call tracing metadata

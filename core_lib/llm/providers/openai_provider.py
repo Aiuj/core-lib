@@ -328,19 +328,33 @@ class OpenAIProvider(BaseProvider):
         return "openai"
 
     def _apply_thinking_mode(self, create_kwargs: Dict[str, Any], use_thinking: bool) -> None:
-        """Apply thinking mode parameters to create_kwargs. Override in subclasses."""
+        """Apply thinking mode parameters to create_kwargs. Override in subclasses.
+
+        `reasoning_effort` (a top-level Chat Completions field: none/minimal/
+        low/medium/high/xhigh/max) is the *standard* mechanism -- native to
+        OpenAI o-series/gpt-5 reasoning models and Azure OpenAI o-series
+        deployments, and adopted by an increasing number of OpenAI-compatible
+        providers (e.g. DeepInfra, see
+        https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash/api). It is the
+        default branch below for exactly that reason: a new provider or model
+        should need a bespoke branch only when it's *known* to require a
+        different mechanism (or to reject this one), not to gain support for
+        the standard one. Providers with such a known quirk are special-cased
+        above the default and return early.
+        """
         if self.config.is_alibaba:
             extra_body: Dict[str, Any] = {"enable_thinking": bool(use_thinking)}
             if use_thinking and self.config.thinking_budget is not None:
                 extra_body["thinking_budget"] = self.config.thinking_budget
             create_kwargs["extra_body"] = extra_body
-        elif (
+            return
+
+        if (
             self.config.is_deepinfra
             and "granite-4.2" in (self.config.model or "").lower()
         ):
             # Granite 4.2 exposes thinking controls through its tokenizer chat
-            # template. DeepInfra accepts these OpenAI-compatible extra body
-            # fields and does not expose a provider-specific reasoning API.
+            # template rather than DeepInfra's usual reasoning_effort field.
             chat_template_kwargs: Dict[str, Any] = {
                 "enable_thinking": bool(use_thinking)
             }
@@ -350,21 +364,45 @@ class OpenAIProvider(BaseProvider):
             create_kwargs["extra_body"] = {
                 "chat_template_kwargs": chat_template_kwargs
             }
-        elif self.config.is_ovh and self.config._thinking_explicitly_disabled():
-            msgs = create_kwargs["messages"]
-            if msgs and msgs[0].get("role") == "system":
-                existing = msgs[0]["content"] or ""
-                if "/no_think" not in existing:
-                    msgs = [{"role": "system", "content": "/no_think " + existing}, *msgs[1:]]
-            else:
-                msgs = [{"role": "system", "content": "/no_think"}] + msgs
-            create_kwargs["messages"] = msgs
-        elif (
-            self.config.is_local_compatible
-            and self.config._thinking_explicitly_disabled()
-            and self.config._supports_chat_template_kwargs()
-        ):
-            create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            return
+
+        if self.config.is_ovh:
+            # OVH AI Endpoints accept neither extra_body nor a reasoning_effort
+            # field; the only lever is a "/no_think" soft-disable prefix.
+            # Thinking-on is the model's own default and can't be tuned finer.
+            if self.config._thinking_explicitly_disabled():
+                msgs = create_kwargs["messages"]
+                if msgs and msgs[0].get("role") == "system":
+                    existing = msgs[0]["content"] or ""
+                    if "/no_think" not in existing:
+                        msgs = [{"role": "system", "content": "/no_think " + existing}, *msgs[1:]]
+                else:
+                    msgs = [{"role": "system", "content": "/no_think"}] + msgs
+                create_kwargs["messages"] = msgs
+            return
+
+        if self.config.is_local_compatible:
+            # Self-hosted OpenAI-compatible servers (vLLM, LM Studio, ...)
+            # generally don't implement reasoning_effort; known thinking-
+            # capable model families toggle via the tokenizer chat template
+            # instead. Terminates here either way -- never falls through to
+            # reasoning_effort, which most such servers would reject outright.
+            if self.config._supports_chat_template_kwargs():
+                if self.config._thinking_explicitly_disabled():
+                    create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+                elif use_thinking:
+                    create_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": True}}
+            return
+
+        thinking_config = self.config.thinking_config or {}
+        level = str(thinking_config.get("level") or "").strip().lower()
+        disable_levels = {"off", "none", "disabled", "disable", "0", "false"}
+        if self.config._thinking_explicitly_disabled():
+            create_kwargs["reasoning_effort"] = "none"
+        elif level and level not in disable_levels:
+            create_kwargs["reasoning_effort"] = level
+        elif use_thinking:
+            create_kwargs["reasoning_effort"] = "medium"
 
     def _build_response_format(self, structured_output: Optional[Type[BaseModel]]) -> Optional[Dict[str, Any]]:
         if structured_output is None:
@@ -391,7 +429,10 @@ class OpenAIProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        expected_output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
+        # expected_output_tokens is not used by this provider (hosted API,
+        # no local-hardware timeout to size); accepted for interface parity.
         # Normalize system message by inserting/updating first system role
         if system_message:
             if messages and messages[0].get("role") == "system":
@@ -646,6 +687,24 @@ class OpenAIProvider(BaseProvider):
                 }
                 add_trace_metadata({k: v for k, v in trace_metadata.items() if v is not None})
                 
+                if structured_output is None:
+                    response_format_value = "text"
+                elif self.config.is_alibaba or self.config.is_ovh:
+                    # These send a prompt-only JSON instruction rather than a
+                    # native schema-bound response_format (see above).
+                    response_format_value = "json"
+                else:
+                    response_format_value = "structured"
+                # Report what was actually put on the wire, not just what was
+                # configured -- reasoning_effort (DeepInfra) is a top-level
+                # kwarg; the Alibaba/Granite low_effort flag lives in extra_body.
+                thinking_level_sent = create_kwargs.get("reasoning_effort")
+                if thinking_level_sent is None:
+                    extra_body_for_log = create_kwargs.get("extra_body") or {}
+                    if isinstance(extra_body_for_log, dict):
+                        chat_template_kwargs_for_log = extra_body_for_log.get("chat_template_kwargs") or {}
+                        if use_thinking and chat_template_kwargs_for_log.get("low_effort"):
+                            thinking_level_sent = "low"
                 call_id = log_llm_usage(
                     provider=self._provider_tracing_name,
                     model=self.config.model,
@@ -656,6 +715,9 @@ class OpenAIProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    thinking_enabled=bool(use_thinking),
+                    thinking_level=thinking_level_sent,
+                    response_format=response_format_value,
                     host=self.config.azure_endpoint or self.config.base_url or "https://api.openai.com",
                 )
                 capture_llm_payload(

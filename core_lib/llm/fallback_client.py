@@ -433,6 +433,7 @@ class FallbackLLMClient:
         intelligence_level: Optional[int] = None,
         usage: Optional[str] = None,
         return_fallback_result: bool = False,
+        expected_output_tokens: Optional[int] = None,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
@@ -453,7 +454,9 @@ class FallbackLLMClient:
             intelligence_level: Filter providers by intelligence level
             usage: Filter providers by usage tag
             return_fallback_result: Return FallbackResult instead of dict
-            
+            expected_output_tokens: Optional hint for the expected response length,
+                used by providers that size request timeouts locally (e.g. Ollama).
+
         Returns:
             Standard LLMClient response dict, or FallbackResult if requested
             
@@ -589,8 +592,9 @@ class FallbackLLMClient:
                         system_message=system_message,
                         use_search_grounding=use_search_grounding,
                         thinking_enabled=thinking_enabled,
+                        expected_output_tokens=expected_output_tokens,
                     )
-                    
+
                     elapsed_ms = (time.time() - start_time) * 1000
                     
                     # Check for error in response

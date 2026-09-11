@@ -569,7 +569,17 @@ class GoogleGenAIProvider(BaseProvider):
         use_search_grounding: bool = False,
         thinking_enabled_override: Optional[bool] = None,
         cached_content: Optional[str] = None,
+        thinking_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Build the google-genai `generate_content`/`send_message` kwargs.
+
+        When `thinking_meta` is passed (an empty dict), it is filled in with
+        the resolved `enabled`/`level` decision for observability -- see the
+        `log_llm_usage(thinking_enabled=..., thinking_level=...)` call in
+        `chat()`, which can't otherwise see what this method decided (the
+        SDK's `types.ThinkingConfig` only carries a token budget, not the
+        semantic level that produced it).
+        """
         from google.genai import types  # type: ignore
 
         cfg: Dict[str, Any] = {
@@ -653,6 +663,8 @@ class GoogleGenAIProvider(BaseProvider):
 
                 if disable_requested:
                     cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                    if thinking_meta is not None:
+                        thinking_meta["enabled"] = False
                 else:
                     has_explicit_thinking_cfg = (
                         (enabled is True) or
@@ -674,6 +686,13 @@ class GoogleGenAIProvider(BaseProvider):
                             thinking_kwargs["include_thoughts"] = True
 
                         cfg["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
+                        if thinking_meta is not None:
+                            thinking_meta["enabled"] = True
+                            thinking_meta["level"] = level if level in level_budget_map else None
+                    elif thinking_meta is not None:
+                        # Model defaults to its own thinking behavior; neither
+                        # explicitly enabled nor disabled by config/override.
+                        thinking_meta["enabled"] = None
         except Exception:
             # Never fail building config due to thinking support
             pass
@@ -873,11 +892,26 @@ class GoogleGenAIProvider(BaseProvider):
             # token metadata exist.  Still emit an error-status usage event so
             # monitoring and the fallback client can correlate the attempt.
             try:
+                # Best-effort only (no _build_config precedence resolution ran
+                # if the error occurred before/during it) -- good enough for a
+                # failed-attempt trace.
+                cfg_thinking = getattr(self.config, "thinking_config", None) or {}
+                if not isinstance(cfg_thinking, dict):
+                    cfg_thinking = {}
+                err_thinking_enabled = (
+                    thinking_enabled if thinking_enabled is not None
+                    else bool(cfg_thinking.get("enabled")) if "enabled" in cfg_thinking
+                    else getattr(self.config, "thinking_enabled", None)
+                )
+                err_thinking_level = cfg_thinking.get("level") if err_thinking_enabled else None
                 log_llm_usage(
                     provider='google_genai', model=self.config.model,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     structured=bool(structured_output), has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    thinking_enabled=err_thinking_enabled,
+                    thinking_level=err_thinking_level,
+                    response_format="structured" if structured_output is not None else "text",
                     host=(f'https://{self._location}-aiplatform.googleapis.com'
                           if self._is_vertex and self._location
                           else 'https://generativelanguage.googleapis.com'),
@@ -1033,6 +1067,7 @@ class GoogleGenAIProvider(BaseProvider):
             )
 
             working_messages = messages
+            thinking_meta: Dict[str, Any] = {}
 
             def _execute_call():
                 nonlocal user_messages, working_messages, is_single_turn_text_only
@@ -1066,6 +1101,7 @@ class GoogleGenAIProvider(BaseProvider):
                         use_search_grounding=use_search_grounding,
                         thinking_enabled_override=thinking_enabled,
                         cached_content=cached_content,
+                        thinking_meta=thinking_meta,
                     )
                     start = time.perf_counter()
                     resp = self._client.models.generate_content(
@@ -1084,6 +1120,7 @@ class GoogleGenAIProvider(BaseProvider):
                         use_search_grounding=use_search_grounding,
                         thinking_enabled_override=thinking_enabled,
                         cached_content=cached_content,
+                        thinking_meta=thinking_meta,
                     )
                     chat = self._client.chats.create(model=self.config.model)
                     start = time.perf_counter()
@@ -1229,6 +1266,12 @@ class GoogleGenAIProvider(BaseProvider):
                 })
 
                 # Log to OTLP/OpenSearch via standard logger (independent of Langfuse)
+                if structured_output is None:
+                    response_format = "text"
+                elif use_fallback_json:
+                    response_format = "json"
+                else:
+                    response_format = "structured"
                 call_id = log_llm_usage(
                     provider="google_genai",
                     model=self.config.model,
@@ -1239,6 +1282,9 @@ class GoogleGenAIProvider(BaseProvider):
                     structured=bool(structured_output and not use_fallback_json),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    thinking_enabled=thinking_meta.get("enabled"),
+                    thinking_level=thinking_meta.get("level"),
+                    response_format=response_format,
                     host=(
                         f"https://{self._location}-aiplatform.googleapis.com"
                         if self._is_vertex and self._location

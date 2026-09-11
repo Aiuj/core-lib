@@ -267,6 +267,7 @@ class BaseProvider(ABC):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        expected_output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Send a chat to the provider and return a unified response dict.
         
@@ -292,6 +293,11 @@ class BaseProvider(ABC):
                                 for Gemini, web search for OpenAI).
             thinking_enabled: Optional override for thinking/reasoning mode.
                             If None, uses the provider config default.
+            expected_output_tokens: Optional hint for how long the response is
+                            expected to be. Providers with request timeouts
+                            sized to local hardware (e.g. Ollama) use this to
+                            size the timeout more precisely; ignored by
+                            providers where it isn't relevant.
         
         Returns:
             Dictionary with the following structure:

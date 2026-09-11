@@ -253,6 +253,9 @@ def log_llm_usage(
     structured: bool = False,
     has_tools: bool = False,
     search_grounding: bool = False,
+    thinking_enabled: Optional[bool] = None,
+    thinking_level: Optional[str] = None,
+    response_format: Optional[str] = None,
     host: Optional[str] = None,
     region: Optional[str] = None,
     purpose: Optional[str] = None,
@@ -277,6 +280,15 @@ def log_llm_usage(
         structured: Whether structured output was requested
         has_tools: Whether tool/function calling was used
         search_grounding: Whether search grounding was enabled
+        thinking_enabled: Whether thinking/reasoning mode was requested for this call.
+                          Omit (None) when the provider/model has no notion of thinking
+                          mode at all, rather than reporting it as disabled.
+        thinking_level: Graduated reasoning-effort level actually sent to the provider
+                        (e.g. "low"/"medium"/"high"), when the provider/model supports
+                        one instead of (or in addition to) a plain on/off flag.
+        response_format: Expected output format requested of the model -- "text",
+                         "json", or "structured" (schema-bound). Defaults to
+                         "structured" or "text" based on `structured` when omitted.
         host: Service host URL (e.g., "http://localhost:11434" for Ollama,
               "https://api.openai.com" for OpenAI)
         region: Cloud region where the request was processed (e.g., "us-central1"
@@ -384,7 +396,20 @@ def log_llm_usage(
     event["features.structured_output"] = str(structured).lower()
     event["features.tools"] = str(has_tools).lower()
     event["features.search_grounding"] = str(search_grounding).lower()
-    
+
+    # Thinking/reasoning mode. Left absent (rather than false) when the
+    # caller doesn't know/report it, so "no thinking support on this
+    # provider" isn't confused with "thinking was explicitly turned off".
+    if thinking_enabled is not None:
+        event["gen_ai.request.thinking_enabled"] = str(thinking_enabled).lower()
+    if thinking_level:
+        event["gen_ai.request.thinking_level"] = thinking_level
+
+    # Expected output format -- defaults from `structured` when the caller
+    # doesn't distinguish a bare JSON-mode request from a schema-bound one.
+    effective_response_format = response_format or ("structured" if structured else "text")
+    event["gen_ai.request.response_format"] = effective_response_format
+
     # Add custom metadata
     if metadata:
         for key, value in metadata.items():
@@ -410,6 +435,12 @@ def log_llm_usage(
     purpose_str = f" [{effective_purpose}]" if effective_purpose else ""
     usage_type_str = f" <{effective_usage_type}>" if effective_usage_type else ""
     iq_str = f" IQ{effective_intelligence_level}" if effective_intelligence_level is not None else ""
+    if thinking_enabled:
+        thinking_str = f" thinking={thinking_level}" if thinking_level else " thinking=on"
+    elif thinking_enabled is False:
+        thinking_str = " thinking=off"
+    else:
+        thinking_str = ""
     selection_str = ""
     if effective_selection_label:
         if effective_selection_kind:
@@ -422,7 +453,8 @@ def log_llm_usage(
         token_summary = f"{total_tokens or 0} tokens"
 
     logger.info(
-        f"LLM usage{purpose_str}{usage_type_str}: {provider}/{model}{host_str}{iq_str} - {token_summary}, ${cost:.6f}{selection_str}",
+        f"LLM usage{purpose_str}{usage_type_str}: {provider}/{model}{host_str}{iq_str}{thinking_str} - "
+        f"{token_summary}, ${cost:.6f}{selection_str} [{effective_response_format}]",
         extra={"extra_attrs": event}
     )
 

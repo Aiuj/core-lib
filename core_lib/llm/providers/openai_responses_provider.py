@@ -335,7 +335,10 @@ class OpenAIResponsesProvider(BaseProvider):
         system_message: Optional[str] = None,
         use_search_grounding: bool = False,
         thinking_enabled: Optional[bool] = None,
+        expected_output_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
+        # expected_output_tokens is not used by this provider (hosted API,
+        # no local-hardware timeout to size); accepted for interface parity.
         cfg: OpenAIResponsesConfig = self.config  # type: ignore[assignment]
 
         # -----------------------------------------------------------------
@@ -480,6 +483,9 @@ class OpenAIResponsesProvider(BaseProvider):
                     structured=bool(structured_output),
                     has_tools=bool(tools),
                     search_grounding=use_search_grounding,
+                    thinking_enabled=bool(use_thinking),
+                    thinking_level=cfg.reasoning_effort if (use_thinking and not cfg.is_alibaba) else None,
+                    response_format="structured" if structured_output is not None else "text",
                     host=cfg.base_url or "https://api.openai.com",
                 )
                 capture_llm_payload(
