@@ -429,6 +429,10 @@ def classify_error(error: Exception) -> str:
                 return "rate_limit"
             if status in (500, 502, 503, 504):
                 return "server_error"
+            if status in (400, 404, 405, 422):
+                # Permanent request/config mismatches (e.g. a model rejecting
+                # an unsupported response_format) — won't self-resolve on retry.
+                return "configuration_error"
             if status in (401, 403):
                 return "auth_error"
     except ImportError:
@@ -494,6 +498,14 @@ def classify_error(error: Exception) -> str:
     # (e.g. vLLM tool_choice not enabled, unsupported parameter).
     # Matches both raw "error code: 400" and wrapped "badrequesterror" strings.
     if "error code: 400" in error_str or "badrequesterror" in error_str:
+        return "configuration_error"
+
+    # A model rejecting an unsupported response_format (e.g. DeepInfra 405 for
+    # "json_schema response format is not supported for model: ...") is a
+    # permanent per-model limitation, not a transient failure.
+    if "response_format" in error_str and "not supported" in error_str:
+        return "configuration_error"
+    if "error code: 405" in error_str:
         return "configuration_error"
 
     # Server errors

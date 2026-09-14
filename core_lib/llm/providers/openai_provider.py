@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Optional
 from core_lib import get_module_logger
 from core_lib.api_utils.wake_on_lan import WakeOnLanStrategy
+from core_lib.llm.provider_health import classify_error
 from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.tracing.payload_capture import capture_llm_payload
@@ -316,6 +317,20 @@ class OpenAIProvider(BaseProvider):
         )
         return any(token in error_str for token in indicators)
 
+    def _is_response_format_unsupported_error(self, error: Exception) -> bool:
+        """Return True when the provider rejected a json_schema response_format
+        as an unsupported feature for this specific model (as opposed to a
+        malformed schema or an unrelated request error).
+
+        Seen on DeepInfra as a 405 for some models (e.g. ibm-granite/granite-4.2-8b):
+        'json_schema response format is not supported for model: ...'.
+        """
+        status_code = getattr(error, "status_code", None)
+        error_str = str(error).lower()
+        if "response_format" in error_str and "not supported" in error_str:
+            return True
+        return status_code == 405 and "response_format" in error_str
+
     def _build_tool_param(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         if not tools:
             return None
@@ -420,6 +435,55 @@ class OpenAIProvider(BaseProvider):
                 schema = structured_output.schema()  # type: ignore[attr-defined]
             return {"type": "json_schema", "json_schema": {"name": structured_output.__name__, "schema": schema}}
 
+    def _apply_prompt_based_json_format(
+        self,
+        create_kwargs: Dict[str, Any],
+        structured_output: Optional[Type[BaseModel]],
+        use_json_object: bool,
+    ) -> None:
+        """Fall back to a prompt-only JSON instruction instead of a native
+        json_schema response_format, for providers/models that reject it
+        (e.g. Alibaba, OVH, or a model that returned a 405 for json_schema).
+
+        When ``use_json_object`` is True, still sets ``response_format`` to
+        the looser ``json_object`` type (which most OpenAI-compatible APIs
+        accept); otherwise omits response_format entirely.
+        """
+        if use_json_object:
+            create_kwargs["response_format"] = {"type": "json_object"}
+        else:
+            create_kwargs.pop("response_format", None)
+
+        schema_hint = ""
+        if structured_output is not None:
+            try:
+                schema = structured_output.model_json_schema()  # type: ignore[attr-defined]
+                props = schema.get("properties", {})
+                required = schema.get("required", list(props.keys()))
+                field_descs = ", ".join(
+                    f'"{k}": {v.get("type", "string")}' for k, v in props.items()
+                )
+                schema_hint = (
+                    f' Respond ONLY with a JSON object matching this schema: '
+                    f'{{{field_descs}}}. Required fields: {required}.'
+                )
+            except Exception:
+                schema_hint = " Respond ONLY with a valid JSON object."
+        msgs = create_kwargs["messages"]
+        combined_text = " ".join(
+            (m.get("content") or "") for m in msgs if isinstance(m, dict)
+        ).lower()
+        if "json" not in combined_text or schema_hint:
+            instruction = f"Respond in JSON.{schema_hint}"
+            if msgs and msgs[0].get("role") == "system":
+                msgs = [
+                    {"role": "system", "content": msgs[0]["content"] + " " + instruction},
+                    *msgs[1:],
+                ]
+            else:
+                msgs = [{"role": "system", "content": instruction}] + msgs
+            create_kwargs["messages"] = msgs
+
     def chat(
         self,
         *,
@@ -488,6 +552,7 @@ class OpenAIProvider(BaseProvider):
 
             # Structured output via response_format
             resp_format = self._build_response_format(structured_output)
+            sent_json_schema = False
             if resp_format is not None:
                 # Alibaba/DashScope has two quirks with structured output:
                 # 1. Requires the word "json" in the messages when response_format is set
@@ -501,40 +566,12 @@ class OpenAIProvider(BaseProvider):
                 if self.config.is_alibaba or self.config.is_ovh:
                     # For OVH: omit response_format entirely.
                     # For Alibaba: use simpler json_object format (doesn't enforce json_schema)
-                    if self.config.is_alibaba:
-                        create_kwargs["response_format"] = {"type": "json_object"}
-                    # Build a schema hint to guide the model
-                    schema_hint = ""
-                    if structured_output is not None:
-                        try:
-                            schema = structured_output.model_json_schema()  # type: ignore[attr-defined]
-                            props = schema.get("properties", {})
-                            required = schema.get("required", list(props.keys()))
-                            field_descs = ", ".join(
-                                f'"{k}": {v.get("type", "string")}' for k, v in props.items()
-                            )
-                            schema_hint = (
-                                f' Respond ONLY with a JSON object matching this schema: '
-                                f'{{{field_descs}}}. Required fields: {required}.'
-                            )
-                        except Exception:
-                            schema_hint = " Respond ONLY with a valid JSON object."
-                    msgs = create_kwargs["messages"]
-                    combined_text = " ".join(
-                        (m.get("content") or "") for m in msgs if isinstance(m, dict)
-                    ).lower()
-                    if "json" not in combined_text or schema_hint:
-                        instruction = f"Respond in JSON.{schema_hint}"
-                        if msgs and msgs[0].get("role") == "system":
-                            msgs = [
-                                {"role": "system", "content": msgs[0]["content"] + " " + instruction},
-                                *msgs[1:],
-                            ]
-                        else:
-                            msgs = [{"role": "system", "content": instruction}] + msgs
-                        create_kwargs["messages"] = msgs
+                    self._apply_prompt_based_json_format(
+                        create_kwargs, structured_output, use_json_object=self.config.is_alibaba
+                    )
                 else:
                     create_kwargs["response_format"] = resp_format
+                    sent_json_schema = True
 
             # Thinking mode control via extra_body.
             # - Alibaba/DashScope: {"enable_thinking": bool}
@@ -594,6 +631,27 @@ class OpenAIProvider(BaseProvider):
                         )
                     else:
                         raise
+                elif sent_json_schema and self._is_response_format_unsupported_error(first_error):
+                    # Some OpenAI-compatible models (seen on DeepInfra, e.g.
+                    # ibm-granite/granite-4.2-8b) reject the native json_schema
+                    # response_format with a 405/400, even though they support
+                    # plain JSON output. Retry once with the same prompt-based
+                    # fallback used for Alibaba/OVH instead of failing the
+                    # whole attempt over to the next provider.
+                    logger.warning(
+                        "openai.chat: model '%s' rejected json_schema response_format "
+                        "(%s); retrying with prompt-based JSON instead.",
+                        self.config.model,
+                        first_error,
+                    )
+                    self._apply_prompt_based_json_format(
+                        create_kwargs, structured_output, use_json_object=True
+                    )
+                    sent_json_schema = False
+                    completion = self._client.chat.completions.create(
+                        **create_kwargs,
+                        timeout=effective_timeout,
+                    )
                 else:
                     raise
             latency_ms = (time.perf_counter() - start) * 1000
@@ -689,9 +747,11 @@ class OpenAIProvider(BaseProvider):
                 
                 if structured_output is None:
                     response_format_value = "text"
-                elif self.config.is_alibaba or self.config.is_ovh:
+                elif self.config.is_alibaba or self.config.is_ovh or not sent_json_schema:
                     # These send a prompt-only JSON instruction rather than a
-                    # native schema-bound response_format (see above).
+                    # native schema-bound response_format (see above). The
+                    # `not sent_json_schema` case covers a model that rejected
+                    # json_schema and was retried with the prompt-based fallback.
                     response_format_value = "json"
                 else:
                     response_format_value = "structured"
@@ -822,9 +882,36 @@ class OpenAIProvider(BaseProvider):
                     endpoint,
                 )
                 raise
-            # Unexpected / unclassified error — log the full traceback so it is
-            # visible, then re-raise for the caller to handle.
-            logger.exception("openai.chat failed")
+            # response_format rejected by the model even after the prompt-based
+            # retry (or a non-405 variant of the same error) — this is a known,
+            # permanent model/provider limitation, not a bug. Log without a
+            # traceback and re-raise for the fallback layer to classify.
+            if self._is_response_format_unsupported_error(e):
+                logger.warning(
+                    "openai.chat: model '%s' does not support structured JSON "
+                    "output (response_format rejected): %s",
+                    self.config.model,
+                    e,
+                )
+                raise
+            # Any other recognized failure category (rate limit, server error,
+            # auth, further config mismatches, etc. — anything classify_error
+            # can name) is an expected operational failure, not a bug in this
+            # provider. Log a concise warning instead of a traceback; still
+            # returned as an error dict below so FallbackLLMClient's single
+            # classification/logging pass (not a second one here) drives retry
+            # and health-tracking. Only a genuinely unclassified error gets a
+            # full traceback, since that is the case worth investigating here.
+            error_reason = classify_error(e)
+            if error_reason != "unknown":
+                logger.warning(
+                    "openai.chat: model '%s' request failed (classified as: %s): %s",
+                    self.config.model,
+                    error_reason,
+                    e,
+                )
+            else:
+                logger.exception("openai.chat failed")
             return {
                 "error": str(e),
                 "content": None,

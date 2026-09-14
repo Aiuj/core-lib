@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from core_lib import get_module_logger
 from core_lib.api_utils.wake_on_lan import WakeOnLanStrategy
+from core_lib.llm.provider_health import classify_error
 from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.tracing.payload_capture import capture_llm_payload
 
@@ -782,6 +783,11 @@ class OllamaProvider(BaseProvider):
                     "ollama model not available (handled): %s",
                     missing_model,
                 )
+            elif classify_error(e) != "unknown":
+                # A recognized, expected failure category (config/auth/rate-limit/
+                # server error, etc.) — the fallback layer will classify and
+                # route around it; a full traceback here is just noise.
+                logger.warning("ollama.chat failed (classified as: %s): %s", classify_error(e), e)
             else:
                 logger.exception("ollama.chat failed")
 

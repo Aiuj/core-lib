@@ -48,6 +48,7 @@ from pydantic import BaseModel
 from .base import BaseProvider
 from ..llm_config import LLMConfig
 from core_lib import get_module_logger
+from core_lib.llm.provider_health import classify_error
 from core_lib.tracing.tracing import add_trace_metadata
 from core_lib.tracing.service_usage import log_llm_usage
 from core_lib.tracing.payload_capture import capture_llm_payload
@@ -552,7 +553,16 @@ class OpenAIResponsesProvider(BaseProvider):
             }
 
         except Exception as e:  # pragma: no cover - network errors
-            logger.exception("openai_responses.chat failed")
+            error_reason = classify_error(e)
+            if error_reason != "unknown":
+                # A recognized, expected failure category — the fallback layer
+                # will classify and route around it; a full traceback here is
+                # just noise.
+                logger.warning(
+                    "openai_responses.chat failed (classified as: %s): %s", error_reason, e
+                )
+            else:
+                logger.exception("openai_responses.chat failed")
             return {
                 "error": str(e),
                 "content": None,

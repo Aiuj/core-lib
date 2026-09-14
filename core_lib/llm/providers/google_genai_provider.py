@@ -958,13 +958,19 @@ class GoogleGenAIProvider(BaseProvider):
                 is_credentials_error = True
                 error_reason = "credentials_error"
 
-            # Expected transient failures: log as warning without traceback
+            # Expected/recognized failures: log as warning without traceback.
+            # Anything classify_error can name is a known operational failure
+            # category, not a bug in this provider — only a genuinely
+            # unclassified ("unknown") error warrants a full traceback.
             silent_reasons = (
                 "rate_limit",
                 "quota_exceeded",
                 "server_error",
                 "timeout",
                 "connection_error",
+                "configuration_error",
+                "auth_error",
+                "truncated_response",
             )
             if is_credentials_error:
                 logger.warning(
