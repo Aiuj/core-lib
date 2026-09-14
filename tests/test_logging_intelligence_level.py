@@ -253,3 +253,16 @@ def test_build_from_metadata_shared_functionality():
         # 3. Prevent duplicate app names in chain
         res3 = json.loads(build_from_metadata(json.dumps({"app_name": "Upstream > ServiceA"}), app_name="ServiceA"))
         assert res3["app_name"] == "Upstream > ServiceA"
+
+
+def test_logging_filter_celery_task_attributes():
+    """Test that LoggingContextFilter populates celery.task_id and celery.task_name."""
+    filter_ = LoggingContextFilter()
+    record = logging.LogRecord("test", logging.INFO, "test.py", 10, "msg", (), None)
+
+    with LoggingContext({"celery_task_id": "task-uuid-123", "celery_task_name": "sync_task"}):
+        filter_.filter(record)
+        assert hasattr(record, "extra_attrs")
+        assert record.extra_attrs.get("celery.task_id") == "task-uuid-123"
+        assert record.extra_attrs.get("celery.task_name") == "sync_task"
+

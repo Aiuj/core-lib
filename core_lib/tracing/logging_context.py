@@ -236,6 +236,12 @@ class LoggingContextFilter(logging.Filter):
 
             if 'document_type' in context and context['document_type']:
                 record.extra_attrs['rfx.document.type'] = context['document_type']
+
+            if 'celery_task_id' in context and context['celery_task_id']:
+                record.extra_attrs['celery.task_id'] = context['celery_task_id']
+
+            if 'celery_task_name' in context and context['celery_task_name']:
+                record.extra_attrs['celery.task_name'] = context['celery_task_name']
         
         return True
 
