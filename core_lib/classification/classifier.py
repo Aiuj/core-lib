@@ -110,6 +110,16 @@ not name a product, module, feature, or business process.
 Use only the category_id values from the list above. Be precise."""
 
 
+# Classification is a small-excerpt, structured-output call (~2k chars in,
+# a short JSON object out) that normally completes in a few seconds. The
+# provider-wide default HTTP deadline (60s, see google_genai_provider.py) is
+# sized for long-form generation and made a stuck/rate-limited primary
+# provider block ingestion for ~58s before failover kicked in. 20s keeps a
+# comfortable margin over normal latency while letting FallbackLLMClient
+# move to the next provider in the chain much sooner.
+_CLASSIFICATION_HTTP_TIMEOUT_MS = 20_000
+
+
 class DocumentClassifier:
     """LLM-based document classifier that also generates RAG-optimised descriptions.
 
@@ -243,6 +253,7 @@ class DocumentClassifier:
             self._client = create_fallback_llm_client(
                 intelligence_level=self._intelligence_level,
                 usage="classify",
+                http_timeout_ms=_CLASSIFICATION_HTTP_TIMEOUT_MS,
             )
         return self._client
 
