@@ -39,61 +39,19 @@ LLM_PRICING = {
     
     # Google Gemini models
     # Source: https://ai.google.dev/gemini-api/docs/pricing (updated July 31, 2026)
-    # Prices per 1M tokens in API docs, converted to per 1K here.
-    # Preview variants (e.g. gemini-3.1-pro-preview) are resolved automatically
-    # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
-    # Gemini 3.6 models
-    "gemini-3.6-flash": {"input": 0.0015, "output": 0.0075},      # $1.50/$7.50 per 1M
-    # Gemini 3.5 models
-    "gemini-3.5-flash": {"input": 0.0015, "output": 0.009},       # $1.50/$9.00 per 1M
-    "gemini-3.5-flash-lite": {"input": 0.0003, "output": 0.0025}, # $0.30/$2.50 per 1M
-    # Gemini 3.1 models
-    "gemini-3.1-pro": {"input": 0.002, "output": 0.012},        # $2.00/$12.00 per 1M (<= 200k prompts)
-    "gemini-3.1-flash-lite": {"input": 0.00025, "output": 0.0015},  # $0.25/$1.50 per 1M
-    # Gemini 3 models
-    "gemini-3-flash": {"input": 0.0005, "output": 0.003},        # $0.50/$3.00 per 1M
-    # Gemini 2.5 models
-    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},        # $1.25/$10.00 per 1M (<= 200k prompts)
-    "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},     # $0.30/$2.50 per 1M
-    "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},  # $0.10/$0.40 per 1M
-    # Gemma models (open models, free)
-    "gemma-4": {"input": 0.0, "output": 0.0},
-    
-    # Anthropic Claude models
-    # Source: https://platform.claude.com/docs/en/about-claude/pricing (updated July 31, 2026)
-    # Prices per 1M tokens in API docs, converted to per 1K here.
-    # Claude Series 5 models
-    "claude-opus-5": {"input": 0.005, "output": 0.025},     # $5/$25 per 1M
-    "claude-sonnet-5": {"input": 0.002, "output": 0.01},    # $2/$10 per 1M (introductory pricing)
-    # Claude Series 4.x models
-    "claude-opus-4-7": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
-    "claude-opus-4-6": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
-    "claude-opus-4-5": {"input": 0.005, "output": 0.025},   # $5/$25 per 1M
-    "claude-sonnet-4-7": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
-    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
-    "claude-sonnet-4-5": {"input": 0.003, "output": 0.015}, # $3/$15 per 1M
-    "claude-sonnet-4-5-20250929": {"input": 0.003, "output": 0.015},
-    "claude-haiku-4-5": {"input": 0.001, "output": 0.005},  # $1/$5 per 1M
-    "claude-haiku-4-5-20251001": {"input": 0.001, "output": 0.005},
-    
-    # Azure OpenAI (same as OpenAI pricing)
-    "azure-gpt-4": {"input": 0.03, "output": 0.06},
-    "azure-gpt-4o": {"input": 0.005, "output": 0.015},
-    "azure-gpt-35-turbo": {"input": 0.0005, "output": 0.0015},
-    
-    # Local/Self-hosted (free)
-    
-    # Google Gemini models
-    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated July 31, 2026)
-    #         https://ai.google.dev/gemini-api/docs/pricing#gemini-3.7-flash
+    #         https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash
     # Prices per 1M tokens in API docs, converted to per 1K here.
     # Preview variants (e.g. gemini-3.7-flash-preview) are resolved automatically
     # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
+    # Gemini 3.8, 3.7, and 3.6 Flash share the same promo pricing through
+    # Dec 31, 2026 ($1.50/$7.50 per 1M starting Jan 1, 2027).
+    # Gemini 3.8 models
+    "gemini-3.8-flash": {"input": 0.00075, "output": 0.00375},    # $0.75/$3.75 per 1M
     # Gemini 3.7 models
     "gemini-3.7-flash": {"input": 0.00075, "output": 0.00375},    # $0.75/$3.75 per 1M (prompts <= 128k)
     "gemini-3.7-flash-thinking": {"input": 0.00075, "output": 0.00375},
     # Gemini 3.6 models
-    "gemini-3.6-flash": {"input": 0.0015, "output": 0.0075},      # $1.50/$7.50 per 1M
+    "gemini-3.6-flash": {"input": 0.00075, "output": 0.00375},    # $0.75/$3.75 per 1M
     # Gemini 3.5 models
     "gemini-3.5-flash": {"input": 0.0015, "output": 0.009},       # $1.50/$9.00 per 1M
     "gemini-3.5-flash-lite": {"input": 0.0003, "output": 0.0025}, # $0.30/$2.50 per 1M
