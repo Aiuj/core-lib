@@ -41,6 +41,11 @@ ACTION_RFX_DELIVERY_CLEAN_REQUESTED = "rfx.delivery_clean_requested"
 ACTION_RFX_BRIEF_GENERATION_REQUESTED = "rfx.brief_generation_requested"
 ACTION_RFX_DOCUMENT_GENERATION_REQUESTED = "rfx.document_generation_requested"
 ACTION_RFX_DOCUMENT_GENERATION_FAILED = "rfx.document_generation_failed"
+# Emitted by mcp-doc-qa when it accepts a complete questionnaire-answering
+# request.  Unlike ``ACTION_RFX_PROCESSING_REQUESTED`` (the user action in
+# saas-admin), this identifies every concrete downstream API call, including
+# per-worksheet calls made by agent-rfx.
+ACTION_RFX_QUESTIONNAIRE_API_REQUESTED = "rfx.questionnaire_api_requested"
 
 __all__ = [
     "ACTION_DOCUMENT_INGESTED",
@@ -59,4 +64,5 @@ __all__ = [
     "ACTION_RFX_BRIEF_GENERATION_REQUESTED",
     "ACTION_RFX_DOCUMENT_GENERATION_REQUESTED",
     "ACTION_RFX_DOCUMENT_GENERATION_FAILED",
+    "ACTION_RFX_QUESTIONNAIRE_API_REQUESTED",
 ]
