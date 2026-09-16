@@ -700,6 +700,15 @@ class GoogleGenAIProvider(BaseProvider):
         if system_message and not cached_content:
             cfg["system_instruction"] = system_message
 
+        # We always parse function_call parts ourselves (see the streaming
+        # accumulation logic below) rather than registering Python callables,
+        # so the SDK's automatic function calling has nothing to execute.
+        # Disabling it explicitly also suppresses the SDK's "Direct use of
+        # AFC in Models.generate_content is not recommended" warning, which
+        # otherwise fires on every direct generate_content call regardless
+        # of whether tools are actually present.
+        cfg["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
+
         if tools and not cached_content:
             cfg.update(self._build_tools(tools))
 
