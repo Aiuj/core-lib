@@ -86,6 +86,10 @@ class BaseRerankerClient:
         """Return the provider name recorded in usage telemetry."""
         return self.__class__.__name__.replace("RerankerClient", "").lower()
 
+    def _telemetry_model_name(self) -> str:
+        """Return the model name recorded in usage telemetry."""
+        return self.model
+
     def _generate_cache_key(self, query: str, documents: List[str], top_k: Optional[int]) -> str:
         """Generate a cache key for the given query and documents."""
         cache_data = {
@@ -175,7 +179,7 @@ class BaseRerankerClient:
         # Log usage
         log_reranker_usage(
             provider=self._telemetry_provider_name(),
-            model=self.model,
+            model=self._telemetry_model_name(),
             num_documents=len(documents),
             input_tokens=input_tokens,
             output_tokens=output_tokens,

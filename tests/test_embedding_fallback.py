@@ -178,7 +178,9 @@ class TestFallbackEmbeddingClient:
         mock_provider2.embedding_dim = 384
         mock_provider2.health_check.return_value = True
         
-        client = FallbackEmbeddingClient(providers=[mock_provider1, mock_provider2])
+        client = FallbackEmbeddingClient(
+            providers=[mock_provider1, mock_provider2], use_health_cache=False
+        )
         
         assert client.health_check() is True
 
@@ -189,7 +191,9 @@ class TestFallbackEmbeddingClient:
         mock_provider.embedding_dim = 384
         mock_provider.health_check.return_value = False
         
-        client = FallbackEmbeddingClient(providers=[mock_provider])
+        client = FallbackEmbeddingClient(
+            providers=[mock_provider], use_health_cache=False
+        )
         
         assert client.health_check() is False
 

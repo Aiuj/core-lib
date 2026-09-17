@@ -19,7 +19,7 @@ import hashlib
 
 from .base import BaseRerankerClient, RerankerError, RerankResult
 from .factory import RerankerFactory
-from core_lib.api_utils import WarmupFallbackRouter
+from core_lib.api_utils import FallbackProviderRouting
 from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
@@ -33,7 +33,7 @@ OVERLOAD_STATUS_TTL = 30  # 30 seconds - shorter TTL for overload (temporary con
 OVERLOAD_STATUS_CODES = {503, 429}  # Service Unavailable, Too Many Requests
 
 
-class FallbackRerankerClient(BaseRerankerClient):
+class FallbackRerankerClient(FallbackProviderRouting, BaseRerankerClient):
     """Reranker client with automatic fallback to backup providers.
     
     Transparently switches between multiple reranker providers when one fails.
@@ -95,13 +95,12 @@ class FallbackRerankerClient(BaseRerankerClient):
         self.providers = providers
         self.max_retries_per_provider = max_retries_per_provider
         self.fail_on_all_providers = fail_on_all_providers
-        self.current_provider_index = 0
+        self._init_fallback_routing()
         self.provider_failures: Dict[int, int] = {i: 0 for i in range(len(providers))}
         self.provider_overloads: Dict[int, int] = {i: 0 for i in range(len(providers))}
         self.health_check_interval = health_check_interval
         self.use_health_cache = use_health_cache
         self._last_health_check: Dict[int, float] = {}
-        self._warmup_router = WarmupFallbackRouter()
         self._cache_instance = None
         
         # Generate unique identifier for this fallback client config
@@ -133,8 +132,12 @@ class FallbackRerankerClient(BaseRerankerClient):
 
     def _telemetry_provider_name(self) -> str:
         """Report the backend that handled the current request, not the wrapper."""
-        provider = self.providers[self.current_provider_index]
+        provider = self._selected_provider()
         return provider.__class__.__name__.replace("RerankerClient", "").lower()
+
+    def _telemetry_model_name(self) -> str:
+        """Report the model of the backend that handled the current request."""
+        return self._selected_provider().model
     
     def _get_cache(self):
         """Get cache instance if available and caching is enabled."""
@@ -208,13 +211,11 @@ class FallbackRerankerClient(BaseRerankerClient):
         errors = []
         start_idx = self._get_preferred_provider_index() or self.current_provider_index
         
-        ordered_indices = self._warmup_router.prioritize_recovered(
+        ordered_indices = self._ordered_provider_indices(
             [
                 (start_idx + attempt) % len(self.providers)
                 for attempt in range(len(self.providers))
-            ],
-            key=lambda idx: idx,
-            provider=lambda idx: self.providers[idx],
+            ]
         )
 
         # Try each provider in turn, retrying a primary whose warmup just ended.
@@ -225,7 +226,7 @@ class FallbackRerankerClient(BaseRerankerClient):
             tried_providers.add(provider_idx)
             provider = self.providers[provider_idx]
 
-            if self._warmup_router.is_warming(provider_idx, provider):
+            if self._is_provider_warming(provider_idx):
                 logger.debug(
                     f"Skipping reranker provider {provider_idx} "
                     "(WoL warmup in progress)"
@@ -252,11 +253,10 @@ class FallbackRerankerClient(BaseRerankerClient):
                 results, usage = provider._rerank_raw(query, documents, top_k)
                 
                 # Success - update tracking
-                self.current_provider_index = provider_idx
+                self._record_provider_success(provider_idx)
                 self.provider_failures[provider_idx] = 0
                 self.provider_overloads[provider_idx] = 0
                 self._mark_provider_healthy(provider_idx)
-                self._warmup_router.mark_success(provider_idx)
                 
                 logger.debug(
                     f"Reranking succeeded with provider {provider_idx} "
@@ -268,7 +268,7 @@ class FallbackRerankerClient(BaseRerankerClient):
             except RerankerError as e:
                 error_msg = f"Provider {provider_idx} failed: {e}"
                 errors.append(error_msg)
-                if self._warmup_router.is_warming(provider_idx, provider):
+                if self._is_provider_warming(provider_idx):
                     logger.debug(
                         f"Reranker provider {provider_idx} fired WoL; "
                         "routing to the next provider"
@@ -285,7 +285,7 @@ class FallbackRerankerClient(BaseRerankerClient):
             except Exception as e:
                 error_msg = f"Provider {provider_idx} unexpected error: {e}"
                 errors.append(error_msg)
-                if self._warmup_router.is_warming(provider_idx, provider):
+                if self._is_provider_warming(provider_idx):
                     logger.debug(error_msg)
                 else:
                     logger.error(error_msg)

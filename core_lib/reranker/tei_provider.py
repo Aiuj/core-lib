@@ -91,7 +91,14 @@ class TEIRerankerClient(BaseRerankerClient):
         except InfinityAPIError as exc:
             self.rerank_time_ms = (time.time() - start_time) * 1000
             message = f"TEI reranking failed: {exc}"
-            logger.error(message)
+            if exc.is_warmup:
+                # A sleeping primary deliberately raises here so the fallback
+                # wrapper can route the request to its secondary provider.
+                logger.debug(
+                    f"TEI reranker is warming after WoL; routing to fallback: {exc}"
+                )
+            else:
+                logger.error(message)
             raise RerankerError(message) from exc
         except Exception as exc:
             self.rerank_time_ms = (time.time() - start_time) * 1000

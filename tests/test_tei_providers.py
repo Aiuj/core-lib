@@ -14,7 +14,7 @@ from core_lib.embeddings.fallback_client import FallbackEmbeddingClient
 from core_lib.embeddings.openai_provider import OpenAIEmbeddingClient
 from core_lib.embeddings.tei_provider import TEIEmbeddingClient
 from core_lib.reranker.factory import RerankerFactory
-from core_lib.reranker.base import BaseRerankerClient, RerankResult
+from core_lib.reranker.base import BaseRerankerClient, RerankResult, RerankerError
 from core_lib.reranker.fallback_client import FallbackRerankerClient
 from core_lib.reranker.reranker_config import RerankerSettings
 from core_lib.reranker.tei_provider import TEIRerankerClient
@@ -102,6 +102,19 @@ def test_infinity_error_includes_top_level_validation_message() -> None:
         client.post("/v1/embeddings", json={"input": ["x"] * 306})
 
 
+def test_inference_endpoint_error_uses_provider_neutral_wording() -> None:
+    client = InfinityAPIClient("http://tei-embed:8080")
+
+    with (
+        patch(
+            "requests.post",
+            side_effect=requests.exceptions.Timeout("server is starting"),
+        ),
+        pytest.raises(InfinityAPIError, match="All configured inference endpoints failed"),
+    ):
+        client.post("/rerank", json={"query": "x", "texts": ["y"]})
+
+
 def test_tei_reranker_uses_native_request_and_response_shapes() -> None:
     client = TEIRerankerClient(
         model="Alibaba-NLP/gte-multilingual-reranker-base",
@@ -130,6 +143,20 @@ def test_tei_reranker_uses_native_request_and_response_shapes() -> None:
         "texts": ["first", "second"],
         "return_text": True,
     }
+
+
+def test_tei_wol_error_is_debug_logged_for_fallback_routing(monkeypatch) -> None:
+    client = TEIRerankerClient(cache_duration_seconds=0)
+    warmup_error = InfinityAPIError("primary is warming", is_warmup=True)
+    monkeypatch.setattr(client._api_client, "post", Mock(side_effect=warmup_error))
+    provider_logger = Mock()
+    monkeypatch.setattr("core_lib.reranker.tei_provider.logger", provider_logger)
+
+    with pytest.raises(RerankerError, match="TEI reranking failed"):
+        client.rerank("query", ["document"], top_k=1)
+
+    provider_logger.debug.assert_called_once()
+    provider_logger.error.assert_not_called()
 
 
 def test_factories_register_tei() -> None:
@@ -329,6 +356,41 @@ def test_tei_reranker_wol_immediately_falls_through_and_recovers(monkeypatch) ->
     assert third[0].index == 0
     assert post.call_count == 2
     assert secondary.calls == 2
+
+
+def test_tei_wol_fallback_reports_secondary_model_in_usage(monkeypatch) -> None:
+    primary = TEIRerankerClient(
+        model="Alibaba-NLP/gte-multilingual-reranker-base",
+        base_url="http://sleeping-tei:8111",
+        timeout=30,
+        cache_duration_seconds=0,
+        wake_on_lan={
+            "enabled": True,
+            "initial_timeout_seconds": 0.1,
+            "warmup_seconds": 90,
+            "mac_address": "FC:34:97:9E:C8:AF",
+        },
+    )
+    secondary = _DeepInfraRerankerStub()
+    secondary.model = "Qwen/Qwen3-Reranker-0.6B"
+    fallback = FallbackRerankerClient(
+        providers=[primary, secondary],
+        cache_duration_seconds=0,
+        max_retries_per_provider=1,
+        use_health_cache=False,
+    )
+    monkeypatch.setattr(
+        "core_lib.api_utils.infinity_api.requests.post",
+        Mock(side_effect=requests.exceptions.ConnectionError("host is sleeping")),
+    )
+    monkeypatch.setattr(primary._api_client.wake_on_lan, "_send_magic_packet", Mock())
+    usage_logger = Mock()
+    monkeypatch.setattr("core_lib.reranker.base.log_reranker_usage", usage_logger)
+
+    fallback.rerank("query", ["document"], top_k=1)
+
+    assert usage_logger.call_args.kwargs["provider"] == secondary._telemetry_provider_name()
+    assert usage_logger.call_args.kwargs["model"] == "Qwen/Qwen3-Reranker-0.6B"
 
 
 def test_tei_wol_with_deepinfra_fallback_instantiation(

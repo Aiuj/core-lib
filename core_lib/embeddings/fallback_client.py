@@ -19,7 +19,7 @@ import hashlib
 
 from .base import BaseEmbeddingClient, EmbeddingGenerationError
 from .factory import EmbeddingFactory
-from core_lib.api_utils import WarmupFallbackRouter
+from core_lib.api_utils import FallbackProviderRouting
 from core_lib.tracing.logger import get_module_logger
 
 logger = get_module_logger()
@@ -39,7 +39,7 @@ OVERLOAD_STATUS_TTL = 30  # 30 seconds - shorter TTL for overload (temporary con
 OVERLOAD_STATUS_CODES = {503, 429}  # Service Unavailable, Too Many Requests
 
 
-class FallbackEmbeddingClient(BaseEmbeddingClient):
+class FallbackEmbeddingClient(FallbackProviderRouting, BaseEmbeddingClient):
     """Embedding client with automatic fallback to backup providers.
     
     Transparently switches between multiple embedding providers when one fails.
@@ -113,13 +113,12 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
         self.providers = providers
         self.max_retries_per_provider = max_retries_per_provider
         self.fail_on_all_providers = fail_on_all_providers
-        self.current_provider_index = 0
+        self._init_fallback_routing()
         self.provider_failures: Dict[int, int] = {i: 0 for i in range(len(providers))}
         self.provider_overloads: Dict[int, int] = {i: 0 for i in range(len(providers))}
         self.health_check_interval = health_check_interval
         self.use_health_cache = use_health_cache
         self._last_health_check: Dict[int, float] = {}
-        self._warmup_router = WarmupFallbackRouter()
         self._cache_instance = None
         
         # Generate unique identifier for this fallback client config
@@ -609,13 +608,11 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             if self._is_provider_healthy_cached(idx) is False
             and self._should_check_health(idx)
         ]
-        ordered_indices = self._warmup_router.prioritize_recovered(
+        ordered_indices = self._ordered_provider_indices(
             overload_indices + recheck_indices + [
                 (start_idx + attempt) % len(self.providers)
                 for attempt in range(len(self.providers))
-            ],
-            key=lambda idx: idx,
-            provider=lambda idx: self.providers[idx],
+            ]
         )
 
         # Try each provider, starting with due health rechecks, then preferred/current
@@ -630,7 +627,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
 
             # Skip providers that are currently in a WoL warmup window — the
             # host is booting; route to a secondary instead.
-            if self._warmup_router.is_warming(idx, provider):
+            if self._is_provider_warming(idx):
                 logger.debug(
                     f"Skipping provider {idx} (WoL warmup in progress — host is booting)"
                 )
@@ -664,13 +661,12 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     # Success! Update stats and cache
                     all_providers_failed = False
                     provider_succeeded = True
-                    self.current_provider_index = idx  # Prefer this provider next time
+                    self._record_provider_success(idx)
                     self.embedding_time_ms = elapsed_ms
                     self._last_health_check[idx] = time.time()
                     
                     # Mark provider as healthy in cache
                     self._mark_provider_healthy(idx)
-                    self._warmup_router.mark_success(idx)
                     
                     if attempt > 0 or retry > 0:
                         logger.info(
@@ -698,7 +694,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
                     if not is_overload:
                         self.provider_failures[idx] = self.provider_failures.get(idx, 0) + 1
 
-                    if self._warmup_router.is_warming(idx, provider):
+                    if self._is_provider_warming(idx):
                         # WoL was fired during this request — host is booting.
                         # Log at debug only; no overload counter increment.
                         logger.debug(
@@ -731,7 +727,7 @@ class FallbackEmbeddingClient(BaseEmbeddingClient):
             # All retries for this provider failed
             if not provider_succeeded:
                 # Don't penalise a provider that is intentionally in WoL warmup.
-                if self._warmup_router.is_warming(idx, provider):
+                if self._is_provider_warming(idx):
                     logger.debug(
                         f"Provider {idx} failed during WoL warmup — skipping health penalty"
                     )

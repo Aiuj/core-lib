@@ -198,7 +198,7 @@ class InfinityAPIClient:
                     
                     elapsed_ms = (time.time() - start_time) * 1000
                     logger.debug(
-                        f"Infinity API request succeeded: {endpoint} @ {base_url} "
+                        f"Inference API request succeeded: {endpoint} @ {base_url} "
                         f"({elapsed_ms:.0f}ms)"
                     )
                     
@@ -330,7 +330,7 @@ class InfinityAPIClient:
         
         # All URLs failed
         error_summary = (
-            f"All Infinity servers failed for {endpoint}. "
+            f"All configured inference endpoints failed for {endpoint}. "
             f"Tried {len(urls_tried)} URL(s): {', '.join(urls_tried)}. "
             f"Errors: {'; '.join(errors[:3])}"  # Limit to first 3 errors
         )
