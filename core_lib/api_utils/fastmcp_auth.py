@@ -169,7 +169,16 @@ def create_auth_middleware(settings: AuthSettings):
     return auth_middleware
 
 
-def create_jwt_auth_middleware(jwt_settings: Any):
+#: Every place :func:`create_jwt_auth_middleware` will look for a token.
+#: Order matters: the first source that yields a token wins.
+TOKEN_SOURCES = ("header", "env", "metadata", "query")
+
+#: The only safe set for a server reachable from the public internet.
+#: See :func:`create_jwt_auth_middleware` for why the others are unsafe there.
+STRICT_TOKEN_SOURCES = ("header",)
+
+
+def create_jwt_auth_middleware(jwt_settings: Any, token_sources: Optional[tuple] = None):
     """Create JWT-based authentication middleware for FastMCP v2 servers.
     
     This middleware validates JWT Bearer tokens and extracts claims
@@ -178,9 +187,35 @@ def create_jwt_auth_middleware(jwt_settings: Any):
     
     Args:
         jwt_settings: JWTAuthSettings instance
+        token_sources: Which sources may supply the token, in priority
+            order. Defaults to :data:`TOKEN_SOURCES` (all of them), which
+            is the historical behaviour and suits a stdio or VPN-internal
+            server. Pass :data:`STRICT_TOKEN_SOURCES` for a public,
+            multi-tenant endpoint.
         
     Returns:
         Middleware function compatible with FastMCP v2
+    
+    Raises:
+        ValueError: if ``token_sources`` names an unknown source, or is
+            empty - an empty tuple would accept no token at all and lock
+            everyone out, which is far more likely a typo than an intent.
+    
+    **Choosing token_sources.** The default accepts the token from the
+    ``Authorization`` header, the ``MCP_JWT_TOKEN`` environment variable,
+    request metadata, or a ``token`` query parameter. That flexibility is
+    right for stdio transport and for a server on a private network, but
+    each of the last three is a hazard once the endpoint is public and
+    serves more than one tenant:
+    
+    - the environment variable is process-wide, so an anonymous request
+      would be authenticated as whoever that token belongs to;
+    - a query-parameter token leaks into access logs, proxy logs and
+      referrer headers, where tokens are not supposed to live;
+    - metadata is client-supplied and is not part of the HTTP auth surface.
+    
+    For such a deployment pass ``token_sources=STRICT_TOKEN_SOURCES`` and
+    set ``require_auth=True``.
         
     Example:
         ```python
@@ -202,6 +237,22 @@ def create_jwt_auth_middleware(jwt_settings: Any):
     from .jwt_auth import validate_jwt_token, extract_bearer_token, JWTAuthError
     from .auth_config import set_current_claims, set_current_company_id
     
+    if token_sources is None:
+        allowed_sources = TOKEN_SOURCES
+    else:
+        allowed_sources = tuple(token_sources)
+        unknown = [s for s in allowed_sources if s not in TOKEN_SOURCES]
+        if unknown:
+            raise ValueError(
+                f"Unknown token source(s): {', '.join(unknown)}. "
+                f"Choose from: {', '.join(TOKEN_SOURCES)}."
+            )
+        if not allowed_sources:
+            raise ValueError(
+                "token_sources must name at least one source; an empty "
+                "tuple would reject every request."
+            )
+    
     async def jwt_auth_middleware(context: Dict[str, Any], next_handler: Callable):
         """Validate JWT authentication before processing request."""
         global _mcp_context_claims
@@ -210,26 +261,26 @@ def create_jwt_auth_middleware(jwt_settings: Any):
         if not jwt_settings.require_auth:
             return await next_handler(context)
         
-        # Try to get token from different sources
+        # Try the permitted sources, in order
         token = None
         
         # 1. Check Authorization header (for SSE transport)
-        if "headers" in context:
+        if "header" in allowed_sources and "headers" in context:
             headers = context.get("headers", {})
             authorization = headers.get("Authorization") or headers.get("authorization")
             token = extract_bearer_token(authorization)
         
         # 2. Check environment variable (for stdio transport)
-        if not token:
+        if not token and "env" in allowed_sources:
             token = os.environ.get("MCP_JWT_TOKEN")
         
         # 3. Check context metadata
-        if not token and "metadata" in context:
+        if not token and "metadata" in allowed_sources and "metadata" in context:
             metadata = context.get("metadata", {})
             token = metadata.get("token") or metadata.get("jwt_token")
         
         # 4. Check query params (passed through context)
-        if not token and "query_params" in context:
+        if not token and "query" in allowed_sources and "query_params" in context:
             query_params = context.get("query_params", {})
             token = query_params.get("token")
         
