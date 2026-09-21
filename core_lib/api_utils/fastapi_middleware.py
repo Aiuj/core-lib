@@ -45,15 +45,23 @@ class FromContextMiddleware(BaseHTTPMiddleware):
         - Key-value pairs: ?from=user_id:123,session_id:abc
     """
     
-    def __init__(self, app, tracing_client: Optional[Any] = None):
+    def __init__(
+        self,
+        app,
+        tracing_client: Optional[Any] = None,
+        log_silent_paths: bool = False,
+    ):
         """Initialize the middleware.
         
         Args:
             app: The FastAPI application
             tracing_client: Optional tracing client with add_metadata() method
+            log_silent_paths: Emit method/URL logs for health and documentation
+                endpoints that are normally suppressed
         """
         super().__init__(app)
         self.tracing_client = tracing_client
+        self.log_silent_paths = log_silent_paths
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process the request and inject 'from' context.
@@ -112,7 +120,7 @@ class FromContextMiddleware(BaseHTTPMiddleware):
                 if self.tracing_client and from_dict:
                     self.tracing_client.add_metadata(metadata=from_dict)
 
-                if request.url.path not in _SILENT_PATHS:
+                if self.log_silent_paths or request.url.path not in _SILENT_PATHS:
                     _logger.info("%s %s", request.method, str(request.url))
 
                 response = await call_next(request)
@@ -128,7 +136,8 @@ class FromContextMiddleware(BaseHTTPMiddleware):
 async def inject_from_logging_context(
     request: Request,
     call_next: Callable,
-    tracing_client: Optional[Any] = None
+    tracing_client: Optional[Any] = None,
+    log_silent_paths: bool = False,
 ):
     """Standalone middleware function to inject 'from' context into logging/tracing.
     
@@ -147,6 +156,8 @@ async def inject_from_logging_context(
         request: The incoming request
         call_next: The next middleware/handler in the chain
         tracing_client: Optional tracing client with add_metadata() method
+        log_silent_paths: Emit method/URL logs for health and documentation
+            endpoints that are normally suppressed
         
     Returns:
         The response from the handler
@@ -202,7 +213,7 @@ async def inject_from_logging_context(
             if tracing_client and from_dict:
                 tracing_client.add_metadata(metadata=from_dict)
 
-            if request.url.path not in _SILENT_PATHS:
+            if log_silent_paths or request.url.path not in _SILENT_PATHS:
                 _logger.info("%s %s", request.method, str(request.url))
 
             response = await call_next(request)
