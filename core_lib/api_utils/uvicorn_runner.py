@@ -4,8 +4,9 @@ This module provides a standardized way to run ASGI applications (FastAPI, FastM
 with uvicorn, ensuring proper OTLP logging, graceful shutdown, and lifecycle management.
 """
 
-from typing import Any, Optional, Union
 import atexit
+from collections.abc import Sequence
+from typing import Any, Optional, Union
 
 
 def run_uvicorn_server(
@@ -18,6 +19,8 @@ def run_uvicorn_server(
     ws: str = "websockets-sansio",
     flush_logs_on_startup: bool = True,
     flush_logs_on_exit: bool = True,
+    reload_dirs: Sequence[str] | None = None,
+    reload_excludes: Sequence[str] | None = None,
 ) -> None:
     """Run an ASGI application with uvicorn with proper logging configuration.
     
@@ -37,6 +40,8 @@ def run_uvicorn_server(
         ws: WebSocket protocol implementation for uvicorn (default: "websockets-sansio")
         flush_logs_on_startup: Flush logs before starting server (default: True)
         flush_logs_on_exit: Register atexit handler to flush logs (default: True)
+        reload_dirs: Directories to watch when reload is enabled
+        reload_excludes: Files or directories to ignore when reload is enabled
     
     Example:
         >>> from fastapi import FastAPI
@@ -98,6 +103,13 @@ def run_uvicorn_server(
         # When reload is False, pass the app object directly to avoid double import
         app_or_path = app
     
+    reload_options: dict[str, Any] = {}
+    if reload:
+        if reload_dirs:
+            reload_options["reload_dirs"] = list(reload_dirs)
+        if reload_excludes:
+            reload_options["reload_excludes"] = list(reload_excludes)
+
     # Run uvicorn with log_config=None to preserve custom logging setup
     uvicorn.run(
         app_or_path,
@@ -106,7 +118,8 @@ def run_uvicorn_server(
         reload=reload,
         ws=ws,
         log_config=None,  # CRITICAL: Preserves OTLP/custom logging handlers
-        log_level=log_level.lower()
+        log_level=log_level.lower(),
+        **reload_options,
     )
 
 
