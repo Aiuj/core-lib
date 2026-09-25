@@ -1,12 +1,17 @@
 """Background job worker for processing queued jobs."""
 
+import os
 import time
 import signal
 import threading
 from typing import Callable, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from .base_job_queue import BaseJobQueue, JobStatus, Job
+from .health import WorkerHeartbeat
 from .job_manager import get_job_queue
 from core_lib.tracing.logger import get_module_logger
 from core_lib.tracing import LoggingContext, parse_from, generate_process_id
@@ -14,6 +19,14 @@ from core_lib.exceptions import ConfigurationError
 
 
 logger = get_module_logger()
+
+# Errors that mean "the queue backend is unreachable right now" rather than a
+# bug.  The worker backs off and keeps polling instead of exiting on these.
+TRANSIENT_QUEUE_ERRORS = (RedisConnectionError, RedisTimeoutError, OSError)
+
+
+class JobQueueUnavailableError(RuntimeError):
+    """Raised when the job queue is still unreachable after the startup timeout."""
 
 
 class JobHandler(ABC):
@@ -46,6 +59,16 @@ class JobHandler(ABC):
             return class_name[:-7].lower()
         return class_name.lower()
 
+    def on_job_lost(self, job: Job, requeued: bool, error: str) -> None:
+        """Called when a job of this type was abandoned by a dead worker.
+
+        The worker that ran it crashed or was killed mid-job, so :meth:`handle`
+        never got to clean up.  ``requeued`` is True when the job was put back
+        on the queue (it will run again), False when it was marked failed for
+        good.  Override to update app-side records (audit rows, temp files).
+        This may run in a different worker process than the one that died.
+        """
+
 
 class JobWorker:
     """Background worker for processing queued jobs."""
@@ -57,6 +80,11 @@ class JobWorker:
         max_retries: int = 3,
         retry_delay: float = 5.0,
         heartbeat_interval: float = 30.0,
+        startup_timeout: float = 300.0,
+        max_backoff: float = 30.0,
+        liveness_interval: Optional[float] = None,
+        stall_timeout: Optional[float] = None,
+        stale_job_timeout: Optional[float] = None,
     ):
         """Initialize job worker.
         
@@ -67,16 +95,62 @@ class JobWorker:
             retry_delay: Delay between retries in seconds
             heartbeat_interval: Seconds between liveness updates while a handler runs.
                 Set to 0 to disable heartbeats.
+            startup_timeout: Seconds :meth:`start` waits for the queue backend to
+                become reachable before raising :class:`JobQueueUnavailableError`.
+                Set to 0 to skip the check.
+            max_backoff: Upper bound (seconds) for the exponential backoff used
+                while the queue backend is unreachable.
+            liveness_interval: Seconds between worker heartbeats published for
+                API health checks (see :mod:`core_lib.jobs.health`).  Defaults
+                to ``JOB_WORKER_HEARTBEAT_INTERVAL`` or 15.  0 disables them
+                (and the stall watchdog).
+            stall_timeout: Seconds the idle poll loop may go without a
+                successful poll before the process exits (so the container
+                restarts).  Defaults to ``JOB_WORKER_STALL_TIMEOUT`` or 600.
+                0 disables the watchdog.  Raised to ``startup_timeout + 60`` if
+                lower, so waiting for the queue at startup never trips it.
+            stale_job_timeout: Seconds a PROCESSING job may go without a
+                per-job heartbeat before it is considered lost (its worker
+                died mid-job) and re-enqueued or failed.  Checked at startup
+                and every minute.  Defaults to ``JOB_WORKER_STALE_JOB_TIMEOUT``
+                or 600 (longer than a typical Redis outage, during which
+                heartbeats cannot be written).  0 disables it; also disabled
+                when ``heartbeat_interval`` is 0, since jobs then never refresh.
         """
         self.job_queue = job_queue or get_job_queue()
         self.poll_interval = poll_interval
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.heartbeat_interval = max(0.0, float(heartbeat_interval))
-        
+        self.startup_timeout = max(0.0, float(startup_timeout))
+        self.max_backoff = max(1.0, float(max_backoff))
+        if liveness_interval is None:
+            liveness_interval = float(os.getenv("JOB_WORKER_HEARTBEAT_INTERVAL", "15"))
+        if stall_timeout is None:
+            stall_timeout = float(os.getenv("JOB_WORKER_STALL_TIMEOUT", "600"))
+        self.liveness_interval = max(0.0, float(liveness_interval))
+        self.stall_timeout = max(0.0, float(stall_timeout))
+        if self.stall_timeout and self.stall_timeout <= self.startup_timeout:
+            self.stall_timeout = self.startup_timeout + 60
+        if stale_job_timeout is None:
+            stale_job_timeout = float(os.getenv("JOB_WORKER_STALE_JOB_TIMEOUT", "600"))
+        self.stale_job_timeout = max(0.0, float(stale_job_timeout))
+        if self.heartbeat_interval <= 0:
+            self.stale_job_timeout = 0.0
+        elif self.stale_job_timeout:
+            # Several missed per-job heartbeats before a job counts as lost.
+            self.stale_job_timeout = max(self.stale_job_timeout, 5 * self.heartbeat_interval)
+        self._last_stale_check: Optional[float] = None
+
         self._handlers: Dict[str, JobHandler] = {}
         self._running = False
         self._stop_requested = False
+        self._wake = threading.Event()
+
+        # Liveness state, read by external watchdogs via liveness().
+        self._last_poll_at: Optional[float] = None
+        self._current_job_id: Optional[str] = None
+        self._job_started_at: Optional[float] = None
         
         # Register signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -121,6 +195,93 @@ class JobWorker:
         """Handle shutdown signals."""
         logger.info(f"[JobWorker] Received signal {signum}, shutting down...")
         self._stop_requested = True
+        self._wake.set()
+
+    def _sleep(self, seconds: float) -> None:
+        """Sleep that returns early when a stop is requested."""
+        self._wake.wait(seconds)
+
+    def _backoff(self, attempt: int) -> float:
+        # Cap the exponent: attempts keep counting during a long outage and
+        # 2.0 ** 1024 overflows.
+        return min(self.max_backoff, 2.0 ** min(max(0, attempt - 1), 16))
+
+    def _wait_for_queue(self) -> None:
+        """Block until the queue backend answers, or raise after startup_timeout."""
+        health_check = getattr(self.job_queue, "health_check", None)
+        if health_check is None or self.startup_timeout <= 0:
+            return
+
+        deadline = time.monotonic() + self.startup_timeout
+        attempt = 0
+        while not self._stop_requested:
+            if health_check():
+                if attempt:
+                    logger.info(
+                        "[JobWorker] Job queue reachable after %d failed attempt(s)", attempt
+                    )
+                return
+            attempt += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise JobQueueUnavailableError(
+                    f"Job queue unreachable after {self.startup_timeout:.0f}s"
+                )
+            delay = min(self._backoff(attempt), remaining)
+            logger.warning(
+                "[JobWorker] Job queue unreachable (attempt %d), retrying in %.0fs",
+                attempt,
+                delay,
+            )
+            self._sleep(delay)
+
+    STALE_CHECK_INTERVAL = 60.0
+
+    def _notify_job_lost(self, job: Job, requeued: bool, error: str) -> None:
+        handler = self._handlers.get(job.job_type)
+        if handler is not None:
+            handler.on_job_lost(job, requeued, error)
+
+    def _recover_stale_jobs(self) -> None:
+        """Reclaim jobs whose worker died mid-job (at most once a minute)."""
+        if not self.stale_job_timeout:
+            return
+        now = time.monotonic()
+        if (
+            self._last_stale_check is not None
+            and now - self._last_stale_check < self.STALE_CHECK_INTERVAL
+        ):
+            return
+        self._last_stale_check = now
+        recover = getattr(self.job_queue, "recover_stale_processing_jobs", None)
+        if recover is None:
+            return
+        counts = recover(
+            self.stale_job_timeout, self.max_retries, on_reclaimed=self._notify_job_lost
+        )
+        if counts.get("requeued") or counts.get("failed"):
+            logger.warning(
+                "[JobWorker] Reclaimed jobs lost by a dead worker: %s requeued, %s failed",
+                counts.get("requeued", 0),
+                counts.get("failed", 0),
+            )
+
+    def liveness(self) -> Dict[str, Any]:
+        """Snapshot of the poll loop's progress, for external watchdogs.
+
+        ``last_poll_age`` is the number of seconds since the queue was last polled
+        successfully (``None`` before the first poll).  While a job runs the loop
+        does not poll, so watchdogs should also look at ``current_job_id``.
+        """
+        now = time.monotonic()
+        return {
+            "running": self._running,
+            "last_poll_age": None if self._last_poll_at is None else now - self._last_poll_at,
+            "current_job_id": self._current_job_id,
+            "job_running_for": None
+            if self._job_started_at is None
+            else now - self._job_started_at,
+        }
     
     def _process_job(self, job: Job) -> bool:
         """Process a single job.
@@ -322,43 +483,98 @@ class JobWorker:
         
         self._running = True
         self._stop_requested = False
+        self._wake.clear()
         jobs_processed = 0
-        
+
         logger.info("[JobWorker] Worker started")
         logger.info(f"[JobWorker] Registered handlers: {list(self._handlers.keys())}")
-        recovered = self.job_queue.recover_pending_jobs()
-        if recovered:
-            logger.info("[JobWorker] Recovered %s pending job(s)", recovered)
-        
+
+        consecutive_errors = 0
+        outage_started: Optional[float] = None
+        liveness_monitor: Optional[WorkerHeartbeat] = None
+        if self.liveness_interval > 0:
+            liveness_monitor = WorkerHeartbeat(
+                self.job_queue,
+                interval=self.liveness_interval,
+                liveness=self.liveness,
+                stall_timeout=self.stall_timeout,
+            )
+            liveness_monitor.start()
         try:
+            self._wait_for_queue()
+            try:
+                recovered = self.job_queue.recover_pending_jobs()
+                if recovered:
+                    logger.info("[JobWorker] Recovered %s pending job(s)", recovered)
+                self._recover_stale_jobs()
+            except TRANSIENT_QUEUE_ERRORS as e:
+                logger.warning("[JobWorker] Could not recover pending jobs: %s", e)
+
             while self._running and not self._stop_requested:
                 # Check if max jobs reached
                 if max_jobs and jobs_processed >= max_jobs:
                     logger.info(f"[JobWorker] Reached max jobs limit ({max_jobs})")
                     break
-                
-                # Get next pending job
-                job = self.job_queue.get_pending_job()
-                
-                if job:
-                    # Process job
-                    success = self._process_job(job)
-                    jobs_processed += 1
-                else:
+
+                try:
+                    self._recover_stale_jobs()
+                    job = self.job_queue.get_pending_job()
+                    self._last_poll_at = time.monotonic()
+                    if job:
+                        self._current_job_id = job.job_id
+                        self._job_started_at = time.monotonic()
+                        try:
+                            self._process_job(job)
+                        finally:
+                            self._current_job_id = None
+                            self._job_started_at = None
+                        jobs_processed += 1
+                except TRANSIENT_QUEUE_ERRORS as e:
+                    # Queue backend unreachable (e.g. Redis/Valkey restarting):
+                    # back off and keep polling rather than exiting the loop.
+                    consecutive_errors += 1
+                    if consecutive_errors == 1:
+                        outage_started = time.monotonic()
+                        logger.warning("[JobWorker] Job queue unreachable, backing off: %s", e)
+                    elif consecutive_errors % 10 == 0:
+                        logger.warning(
+                            "[JobWorker] Job queue still unreachable after %.0fs: %s",
+                            time.monotonic() - (outage_started or time.monotonic()),
+                            e,
+                        )
+                    self._sleep(self._backoff(consecutive_errors))
+                    continue
+
+                if consecutive_errors:
+                    logger.info(
+                        "[JobWorker] Job queue reachable again after %.0fs",
+                        time.monotonic() - (outage_started or time.monotonic()),
+                    )
+                    consecutive_errors = 0
+                    outage_started = None
+
+                if not job:
                     # No pending jobs, wait before polling again
-                    time.sleep(self.poll_interval)
-                
+                    self._sleep(self.poll_interval)
+
         except KeyboardInterrupt:
             logger.info("[JobWorker] Interrupted by user")
         except Exception as e:
+            # Unexpected errors are bugs: re-raise so the process exits non-zero
+            # and a supervisor restarts it, instead of returning as if stopped
+            # cleanly.
             logger.error(f"[JobWorker] Unexpected error: {e}", exc_info=True)
+            raise
         finally:
+            if liveness_monitor is not None:
+                liveness_monitor.stop()
             self._running = False
             logger.info(f"[JobWorker] Worker stopped (processed {jobs_processed} jobs)")
     
     def stop(self):
         """Stop the worker loop."""
         self._stop_requested = True
+        self._wake.set()
     
     def is_running(self) -> bool:
         """Check if worker is running.
