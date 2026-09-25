@@ -26,6 +26,9 @@ from core_lib.config.standard_settings import StandardSettings
 def isolate_project_root(tmp_path, monkeypatch):
     """Ensure hierarchy unit tests run in an isolated temp directory without ambient pyproject.toml."""
     monkeypatch.chdir(tmp_path)
+    # Stop discovery here even when an ancestor of the OS temp directory has
+    # its own pyproject.toml. The empty project section preserves env fallbacks.
+    (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
 
 
 class TestSettingsHierarchyInheritance:

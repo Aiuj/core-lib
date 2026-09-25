@@ -94,6 +94,8 @@ except ImportError:
 
 # FastMCP integration (always available)
 from .fastmcp_auth import (
+    TOKEN_SOURCES,
+    STRICT_TOKEN_SOURCES,
     create_auth_middleware,
     create_jwt_auth_middleware,
     create_unified_auth_middleware,
@@ -144,6 +146,8 @@ __all__ = [
     "WarmupFallbackRouter",
     
     # FastMCP integration
+    "TOKEN_SOURCES",
+    "STRICT_TOKEN_SOURCES",
     "create_auth_middleware",
     "create_jwt_auth_middleware",
     "create_unified_auth_middleware",

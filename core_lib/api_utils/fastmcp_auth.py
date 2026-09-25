@@ -261,33 +261,28 @@ def create_jwt_auth_middleware(jwt_settings: Any, token_sources: Optional[tuple]
         if not jwt_settings.require_auth:
             return await next_handler(context)
         
-        # Try the permitted sources, in order
+        # The configured order determines which token wins when several exist.
         token = None
-        
-        # 1. Check Authorization header (for SSE transport)
-        if "header" in allowed_sources and "headers" in context:
-            headers = context.get("headers", {})
-            authorization = headers.get("Authorization") or headers.get("authorization")
-            token = extract_bearer_token(authorization)
-        
-        # 2. Check environment variable (for stdio transport)
-        if not token and "env" in allowed_sources:
-            token = os.environ.get("MCP_JWT_TOKEN")
-        
-        # 3. Check context metadata
-        if not token and "metadata" in allowed_sources and "metadata" in context:
-            metadata = context.get("metadata", {})
-            token = metadata.get("token") or metadata.get("jwt_token")
-        
-        # 4. Check query params (passed through context)
-        if not token and "query" in allowed_sources and "query_params" in context:
-            query_params = context.get("query_params", {})
-            token = query_params.get("token")
+        for source in allowed_sources:
+            if source == "header":
+                headers = context.get("headers") or {}
+                authorization = headers.get("Authorization") or headers.get("authorization")
+                token = extract_bearer_token(authorization)
+            elif source == "env":
+                token = os.environ.get("MCP_JWT_TOKEN")
+            elif source == "metadata":
+                metadata = context.get("metadata") or {}
+                token = metadata.get("token") or metadata.get("jwt_token")
+            elif source == "query":
+                query_params = context.get("query_params") or {}
+                token = query_params.get("token")
+            if token:
+                break
         
         if not token:
             raise MCPAuthError(
-                "Missing JWT authentication. Provide Authorization: Bearer <token> "
-                "header or MCP_JWT_TOKEN environment variable."
+                "Missing JWT authentication. Provide a token through a "
+                f"configured source: {', '.join(allowed_sources)}."
             )
         
         # Validate the JWT token

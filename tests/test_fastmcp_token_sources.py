@@ -54,6 +54,13 @@ class TestTokenSourceConstants:
     def test_strict_is_a_subset_of_all_sources(self):
         assert set(STRICT_TOKEN_SOURCES) <= set(TOKEN_SOURCES)
 
+    def test_constants_are_exported_from_api_utils(self):
+        from core_lib.api_utils import STRICT_TOKEN_SOURCES as strict_sources
+        from core_lib.api_utils import TOKEN_SOURCES as sources
+
+        assert sources is TOKEN_SOURCES
+        assert strict_sources is STRICT_TOKEN_SOURCES
+
 
 class TestDefaultBehaviourIsUnchanged:
     """The default must stay permissive; fleet servers rely on it."""
@@ -101,7 +108,7 @@ class TestStrictModeRejectsEverythingButTheHeader:
 
         with (
             patch.dict(os.environ, {"MCP_JWT_TOKEN": _token()}),
-            pytest.raises(MCPAuthError),
+            pytest.raises(MCPAuthError, match="configured source: header"),
         ):
             _run(middleware, {})
 
@@ -145,6 +152,15 @@ class TestStrictModeRejectsEverythingButTheHeader:
 
 
 class TestExplicitSourceSelection:
+    def test_configured_priority_wins_when_multiple_sources_have_tokens(self):
+        middleware = create_jwt_auth_middleware(
+            _settings(), token_sources=("env", "header")
+        )
+        context = {"headers": {"Authorization": "Bearer invalid-header-token"}}
+
+        with patch.dict(os.environ, {"MCP_JWT_TOKEN": _token()}):
+            assert _run(middleware, context)["company_id"] == "company-a"
+
     def test_a_named_subset_is_honoured(self):
         middleware = create_jwt_auth_middleware(
             _settings(), token_sources=("env",)

@@ -53,16 +53,16 @@ version = "1.2.3"
 
 
 def test_app_settings_env_and_defaults(monkeypatch, tmp_path: Path):
-    # Change CWD to a temp folder with no pyproject to avoid auto-detection
+    # Use an explicit root so an ancestor of the temp folder cannot be detected.
     monkeypatch.chdir(tmp_path)
 
     # No project_root pyproject.toml -> fallback to env, then default
     monkeypatch.delenv("APP_VERSION", raising=False)
-    s_default = AppSettings.from_env(app_name="NoProj", project_root=None, load_dotenv=False)
+    s_default = AppSettings.from_env(app_name="NoProj", project_root=tmp_path, load_dotenv=False)
     assert s_default.version == "0.1.0"
 
     monkeypatch.setenv("APP_VERSION", "2.0.0")
-    s_env = AppSettings.from_env(app_name="NoProj", project_root=None, load_dotenv=False)
+    s_env = AppSettings.from_env(app_name="NoProj", project_root=tmp_path, load_dotenv=False)
     assert s_env.version == "2.0.0"
 
 
