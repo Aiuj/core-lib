@@ -2,7 +2,7 @@
 
 import json
 import redis
-from typing import Any, Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List
 from datetime import datetime, timedelta, timezone
 
 from .base_job_queue import BaseJobQueue, JobConfig, JobStatus, Job
@@ -28,6 +28,7 @@ class RedisJobQueue(BaseJobQueue):
         self._status_index_prefix = f"{self.config.prefix}index:status:"
         self._company_index_prefix = f"{self.config.prefix}index:company:"
         self._user_index_prefix = f"{self.config.prefix}index:user:"
+        self._worker_heartbeat_prefix = f"{self.config.prefix}worker:heartbeat:"
     
     def _create_connection_pool(self) -> redis.ConnectionPool:
         """Create Redis connection pool."""
@@ -46,23 +47,31 @@ class RedisJobQueue(BaseJobQueue):
         return redis.ConnectionPool(**pool_kwargs)
     
     def connect(self):
-        """Establish connection to Redis server."""
+        """Establish connection to Redis server.
+
+        The client is kept even when the initial ping fails: redis-py opens
+        connections lazily, so once the server is reachable again the next
+        command reconnects on its own.  Dropping the client here would leave
+        the queue permanently disconnected after a transient outage at
+        startup (e.g. a Valkey container being recreated).
+        """
+        if self._connection_pool is None:
+            self._connection_pool = self._create_connection_pool()
+        self.client = redis.Redis(connection_pool=self._connection_pool)
+
         try:
-            if self._connection_pool is None:
-                self._connection_pool = self._create_connection_pool()
-            self.client = redis.Redis(connection_pool=self._connection_pool)
-            
-            # Test connection
-            if self.client.ping():
-                self.connected = True
-                logger.info("[RedisJobQueue] Connected to Redis")
-            else:
-                self.connected = False
-                logger.error("[RedisJobQueue] Redis ping failed")
+            self.connected = bool(self.client.ping())
         except Exception as e:
-            logger.error(f"[RedisJobQueue] Could not connect to Redis: {e}")
             self.connected = False
-            self.client = None
+            logger.error(
+                f"[RedisJobQueue] Could not connect to Redis (will retry on next command): {e}"
+            )
+            return
+
+        if self.connected:
+            logger.info("[RedisJobQueue] Connected to Redis")
+        else:
+            logger.error("[RedisJobQueue] Redis ping failed")
     
     def close(self):
         """Close connection pool and cleanup resources."""
@@ -79,13 +88,14 @@ class RedisJobQueue(BaseJobQueue):
     
     def health_check(self) -> bool:
         """Check if Redis server is healthy."""
-        if not self.client or not self.connected:
+        if not self.client:
             return False
         try:
-            return bool(self.client.ping())
+            self.connected = bool(self.client.ping())
         except Exception as e:
             logger.error(f"[RedisJobQueue] Health check failed: {e}")
-            return False
+            self.connected = False
+        return self.connected
     
     def _get_job_key(self, job_id: str) -> str:
         """Get Redis key for job data."""
@@ -511,3 +521,146 @@ class RedisJobQueue(BaseJobQueue):
             logger.info(f"[RedisJobQueue] Cleaned up {deleted_count} old jobs")
         
         return deleted_count
+
+    # --- Worker liveness -------------------------------------------------
+
+    def _worker_heartbeat_key(self, worker_id: str) -> str:
+        return f"{self._worker_heartbeat_prefix}{worker_id}"
+
+    def publish_worker_heartbeat(
+        self, worker_id: str, payload: Dict[str, Any], ttl: int
+    ) -> None:
+        """Write the worker's heartbeat with a TTL; it vanishes if not refreshed."""
+        if not self.client:
+            raise RuntimeError("Job queue not connected")
+        self.client.set(self._worker_heartbeat_key(worker_id), json.dumps(payload), ex=ttl)
+
+    def remove_worker_heartbeat(self, worker_id: str) -> None:
+        if self.client:
+            self.client.delete(self._worker_heartbeat_key(worker_id))
+
+    def list_worker_heartbeats(self) -> List[Dict[str, Any]]:
+        if not self.client:
+            raise RuntimeError("Job queue not connected")
+        keys = list(self.client.scan_iter(match=f"{self._worker_heartbeat_prefix}*", count=100))
+        workers: List[Dict[str, Any]] = []
+        for raw in self.client.mget(keys) if keys else []:
+            if not raw:
+                continue  # expired between SCAN and MGET
+            try:
+                workers.append(json.loads(raw))
+            except (TypeError, ValueError):
+                continue
+        return workers
+
+    def recover_stale_processing_jobs(
+        self,
+        stale_after: float,
+        max_retries: int,
+        on_reclaimed: Optional[Callable[[Job, bool, str], None]] = None,
+    ) -> Dict[str, int]:
+        """Reclaim jobs left in PROCESSING by a worker that died mid-job.
+
+        A running job's ``updated_at`` is refreshed by the worker's per-job
+        heartbeat, so a job whose ``updated_at`` is older than ``stale_after``
+        seconds *and* that no live worker reports as its ``current_job_id``
+        has lost its worker (crash, OOM, container recreated, deploy).  It is
+        re-enqueued, or failed once it has used up ``max_retries``, instead of
+        showing as "processing" forever.
+
+        The atomic SREM on the processing set is the claim: when several
+        workers run this concurrently only one reclaims each job.
+
+        ``on_reclaimed(job, requeued, error)`` is called after each job's new
+        state is stored, so the app can update its own records (audit rows,
+        temp files).  Errors raised by it are logged and ignored.
+        """
+        counts = {"requeued": 0, "failed": 0}
+        if not self.client:
+            return counts
+
+        active = {
+            w.get("current_job_id") for w in self.list_worker_heartbeats()
+        } - {None}
+        now = datetime.now(timezone.utc)
+
+        for job_id in list(self.client.smembers(self._processing_set_key)):
+            if job_id in active:
+                continue
+            job = self.get_job(job_id)
+            if job is None:
+                # Job record expired: drop the dangling processing entry.
+                self.client.srem(self._processing_set_key, job_id)
+                continue
+            if job.status != JobStatus.PROCESSING:
+                continue
+            try:
+                updated = datetime.fromisoformat(job.updated_at)
+            except (TypeError, ValueError):
+                continue
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            idle = (now - updated).total_seconds()
+            if idle <= stale_after:
+                continue
+            if not self.client.srem(self._processing_set_key, job_id):
+                continue  # another worker claimed it first
+
+            error = f"Worker lost while processing (no heartbeat for {idle:.0f}s)"
+            metadata = dict(job.metadata or {})
+            retry_count = metadata.get("retry_count", 0)
+            if retry_count < max_retries:
+                metadata["retry_count"] = retry_count + 1
+                metadata["last_error"] = error
+                if self.requeue_job(job_id, metadata, error):
+                    counts["requeued"] += 1
+                    logger.warning("[RedisJobQueue] Re-enqueued stale job %s: %s", job_id, error)
+                    self._notify_reclaimed(on_reclaimed, job, True, error)
+                    continue
+            error = f"{error} (after {retry_count} retries)"
+            self.fail_job(job_id, error)
+            counts["failed"] += 1
+            logger.warning("[RedisJobQueue] Failed stale job %s: %s", job_id, error)
+            self._notify_reclaimed(on_reclaimed, job, False, error)
+        return counts
+
+    @staticmethod
+    def _notify_reclaimed(
+        callback: Optional[Callable[[Job, bool, str], None]],
+        job: Job,
+        requeued: bool,
+        error: str,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(job, requeued, error)
+        except Exception as exc:  # noqa: BLE001 — app hook must not break recovery
+            logger.warning(
+                "[RedisJobQueue] on_reclaimed hook failed for job %s: %s", job.job_id, exc
+            )
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        if not self.client:
+            raise RuntimeError("Job queue not connected")
+        stats: Dict[str, Any] = {
+            "pending_jobs": self.client.llen(self._pending_queue_key),
+            "processing_jobs": self.client.scard(self._processing_set_key),
+            "oldest_pending_age_s": None,
+        }
+        # Head of the list is the next job to be popped, i.e. the one that has
+        # waited longest.  A large age with no progress means no worker is
+        # consuming the queue, even if a heartbeat is present.
+        head_id = self.client.lindex(self._pending_queue_key, 0)
+        head = self.get_job(head_id) if head_id else None
+        if head is not None:
+            try:
+                created = datetime.fromisoformat(head.created_at)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                stats["oldest_pending_age_s"] = round(
+                    (datetime.now(timezone.utc) - created).total_seconds(), 1
+                )
+            except (TypeError, ValueError):
+                pass
+        return stats

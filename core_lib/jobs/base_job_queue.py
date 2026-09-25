@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List
 import uuid
 
 
@@ -212,6 +212,38 @@ class BaseJobQueue(ABC):
         no-op; workers treat heartbeat updates as best effort.
         """
         return False
+
+    # --- Worker liveness (optional; backends may leave these as no-ops) ---
+
+    def publish_worker_heartbeat(
+        self, worker_id: str, payload: Dict[str, Any], ttl: int
+    ) -> None:
+        """Record that worker ``worker_id`` is alive for the next ``ttl`` seconds."""
+
+    def remove_worker_heartbeat(self, worker_id: str) -> None:
+        """Forget worker ``worker_id`` (clean shutdown)."""
+
+    def list_worker_heartbeats(self) -> List[Dict[str, Any]]:
+        """Payloads of all workers whose heartbeat has not expired."""
+        return []
+
+    def recover_stale_processing_jobs(
+        self,
+        stale_after: float,
+        max_retries: int,
+        on_reclaimed: Optional[Callable[["Job", bool, str], None]] = None,
+    ) -> Dict[str, int]:
+        """Reclaim jobs left in PROCESSING by a worker that died mid-job.
+
+        ``on_reclaimed(job, requeued, error)`` is called for each reclaimed job.
+        Returns ``{"requeued": n, "failed": m}``.
+        """
+        return {"requeued": 0, "failed": 0}
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        """Queue depth figures: ``pending_jobs``, ``processing_jobs``,
+        ``oldest_pending_age_s`` (seconds the next job to run has waited)."""
+        return {}
     
     @abstractmethod
     def complete_job(

@@ -29,6 +29,11 @@ JOB_QUEUE_TTL=86400                    # 24 hours in seconds
 JOB_QUEUE_MAX_CONNECTIONS=10
 JOB_QUEUE_RETRY_ON_TIMEOUT=true
 JOB_QUEUE_SOCKET_TIMEOUT=5
+
+# Worker liveness (read by JobWorker when not passed explicitly)
+JOB_WORKER_HEARTBEAT_INTERVAL=15       # seconds; 0 disables heartbeat + watchdog
+JOB_WORKER_STALL_TIMEOUT=600           # seconds; 0 disables the stall watchdog
+JOB_WORKER_STALE_JOB_TIMEOUT=600       # seconds; reclaim PROCESSING jobs of dead workers; 0 = off
 ```
 
 ## Quick Start
@@ -246,6 +251,10 @@ worker = JobWorker(
     poll_interval=1.0,       # Seconds between queue checks
     max_retries=3,           # Max retry attempts for failed jobs
     retry_delay=5.0,         # Delay between retries (seconds)
+    startup_timeout=300.0,   # Wait this long for Redis at startup, then raise
+    max_backoff=30.0,        # Backoff cap while Redis is unreachable
+    liveness_interval=None,  # Worker heartbeat period (env / 15s; 0 = off)
+    stall_timeout=None,      # Exit if idle loop can't poll this long (env / 600s)
 )
 
 # Register handlers
@@ -262,6 +271,55 @@ worker.stop()
 if worker.is_running():
     print("Worker is active")
 ```
+
+### Resilience to Redis/Valkey outages
+
+- **Startup:** `start()` waits up to `startup_timeout` for the queue, retrying with backoff. If Redis is still unreachable, it raises `JobQueueUnavailableError`, so the process exits and gets restarted instead of hanging.
+- **While running:** Redis connection and timeout errors don't stop the loop. The worker backs off (1s up to `max_backoff`) and keeps polling. It logs when the outage starts and when it recovers.
+- **Unexpected errors** are re-raised from `start()`, so the process exits non-zero. Run workers under a restart policy (e.g. `restart: unless-stopped`).
+- `RedisJobQueue.connect()` keeps its client when the first ping fails, and redis-py reconnects on the next command.
+
+### Liveness heartbeat and stall watchdog
+
+While `start()` runs, a `WorkerHeartbeat` thread publishes `{prefix}worker:heartbeat:{host}:{pid}:{id}` with a TTL of 3× `liveness_interval`. It only beats while the poll loop is making progress: a successful poll within the last 60s, or a job in flight. A process that is alive but no longer consuming the queue therefore drops out.
+
+### Lost jobs (worker died mid-job)
+
+A job whose worker is killed mid-job (crash, OOM, deploy, container recreated) would otherwise stay `processing` forever. Running jobs refresh `updated_at` through the per-job heartbeat (`heartbeat_interval`, 30s). At startup and every minute, each worker reclaims a `processing` job if both of these hold:
+
+- its `updated_at` is older than `stale_job_timeout` (default 600s, longer than a typical Redis outage, during which heartbeats can't be written);
+- no live worker lists it as its `current_job_id`.
+
+A reclaimed job is re-enqueued, or failed once `max_retries` is used up. An atomic `SREM` on the processing set makes sure only one worker reclaims each job. Handlers must tolerate being run again, as they already must for retries.
+
+The dead worker never got to clean up, so the handler for that job type gets a callback, which may run in a different worker process:
+
+```python
+class MyHandler(JobHandler):
+    def on_job_lost(self, job, requeued, error):
+        # requeued=True: the job will run again. False: it was failed for good.
+        # Update app-side records (audit rows), delete temp files, etc.
+        ...
+```
+
+If the loop is idle and hasn't polled successfully for `stall_timeout` seconds, the watchdog calls `os._exit(1)` so the restart policy replaces the worker. A long-running job never triggers it. `worker.liveness()` exposes `last_poll_age` and `current_job_id`.
+
+## Health Checks (API side)
+
+```python
+from core_lib.jobs import check_job_system_health, install_queue_unavailable_handler
+
+# {"job_queue": {"healthy", "latency_ms"}, "background_worker": {"healthy",
+#  "active_workers", "workers", "pending_jobs", "processing_jobs",
+#  "oldest_pending_age_s"}}
+components = check_job_system_health()           # uses the global queue
+components = check_job_system_health(enabled=False)  # app runs without a queue
+
+# Redis ConnectionError/TimeoutError on any endpoint -> 503 + Retry-After
+install_queue_unavailable_handler(app, detail={"code": "QUEUE_UNAVAILABLE"})
+```
+
+`check_job_system_health` makes blocking Redis calls. In an `async def` endpoint, run it with `await asyncio.to_thread(check_job_system_health)`.
 
 ## Advanced: Custom Job Queue
 
