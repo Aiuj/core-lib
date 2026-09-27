@@ -934,3 +934,35 @@ class TestFallbackLLMClientContextWindowFiltering:
 
         assert providers_tried == ["big-model"]
 
+
+
+@pytest.mark.parametrize("configured, prediction, expected", [
+    (None, None, 2048), (16384, 8192, 2048), (512, 8192, 512), (None, -1, 2048), (8192, 256, 256),
+])
+def test_request_output_cap_isolated_from_registry_and_other_calls(configured, prediction, expected):
+    registry = ProviderRegistry()
+    original = ProviderConfig(provider="ollama", model="test", max_tokens=configured, extra={"num_predict": prediction})
+    registry.add(original)
+    client = FallbackLLMClient(registry)
+    configs = []
+    mock_llm = create_mock_client()
+    def get_client(config):
+        configs.append(config)
+        return mock_llm
+    with patch.object(client, "_get_client", side_effect=get_client):
+        client.chat("Extract patterns", max_output_tokens=2048)
+        bounded = configs[-1]
+        client.chat("Normal request")
+    assert bounded.max_tokens == expected
+    assert bounded.extra["num_predict"] == expected
+    from core_lib.llm.providers.ollama_provider import OllamaProvider
+    provider = OllamaProvider(bounded.to_llm_config())
+    assert provider._build_options(False)["num_predict"] == expected
+    assert configs[-1].max_tokens == configured
+    assert original.extra["num_predict"] == prediction
+    assert client._build_cache_key(bounded) != client._build_cache_key(original)
+
+
+def test_request_output_cap_must_be_positive(mock_registry):
+    with pytest.raises(ValueError, match="positive"):
+        FallbackLLMClient(mock_registry).chat("test", max_output_tokens=0)

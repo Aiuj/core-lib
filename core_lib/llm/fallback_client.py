@@ -39,7 +39,7 @@ from __future__ import annotations
 import time
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
@@ -305,6 +305,8 @@ class FallbackLLMClient:
             f"level={config.min_intelligence_level}-{config.max_intelligence_level}",
             f"keyfp={api_key_fingerprint}",
             f"timeout_ms={self._http_timeout_ms or ''}",
+            f"max_tokens={config.max_tokens}",
+            f"num_predict={config.extra.get('num_predict')}",
         ])
     
     def _iter_providers(
@@ -434,6 +436,7 @@ class FallbackLLMClient:
         usage: Optional[str] = None,
         return_fallback_result: bool = False,
         expected_output_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
@@ -454,6 +457,7 @@ class FallbackLLMClient:
             intelligence_level: Filter providers by intelligence level
             usage: Filter providers by usage tag
             return_fallback_result: Return FallbackResult instead of dict
+            max_output_tokens: Per-request generation ceiling; preserves lower provider limits.
             expected_output_tokens: Optional hint for the expected response length,
                 used by providers that size request timeouts locally (e.g. Ollama).
 
@@ -463,6 +467,8 @@ class FallbackLLMClient:
         Raises:
             RuntimeError: If all providers fail
         """
+        if max_output_tokens is not None and max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive")
         if not self._registry.providers:
             error_msg = getattr(
                 self,
@@ -523,8 +529,23 @@ class FallbackLLMClient:
         else:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
+        entries = list(self._iter_providers(level, usage=effective_usage, prompt_tokens=prompt_tokens))
+        if max_output_tokens is not None:
+            bounded_entries = []
+            for config, is_fallback in entries:
+                limits = [max_output_tokens]
+                if config.max_tokens is not None and config.max_tokens > 0:
+                    limits.append(config.max_tokens)
+                extra = dict(config.extra)
+                if config.provider == "ollama":
+                    predicted = extra.get("num_predict")
+                    if predicted is not None and int(predicted) > 0:
+                        limits.append(int(predicted))
+                    extra["num_predict"] = min(limits)
+                bounded_entries.append((replace(config, max_tokens=min(limits), extra=extra), is_fallback))
+            entries = bounded_entries
         provider_entries = self._warmup_router.prioritize_recovered(
-            list(self._iter_providers(level, usage=effective_usage, prompt_tokens=prompt_tokens)),
+            entries,
             key=lambda entry: self._build_cache_key(entry[0]),
             provider=lambda entry: self._get_client(entry[0]),
         )
