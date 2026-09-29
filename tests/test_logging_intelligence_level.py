@@ -266,3 +266,40 @@ def test_logging_filter_celery_task_attributes():
         assert record.extra_attrs.get("celery.task_id") == "task-uuid-123"
         assert record.extra_attrs.get("celery.task_name") == "sync_task"
 
+
+
+def test_usage_origin_and_agent_reach_log_records_and_usage_events():
+    """The action's origin (app/mcp/api) and agent tag every record and usage event."""
+    from core_lib.tracing import build_from_metadata
+    from core_lib.tracing.usage_events import log_usage_event
+
+    clear_logging_context()
+    filter_ = LoggingContextFilter()
+    record = logging.LogRecord("test", logging.INFO, "test.py", 10, "msg", (), None)
+
+    captured = []
+
+    class _Capture(logging.Handler):
+        def emit(self, rec):
+            captured.append(rec)
+
+    logger = logging.getLogger("test_usage_origin")
+    logger.setLevel(logging.INFO)
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        with LoggingContext({"usage_origin": "mcp", "usage_agent": "openai"}):
+            filter_.filter(record)
+            log_usage_event(logger, "question.answered", domain="qa")
+            forwarded = json.loads(build_from_metadata(None, app_name="svc"))
+    finally:
+        logger.removeHandler(handler)
+
+    assert record.extra_attrs["usage.origin"] == "mcp"
+    assert record.extra_attrs["usage.agent"] == "openai"
+    event = captured[0].extra_attrs
+    assert event["usage.origin"] == "mcp"
+    assert event["usage.agent"] == "openai"
+    # Downstream services receive it through the `from` parameter.
+    assert forwarded["usage_origin"] == "mcp"
+    assert forwarded["usage_agent"] == "openai"
