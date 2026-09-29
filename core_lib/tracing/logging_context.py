@@ -237,6 +237,16 @@ class LoggingContextFilter(logging.Filter):
             if 'document_type' in context and context['document_type']:
                 record.extra_attrs['rfx.document.type'] = context['document_type']
 
+            # Where the action came from - the product UI ("app"), an AI agent
+            # over MCP ("mcp") or the REST API ("api") - and, for an agent,
+            # which one. Forwarded unchanged through ``from`` so downstream
+            # services tag their usage events with the original origin.
+            if 'usage_origin' in context and context['usage_origin']:
+                record.extra_attrs['usage.origin'] = context['usage_origin']
+
+            if 'usage_agent' in context and context['usage_agent']:
+                record.extra_attrs['usage.agent'] = context['usage_agent']
+
             if 'celery_task_id' in context and context['celery_task_id']:
                 record.extra_attrs['celery.task_id'] = context['celery_task_id']
 

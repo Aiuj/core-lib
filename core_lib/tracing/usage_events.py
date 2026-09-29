@@ -46,6 +46,8 @@ def _merge_context(event: dict[str, Any]) -> None:
         "generation_id": "rfx.generation.id",
         "operation": "rfx.operation",
         "document_type": "rfx.document.type",
+        "usage_origin": "usage.origin",
+        "usage_agent": "usage.agent",
     }.items():
         value = context.get(source)
         if value not in (None, ""):
