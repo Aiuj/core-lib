@@ -38,6 +38,7 @@ from .factory import (
 )
 from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .provider_registry import ProviderConfig, ProviderRegistry, substitute_env_vars
+from .decision_client import Choice, Noul, Score, DecisionClient, DecisionError, create_decision_client
 from .provider_health import (
     ProviderHealthTracker,
     HealthStatus,
@@ -83,6 +84,7 @@ except ImportError:
     _LANGCHAIN_AVAILABLE = False
 
 __all__ = [
+    "Choice", "Noul", "Score", "DecisionClient", "DecisionError", "create_decision_client",
     # Core classes
     "LLMConfig", 
     "GeminiConfig",

@@ -130,7 +130,7 @@ class ProviderConfig:
     provider-specific configs (GeminiConfig, OpenAIConfig, OllamaConfig).
     
     Attributes:
-        provider: Provider name (gemini, vertex, openai, azure-openai, ollama)
+        provider: Chat provider, or native decision provider (typesafe, ollama-decision)
         model: Model name/identifier
         api_key: API key (for cloud providers)
         host: Base URL/host (for Ollama or custom endpoints)
@@ -236,6 +236,11 @@ class ProviderConfig:
         # canonical names and aliases resolved above)
         if self.provider == "openrouter" and not self.host:
             self.host = "https://openrouter.ai/api/v1"
+
+        if self.is_decision_provider:
+            self.supports_tools = False
+            if self.usage is None:
+                self.usage = "decision"
         
         # Set default models if not specified
         if not self.model:
@@ -248,6 +253,8 @@ class ProviderConfig:
                 "openai-responses": "gpt-4.1",
                 "openrouter": "openrouter/auto",
                 "mistral": "mistral-small-latest",
+                "typesafe": "jev-latest",
+                "ollama-decision": "nimble",
             }
             self.model = defaults.get(self.provider, "")
 
@@ -471,6 +478,8 @@ class ProviderConfig:
         Returns:
             GeminiConfig, OpenAIConfig, or OllamaConfig instance
         """
+        if self.is_decision_provider:
+            raise ValueError("Decision models use to_decision_client(), not chat configuration")
         if self.provider == "gemini":
             from .providers.google_genai_provider import GeminiConfig
             api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
@@ -661,13 +670,25 @@ class ProviderConfig:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
     def to_client(self):
-        """Create an LLMClient from this configuration.
+        """Create the appropriate chat or native decision client.
         
         Returns:
-            LLMClient instance
+            LLMClient or DecisionClient instance
         """
+        if self.is_decision_provider:
+            return self.to_decision_client()
         from .llm_client import LLMClient
         return LLMClient(self.to_llm_config())
+
+    @property
+    def is_decision_provider(self) -> bool:
+        from .decision_client import DECISION_PROVIDERS
+        return self.provider in DECISION_PROVIDERS
+
+    def to_decision_client(self, **overrides):
+        """Build a native System One client using this entry's configuration."""
+        from .decision_client import DecisionClient
+        return DecisionClient.from_provider_config(self, **overrides)
     
     def is_configured(self) -> bool:
         """Check if the provider has minimum required configuration.
@@ -677,6 +698,11 @@ class ProviderConfig:
         """
         if not self.enabled:
             return False
+
+        if self.provider == "typesafe":
+            return bool(self.api_key or os.getenv("TYPESAFE_API_KEY"))
+        if self.provider == "ollama-decision":
+            return True
         
         if self.provider == "gemini":
             # AI Studio (API Key) only
@@ -820,10 +846,22 @@ class ProviderRegistry:
     
     @property
     def providers(self) -> List[ProviderConfig]:
-        """Get all provider configurations sorted by priority."""
+        """Get configured chat providers sorted by priority.
+
+        Decision-only models cannot enter chat fallback or startup chat probes.
+        Use decision_providers for native System One evaluations.
+        """
         return sorted(
-            [p for p in self._providers if p.enabled and p.is_configured()],
+            [p for p in self._providers if not p.is_decision_provider and p.is_configured()],
             key=lambda p: p.priority
+        )
+
+    @property
+    def decision_providers(self) -> List[ProviderConfig]:
+        """Configured native decision providers, independent of chat routing."""
+        return sorted(
+            [p for p in self._providers if p.is_decision_provider and p.is_configured()],
+            key=lambda p: p.priority,
         )
     
     @property
@@ -1072,8 +1110,8 @@ class ProviderRegistry:
 
             if resolved_config_file:
                 registry = cls.from_file(resolved_config_file, substitute_env=True)
-                if registry:
-                    logger.debug(f"Loaded {len(registry)} providers from {resolved_config_file}")
+                if registry.providers or registry.decision_providers:
+                    logger.debug(f"Loaded {len(registry.providers) + len(registry.decision_providers)} providers from {resolved_config_file}")
                     return registry
                 else:
                     logger.warning(f"Config file {resolved_config_file} loaded but no providers found")
@@ -1103,6 +1141,20 @@ class ProviderRegistry:
     def _load_legacy_env_vars(self) -> None:
         """Load providers from legacy individual environment variables."""
         
+        # Native decision models are registered separately from chat providers.
+        if os.getenv("TYPESAFE_API_KEY"):
+            self.add(ProviderConfig(
+                provider="typesafe", model=os.getenv("TYPESAFE_MODEL") or "jev-latest",
+                host=os.getenv("TYPESAFE_BASE_URL"), usage="decision", priority=10,
+                supports_tools=False,
+            ))
+        if os.getenv("OLLAMA_DECISION_MODEL"):
+            self.add(ProviderConfig(
+                provider="ollama-decision", model=os.environ["OLLAMA_DECISION_MODEL"],
+                host=os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST"),
+                usage="decision", priority=20, supports_tools=False,
+            ))
+
         # Check for Gemini
         gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_GENAI_API_KEY")
         if gemini_key:

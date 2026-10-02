@@ -9,6 +9,7 @@ setup(
     url='https://github.com/Aiuj/core-lib',
     packages=find_packages(),
     install_requires=[
+        'httpx>=0.27.0',
         'fast-langdetect>=1.0.0',
         'fastapi>=0.120.2',
         'google-genai>=0.6.0',

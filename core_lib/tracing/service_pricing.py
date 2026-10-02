@@ -91,6 +91,13 @@ LLM_PRICING = {
     
     # Local/Self-hosted (free)
     "ollama": {"input": 0.0, "output": 0.0},
+    "nimble": {"input": 0.0, "output": 0.0},
+
+    # TypeSafe Jev: $0.042 per million input tokens; output is not billed.
+    # https://docs.typesafe.ai/models — verified 2026-10-02. Values are per 1K.
+    "jev-latest": {"input": 0.000042, "output": 0.0},
+    "jev-preview": {"input": 0.000042, "output": 0.0},
+    "jev-1.13.0": {"input": 0.000042, "output": 0.0},
 
     # OVHcloud AI Endpoints
     # Source: https://www.ovhcloud.com/en/public-cloud/ai-endpoints/catalog/

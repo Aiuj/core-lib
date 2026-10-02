@@ -3,6 +3,9 @@
 The LLM module provides a unified interface for working with different Large Language Model providers.  
 For **multi-provider fallback with health tracking and per-task routing**, see [FALLBACK_LLM_CLIENT.md](FALLBACK_LLM_CLIENT.md).
 
+For **native typed decisions with TypeSafe Jev or local Ollama Nimble**, see
+[Native decision models](decisions.md). These providers use System One, not chat.
+
 ---
 
 ## Quick Start
