@@ -90,6 +90,18 @@ class TestFallbackLLMClientInit:
         assert "openai:gpt-4o-mini" in caplog.text
 
 
+def test_required_tools_skip_provider_without_tool_support(mock_registry, mock_health_tracker):
+    mock_registry.providers[0].supports_tools = False
+    client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+    mock_llm = create_mock_client()
+    tools = [{'type': 'function', 'function': {'name': 'read_stock', 'parameters': {'type': 'object'}}}]
+    with patch.object(client, '_get_client', return_value=mock_llm) as get_client:
+        result = client.chat('Read application stock', tools=tools, require_tools=True)
+    assert result['content'] == 'Test response'
+    assert get_client.call_args.args[0].provider == 'openai'
+    assert mock_llm.chat.call_args.kwargs['tools'] == tools
+
+
 class TestFallbackLLMClientChat:
     """Tests for the chat method with fallback behavior."""
     
