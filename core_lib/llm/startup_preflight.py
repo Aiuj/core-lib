@@ -188,6 +188,10 @@ def _probe_provider(provider, *, allow_wol: bool = True) -> str | None:
             pass  # dataclasses.replace failed (e.g. not a dataclass); use original
 
         client = probe_config.to_client()
+        if getattr(provider, "is_decision_provider", False):
+            from .decision_client import Noul
+            client.decide(state="Ready", questions={"ready": Noul("Is the state ready?")})
+            return None
         response = client.chat(
             [{"role": "user", "content": "Reply with OK."}],
             thinking_enabled=False,
@@ -762,6 +766,19 @@ def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
         return "not_configured", None, "Missing required credentials"
 
     p = provider.provider
+
+    if getattr(provider, "is_decision_provider", False):
+        try:
+            with provider.to_decision_client(timeout=10, max_retries=0) as client:
+                models = client.list_models()
+            if p == "ollama-decision" and not any(
+                item["name"] == provider.model
+                or item["name"] == provider.model + ":latest" for item in models
+            ):
+                return "down", None, "Decision model is not installed in Ollama"
+            return "ok", "Decision model endpoint reachable (no inference performed)", None
+        except Exception as exc:
+            return "down", None, str(exc)
 
     if p == "ollama":
         return _check_ollama(provider.host or "http://localhost:11434", provider.model)

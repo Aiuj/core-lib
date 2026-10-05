@@ -437,6 +437,7 @@ class FallbackLLMClient:
         return_fallback_result: bool = False,
         expected_output_tokens: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
+        require_tools: bool = False,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
@@ -530,6 +531,8 @@ class FallbackLLMClient:
             logger.debug(f"No IQ specified. Using all {len(self._registry.providers)} providers.")
         
         entries = list(self._iter_providers(level, usage=effective_usage, prompt_tokens=prompt_tokens))
+        if require_tools:
+            entries = [entry for entry in entries if entry[0].supports_tools]
         if max_output_tokens is not None:
             bounded_entries = []
             for config, is_fallback in entries:
