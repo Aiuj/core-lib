@@ -1,8 +1,8 @@
 """Compare native decision backends with synthetic input, or list models.
 
 Run from an application directory containing llm_providers.yaml:
-    uv run ../core-lib/examples/example_decision_usage.py
-    uv run ../core-lib/examples/example_decision_usage.py --provider typesafe --list-models
+    uv run ../core-lib/examples/example_decision_usage.py --config llm_providers.yaml
+    uv run ../core-lib/examples/example_decision_usage.py --config llm_providers.yaml --provider typesafe --list-models
 """
 
 import argparse
