@@ -356,6 +356,28 @@ def test_environment_file_with_only_decisions_is_honored(tmp_path, monkeypatch):
     assert registry.decision_providers[0].host == "http://custom-host:11434"
 
 
+def test_usage_telemetry_does_not_leak_url_credentials(make_client):
+    client, logs = make_client(
+        lambda request: httpx.Response(200, json=RESPONSE),
+        "ollama-decision",
+        base_url="http://user:s3cret@ollama.test:11434?token=abc",
+    )
+    client.system_one(state={"text": "x"}, questions=QUESTIONS)
+    assert "s3cret" not in logs[0]["host"]
+    assert "token" not in logs[0]["host"]
+    assert logs[0]["host"].startswith("http://ollama.test:11434")
+
+
+def test_usage_logging_failure_keeps_decision(make_client, monkeypatch):
+    def boom(**kw):
+        raise RuntimeError("telemetry down")
+
+    client, _ = make_client(lambda request: httpx.Response(200, json=RESPONSE))
+    monkeypatch.setattr("core_lib.llm.decision_client.log_llm_usage", boom)
+    result = client.system_one(state={"text": "x"}, questions=QUESTIONS)
+    assert result["answers"]["route"]["choice"] == "search"
+
+
 def test_invalid_json_is_safe(make_client):
     client, _ = make_client(
         lambda request: httpx.Response(200, text="private-state not-json")

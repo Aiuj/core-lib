@@ -69,8 +69,8 @@ No caller needs to copy a key into source code.
 For a ready-to-run synthetic comparison from the application directory:
 
 ```powershell
-uv run ../core-lib/examples/example_decision_usage.py
-uv run ../core-lib/examples/example_decision_usage.py --provider typesafe --list-models
+uv run ../core-lib/examples/example_decision_usage.py --config llm_providers.yaml
+uv run ../core-lib/examples/example_decision_usage.py --config llm_providers.yaml --provider typesafe --list-models
 ```
 
 ## Evaluate both backends

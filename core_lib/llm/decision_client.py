@@ -7,6 +7,7 @@ use /v1/systemone; generation settings and tool schemas are never sent.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import random
@@ -15,10 +16,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
 from core_lib.tracing.service_usage import log_llm_usage
+
+logger = logging.getLogger(__name__)
 
 DECISION_PROVIDERS = frozenset({"typesafe", "ollama-decision"})
 
@@ -321,21 +325,24 @@ class DecisionClient:
                 raise DecisionError("Decision API returned invalid JSON") from None
             self._validate_response(data, questions)
             latency_ms = (time.monotonic() - started) * 1000
-            log_llm_usage(
-                provider=self.provider,
-                model=data["model"],
-                input_tokens=data["usage"]["input_tokens"],
-                output_tokens=data["usage"]["output_tokens"],
-                latency_ms=latency_ms,
-                structured=True,
-                response_format="decision",
-                purpose="decision",
-                host=self.base_url,
-                metadata={
-                    "requested_model": self.model,
-                    "question_count": len(questions),
-                },
-            )
+            try:
+                log_llm_usage(
+                    provider=self.provider,
+                    model=data["model"],
+                    input_tokens=data["usage"]["input_tokens"],
+                    output_tokens=data["usage"]["output_tokens"],
+                    latency_ms=latency_ms,
+                    structured=True,
+                    response_format="decision",
+                    purpose="decision",
+                    host=self._safe_host(),
+                    metadata={
+                        "requested_model": self.model,
+                        "question_count": len(questions),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log decision usage: {e}")
             return {
                 **data,
                 "provider": self.provider,
@@ -345,6 +352,19 @@ class DecisionClient:
         raise AssertionError("Unreachable retry state")
 
     system_one = decide
+
+    def _safe_host(self) -> str:
+        """Endpoint for telemetry with any userinfo/query/fragment stripped."""
+        try:
+            parts = urlsplit(self.base_url)
+            host = parts.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            return f"{parts.scheme}://{host}{parts.path}" if host else ""
+        except ValueError:
+            return ""
 
     def list_models(self) -> list[dict]:
         """List available models without consuming decision tokens."""
