@@ -323,7 +323,7 @@ class FallbackLLMClient:
         self,
         intelligence_level: Optional[int] = None,
         usage: Optional[str] = None,
-        prompt_tokens: Optional[int] = None,
+        prompt_tokens: Optional[Union[int, Callable[[ProviderConfig], int]]] = None,
     ) -> Iterator[Tuple[ProviderConfig, bool]]:
         """Iterate through providers in health-aware order.
 
@@ -333,9 +333,11 @@ class FallbackLLMClient:
             intelligence_level: Optional filter by intelligence level
             usage: Optional usage tag filter (e.g. "rag", "chat"). Providers
                 without a usage tag always match any requested usage.
-            prompt_tokens: Optional estimated size of the outgoing request.
-                Providers with a configured context_window too small to hold
-                it are skipped (see ProviderConfig.fits_prompt_tokens).
+            prompt_tokens: Optional estimated size of the outgoing request,
+                either an integer token count or a callable returning an
+                estimate for a given ProviderConfig. Providers with a
+                configured context_window too small to hold their prompt are
+                skipped (see ProviderConfig.fits_prompt_tokens).
 
         Yields:
             Tuple of (ProviderConfig, is_fallback)
@@ -401,26 +403,46 @@ class FallbackLLMClient:
         # oversized prompt routes past a small local model straight to one
         # that can actually hold it instead of failing/truncating silently.
         if prompt_tokens is not None:
+            estimate_for = prompt_tokens if callable(prompt_tokens) else (lambda _p: prompt_tokens)
+            provider_estimates = [(p, estimate_for(p)) for p in providers]
             fits = [
-                p for p in providers
-                if p.fits_prompt_tokens(prompt_tokens, reserved_output_tokens=p.max_tokens or 0)
+                p for p, est in provider_estimates
+                if p.fits_prompt_tokens(est, reserved_output_tokens=p.max_tokens or 0)
             ]
             if fits:
                 if len(fits) < len(providers):
-                    skipped = [p.name for p in providers if p not in fits]
-                    logger.info(
-                        f"Prompt (~{prompt_tokens} tokens) exceeds context_window for "
-                        + ", ".join(skipped) + "; routing to a provider with room for it."
-                    )
+                    if callable(prompt_tokens):
+                        skipped = [
+                            f"{p.name} (~{est} tokens)"
+                            for p, est in provider_estimates if p not in fits
+                        ]
+                        logger.info(
+                            f"Prompt exceeds context_window for "
+                            + ", ".join(skipped)
+                            + "; routing to a provider with room for it."
+                        )
+                    else:
+                        skipped = [p.name for p in providers if p not in fits]
+                        logger.info(
+                            f"Prompt (~{prompt_tokens} tokens) exceeds context_window for "
+                            + ", ".join(skipped)
+                            + "; routing to a provider with room for it."
+                        )
                 providers = fits
             else:
                 # Every remaining provider declares a window too small for this
                 # prompt. Trying anyway (and likely failing/truncating on the
                 # provider side) beats a total blackout when no candidate fits.
-                logger.warning(
-                    f"Prompt (~{prompt_tokens} tokens) exceeds every configured "
-                    "context_window; trying providers anyway as last resort."
-                )
+                if callable(prompt_tokens):
+                    logger.warning(
+                        "Prompt exceeds every configured context_window; "
+                        "trying providers anyway as last resort."
+                    )
+                else:
+                    logger.warning(
+                        f"Prompt (~{prompt_tokens} tokens) exceeds every configured "
+                        "context_window; trying providers anyway as last resort."
+                    )
 
         # Separate healthy and unhealthy
         healthy = self._health_tracker.filter_healthy(providers)
@@ -521,16 +543,13 @@ class FallbackLLMClient:
         
         level = intelligence_level or self._default_intelligence_level
         effective_usage = usage or self._default_usage
+        prompt_tokens: Optional[Union[int, Callable[[ProviderConfig], int]]]
         if callable(messages):
-            # The text may differ per provider; size the request by the
-            # largest variant so no provider is tried with a prompt that
-            # exceeds its context window.
-            prompt_tokens = max(
-                (
-                    _estimate_prompt_tokens(messages(provider), system_message, tools)
-                    for provider in self._registry.providers
-                ),
-                default=0,
+            # The text may differ per provider; size each provider by its own
+            # prompt variant so a provider whose own prompt fits is not excluded
+            # just because another provider's prompt variant is larger.
+            prompt_tokens = lambda provider: _estimate_prompt_tokens(
+                messages(provider), system_message, tools
             )
         else:
             prompt_tokens = _estimate_prompt_tokens(messages, system_message, tools)

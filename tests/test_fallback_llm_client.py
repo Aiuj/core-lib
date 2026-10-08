@@ -1013,3 +1013,66 @@ class TestMessagesFactory:
             client.chat("Hi there")
 
         assert mock_llm.chat.call_args.kwargs["messages"] == "Hi there"
+
+    def test_callable_messages_context_window_filtered_per_provider(
+        self, mock_health_tracker
+    ):
+        """When messages is callable, a small-window fallback provider is not excluded
+        merely because the primary provider's generated prompt is large."""
+        from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.add(ProviderConfig(
+            provider="gemini",
+            model="gemini-2.0-flash",
+            api_key="k1",
+            priority=1,
+            context_window=200_000,
+        ))
+        registry.add(ProviderConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            api_key="k2",
+            priority=2,
+            context_window=2_000,
+        ))
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        primary = create_mock_client(should_succeed=False)
+        secondary = create_mock_client(response_content="from secondary")
+        clients = {"gemini": primary, "openai": secondary}
+
+        def messages(config):
+            if config.provider == "gemini":
+                # Large prompt (~10,000 tokens), fits 200,000 window but would exceed 2,000 window
+                return "x" * 40_000
+            # Small prompt (~100 tokens), fits 2,000 window
+            return "x" * 400
+
+        with patch.object(client, "_get_client", side_effect=lambda config: clients[config.provider]):
+            response = client.chat(messages)
+
+        assert response["content"] == "from secondary"
+        assert primary.chat.called
+        assert secondary.chat.called
+
+    def test_iter_providers_with_callable_prompt_tokens(self, mock_health_tracker):
+        """_iter_providers evaluates callable prompt_tokens per provider."""
+        from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.add(ProviderConfig(
+            provider="openai", model="small-model", api_key="k1", priority=1, context_window=2000
+        ))
+        registry.add(ProviderConfig(
+            provider="openai", model="big-model", api_key="k2", priority=2, context_window=200_000
+        ))
+        client = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+
+        # small-model gets 50 tokens (fits), big-model gets 500_000 tokens (exceeds 200k)
+        estimator = lambda config: 50 if config.model == "small-model" else 500_000
+        providers = list(client._iter_providers(prompt_tokens=estimator))
+        models = [c.model for c, _ in providers]
+
+        assert models == ["small-model"]
+
