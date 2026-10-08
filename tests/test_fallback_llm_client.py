@@ -978,3 +978,38 @@ def test_request_output_cap_isolated_from_registry_and_other_calls(configured, p
 def test_request_output_cap_must_be_positive(mock_registry):
     with pytest.raises(ValueError, match="positive"):
         FallbackLLMClient(mock_registry).chat("test", max_output_tokens=0)
+
+
+class TestMessagesFactory:
+    """``messages`` may be a callable that builds the request per provider."""
+
+    def test_callable_messages_are_built_for_the_provider_being_tried(
+        self, mock_registry, mock_health_tracker
+    ):
+        client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+        primary = create_mock_client(should_succeed=False)
+        secondary = create_mock_client(response_content="from secondary")
+        clients = {"gemini": primary, "openai": secondary}
+        built_for = []
+
+        def messages(config):
+            built_for.append(config.model)
+            return f"prompt for {config.model}"
+
+        with patch.object(client, "_get_client", side_effect=lambda config: clients[config.provider]):
+            response = client.chat(messages)
+
+        assert response["content"] == "from secondary"
+        assert primary.chat.call_args.kwargs["messages"] == "prompt for gemini-2.0-flash"
+        assert secondary.chat.call_args.kwargs["messages"] == "prompt for gpt-4o-mini"
+        # Each attempt rebuilds the request for its own provider.
+        assert {"gemini-2.0-flash", "gpt-4o-mini"} <= set(built_for)
+
+    def test_plain_messages_are_passed_unchanged(self, mock_registry, mock_health_tracker):
+        client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+        mock_llm = create_mock_client()
+
+        with patch.object(client, "_get_client", return_value=mock_llm):
+            client.chat("Hi there")
+
+        assert mock_llm.chat.call_args.kwargs["messages"] == "Hi there"

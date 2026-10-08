@@ -40,7 +40,7 @@ import time
 import hashlib
 import json
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -60,6 +60,16 @@ logger = get_module_logger()
 # configured context_window clearly cannot hold the request — not an exact
 # count, which would require each provider's own tokenizer.
 _CHARS_PER_TOKEN_ESTIMATE = 4
+
+
+# ``chat(messages=...)`` also accepts a callable that builds the messages for
+# the provider about to be tried, so the request text can depend on the model
+# (e.g. a different OCR prompt per vision model). See FallbackLLMClient.chat.
+MessagesInput = Union[
+    str,
+    List[Dict[str, Any]],
+    Callable[[ProviderConfig], Union[str, List[Dict[str, Any]]]],
+]
 
 
 def _estimate_message_tokens(messages: Union[str, List[Dict[str, Any]]]) -> int:
@@ -426,7 +436,7 @@ class FallbackLLMClient:
     
     def chat(
         self,
-        messages: Union[str, List[Dict[str, str]]],
+        messages: MessagesInput,
         tools: Optional[List[Dict[str, Any]]] = None,
         structured_output: Optional[Type[BaseModel]] = None,
         system_message: Optional[str] = None,
@@ -449,7 +459,11 @@ class FallbackLLMClient:
         - `return_fallback_result`: If True, return FallbackResult with metadata
         
         Args:
-            messages: Message(s) to send
+            messages: Message(s) to send. May also be a callable taking the
+                ``ProviderConfig`` about to be tried and returning the
+                message(s) for that provider; it is called once per attempt,
+                so it should be cheap (build heavy parts such as an encoded
+                image once, outside the callable).
             tools: Optional tools in OpenAI format
             structured_output: Optional Pydantic model for structured output
             system_message: Optional system message
@@ -507,7 +521,19 @@ class FallbackLLMClient:
         
         level = intelligence_level or self._default_intelligence_level
         effective_usage = usage or self._default_usage
-        prompt_tokens = _estimate_prompt_tokens(messages, system_message, tools)
+        if callable(messages):
+            # The text may differ per provider; size the request by the
+            # largest variant so no provider is tried with a prompt that
+            # exceeds its context window.
+            prompt_tokens = max(
+                (
+                    _estimate_prompt_tokens(messages(provider), system_message, tools)
+                    for provider in self._registry.providers
+                ),
+                default=0,
+            )
+        else:
+            prompt_tokens = _estimate_prompt_tokens(messages, system_message, tools)
 
         # Log provider selection context
         if level is not None:
@@ -610,7 +636,7 @@ class FallbackLLMClient:
                         )
 
                     response = client.chat(
-                        messages=messages,
+                        messages=messages(config) if callable(messages) else messages,
                         tools=effective_tools,
                         structured_output=structured_output,
                         system_message=system_message,
