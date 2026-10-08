@@ -467,3 +467,71 @@ class TestCollapseDegenerateRepetition:
     def test_preserves_content_with_no_repetition(self):
         text = "Quels sont les objectifs RTO et RPO de la plateforme?"
         assert self._collapse(text) == text
+
+
+class TestPerProviderOcrPrompt:
+    """The OCR prompt comes from the provider's own llm_providers.yaml entry."""
+
+    def _service(self, settings: OcrSettings) -> OcrService:
+        return OcrService(settings, vision_llm_client=MagicMock())
+
+    def test_default_is_the_detailed_prompt(self, settings):
+        service = self._service(settings)
+
+        assert service._resolve_ocr_prompt(None) == OcrService._OCR_ONLY_PROMPT
+        assert service._resolve_ocr_prompt(MagicMock(extra={})) == OcrService._OCR_ONLY_PROMPT
+
+    def test_provider_ocr_prompt_overrides_the_default(self, settings):
+        config = MagicMock(extra={"ocr_prompt": "Text Recognition:"})
+
+        assert self._service(settings)._resolve_ocr_prompt(config) == "Text Recognition:"
+
+    def test_blank_ocr_prompt_is_ignored(self, settings):
+        config = MagicMock(extra={"ocr_prompt": "   "})
+
+        assert self._service(settings)._resolve_ocr_prompt(config) == OcrService._OCR_ONLY_PROMPT
+
+    def test_ocr_prompt_is_read_from_the_yaml_provider_entry(self):
+        from core_lib.llm.provider_registry import ProviderConfig
+
+        config = ProviderConfig.from_dict({
+            "provider": "openai", "model": "zai-org/GLM-OCR", "ocr_prompt": "Text Recognition:",
+        })
+
+        assert config.extra["ocr_prompt"] == "Text Recognition:"
+
+    def test_failover_client_gets_a_per_provider_message_builder(self, settings, tiny_image):
+        from core_lib.llm.fallback_client import FallbackLLMClient
+        from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+
+        registry = ProviderRegistry()
+        registry.add(ProviderConfig(provider="openai", model="glm", api_key="k", priority=1,
+                                    extra={"ocr_prompt": "Text Recognition:"}))
+        registry.add(ProviderConfig(provider="openai", model="qwen", api_key="k", priority=2))
+        client = FallbackLLMClient(registry=registry)
+        captured = {}
+
+        def fake_chat(messages, **kwargs):
+            captured["messages"] = messages
+            return {"content": "ok", "error": None}
+
+        client.chat = fake_chat  # type: ignore[method-assign]
+        service = OcrService(settings, vision_llm_client=client)
+
+        service._ocr_via_vision_llm(tiny_image)
+
+        build = captured["messages"]
+        assert callable(build)
+        text_of = lambda config: build(config)[0]["content"][1]["text"]
+        assert text_of(registry.providers[0]) == "Text Recognition:"
+        assert text_of(registry.providers[1]) == OcrService._OCR_ONLY_PROMPT
+
+    def test_single_provider_client_gets_the_default_prompt_message(self, settings, tiny_image):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"content": "ok", "error": None}
+        service = OcrService(settings, vision_llm_client=mock_client)
+
+        service._ocr_via_vision_llm(tiny_image)
+
+        messages = mock_client.chat.call_args.kwargs["messages"]
+        assert messages[0]["content"][1]["text"] == OcrService._OCR_ONLY_PROMPT

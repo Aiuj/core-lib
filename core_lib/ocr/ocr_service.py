@@ -304,8 +304,11 @@ class OcrService:
     # Included in cache keys so prompt improvements — and post-processing
     # changes to how raw output is cleaned up, such as
     # _collapse_degenerate_repetition — cannot reuse incomplete or
-    # garbage-laden OCR produced by an older transcription policy.
-    _OCR_PROMPT_VERSION = "v5-repetition-collapse"
+    # garbage-laden OCR produced by an older transcription policy. Bump it
+    # whenever a built-in prompt changes; changing a provider's ``ocr_prompt``
+    # setting (see _resolve_ocr_prompt) needs the OCR cache cleared instead,
+    # since the cache key does not depend on the provider.
+    _OCR_PROMPT_VERSION = "v6-provider-prompts"
 
     _OCR_ONLY_PROMPT = (
         "You are a document OCR engine. Transcribe every visible character from "
@@ -344,6 +347,21 @@ class OcrService:
         "Return only the transcription, with no preamble or code fences."
     )
 
+    def _resolve_ocr_prompt(self, config: Optional[Any] = None) -> str:
+        """OCR (non-enriched) prompt for the provider about to be used.
+
+        A provider's entry in ``llm_providers.yaml`` may carry ``ocr_prompt``
+        (unknown keys are kept in ``ProviderConfig.extra``): the complete
+        prompt text for that model. OCR-specialised models usually do best
+        with their own native instruction (GLM-OCR: ``"Text Recognition:"``)
+        and handle the detailed default prompt badly. Providers without the
+        setting get the detailed default prompt.
+        """
+        custom = (getattr(config, "extra", None) or {}).get("ocr_prompt")
+        if isinstance(custom, str) and custom.strip():
+            return custom
+        return self._OCR_ONLY_PROMPT
+
     _ENRICHED_PROMPT = (
         "Analyze this document image for search indexing while transcribing its text "
         "faithfully. Do not translate, correct, or invent text. "
@@ -360,6 +378,16 @@ class OcrService:
         "[illegible] rather than guessing uncertain text. If there is no text, write 'None'.\n\n"
         "Do not include any other commentary. Do not wrap the output in code fences."
     )
+
+    def _client_resolves_messages_per_provider(self) -> bool:
+        """Whether the vision client picks a provider itself and accepts a
+        callable ``messages`` (FallbackLLMClient). A concrete single-provider
+        client cannot, and gets the default prompt."""
+        try:
+            from ..llm.fallback_client import FallbackLLMClient
+        except ImportError:  # pragma: no cover - llm package always present
+            return False
+        return isinstance(self._vision_client, FallbackLLMClient)
 
     def _ocr_via_vision_llm(
         self,
@@ -382,17 +410,29 @@ class OcrService:
         b64 = base64.b64encode(img_bytes).decode("ascii")
         data_url = f"data:{mime_type};base64,{b64}"
 
-        prompt_text = self._ENRICHED_PROMPT if enrich else self._OCR_ONLY_PROMPT
-        content_parts = [
-            {"type": "text", "text": prompt_text},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]
-        # Keep the historical non-enriched payload shape: image first, prompt
-        # second. Enriched calls retain the text-first shape used by callers
-        # that inspect the enrichment prompt directly.
-        if not enrich:
-            content_parts.reverse()
-        messages = [{"role": "user", "content": content_parts}]
+        image_part = {"type": "image_url", "image_url": {"url": data_url}}
+        if enrich:
+            # Enriched calls keep the text-first shape used by callers that
+            # inspect the enrichment prompt directly.
+            messages: Any = [{
+                "role": "user",
+                "content": [{"type": "text", "text": self._ENRICHED_PROMPT}, image_part],
+            }]
+        else:
+            def messages(config: Optional[Any] = None) -> list:
+                # Historical non-enriched payload shape: image first, prompt
+                # second; the prompt depends on the provider (see
+                # _resolve_ocr_prompt).
+                return [{
+                    "role": "user",
+                    "content": [
+                        image_part,
+                        {"type": "text", "text": self._resolve_ocr_prompt(config)},
+                    ],
+                }]
+
+            if not self._client_resolves_messages_per_provider():
+                messages = messages(None)
 
         try:
             # Observability tagging for vision/OCR calls.
