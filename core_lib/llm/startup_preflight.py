@@ -809,9 +809,13 @@ def _probe_connectivity(provider) -> tuple[str, Optional[str], Optional[str]]:
 
 
     if p == "openrouter":
-        api_key = provider.api_key or os.getenv("OPENROUTER_API_KEY") or ""
-        if not api_key:
+        credential = provider._openrouter_credential()
+        if not credential:
             return "not_configured", None, "No API key"
+        try:
+            api_key = credential() if callable(credential) else credential
+        except Exception as exc:
+            return "down", None, f"Workload identity exchange failed: {exc}"
         return _check_openrouter(provider.model, api_key, provider.host)
 
     if p in ("openai", "openai-responses"):

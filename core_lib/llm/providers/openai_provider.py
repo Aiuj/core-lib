@@ -17,7 +17,7 @@ Docs: https://langfuse.com/integrations/model-providers/openai-py
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, Union
 import time
 import uuid
 
@@ -47,7 +47,7 @@ except Exception:
 
 @dataclass
 class OpenAIConfig(LLMConfig):
-    api_key: str
+    api_key: Union[str, Callable[[], str]]
     base_url: Optional[str] = None
     organization: Optional[str] = None
     project: Optional[str] = None
@@ -60,7 +60,7 @@ class OpenAIConfig(LLMConfig):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Union[str, Callable[[], str]],
         model: str = "gpt-5.2-preview",
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,

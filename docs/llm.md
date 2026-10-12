@@ -305,6 +305,34 @@ response = client.chat("Explain the Renaissance briefly.")
 print(response["content"])
 ```
 
+#### Workload identity federation (no API key)
+
+Instead of a long-lived key, exchange a JWT from your identity provider for a
+short-lived (≤15 min) OpenRouter token
+([docs](https://openrouter.ai/docs/guides/overview/auth/workload-identity-federation)).
+Tokens are cached and re-exchanged automatically before expiry. A static
+`OPENROUTER_API_KEY` / `api_key` takes precedence unless a `workload_identity`
+block is set explicitly.
+
+```bash
+OPENROUTER_FEDERATION_POLICY_ID=<policy id>
+OPENROUTER_IDP_TOKEN_FILE=/var/run/secrets/idp/token   # re-read on each exchange
+# or OPENROUTER_IDP_TOKEN=<jwt> (static; only suitable if it never expires)
+# optional: OPENROUTER_TOKEN_URL
+```
+
+```yaml
+# llm_providers.yaml
+- provider: openrouter
+  model: openai/gpt-4o-mini
+  workload_identity:
+    policy_id: <policy id>
+    subject_token_file: /var/run/secrets/idp/token
+```
+
+Programmatic use: `OpenRouterWorkloadIdentity(policy_id, subject_token=callable_or_str)`
+(`core_lib.llm.openrouter_auth`) can be passed as `api_key` to `LLMFactory.openrouter(...)`.
+
 ### Mistral AI
 
 ```python

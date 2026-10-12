@@ -7,6 +7,7 @@ from .llm_config import LLMConfig, GeminiConfig, OllamaConfig, OpenAIConfig
 from .providers.azure_openai_provider import AzureOpenAIConfig, AzureOpenAIProvider
 from .providers.openai_responses_provider import OpenAIResponsesConfig
 from .llm_client import LLMClient
+from .openrouter_auth import OpenRouterWorkloadIdentity
 
 if TYPE_CHECKING:
     from core_lib.config.llm_settings import LLMSettings
@@ -117,7 +118,12 @@ class LLMFactory:
             if not config.base_url:
                 config.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         elif provider_lc in ("openrouter", "open-router", "open_router"):
-            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+            api_key = (
+                os.environ.get("OPENROUTER_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+                or OpenRouterWorkloadIdentity.from_env()
+                or ""
+            )
             model = kwargs.pop("model", os.environ.get("OPENROUTER_MODEL", "openrouter/auto"))
             config = OpenAIConfig(
                 api_key=api_key,
@@ -524,15 +530,25 @@ class LLMFactory:
         best available model automatically.
 
         Args:
-            api_key:     OpenRouter API key.  Reads ``OPENROUTER_API_KEY`` from
-                         the environment when not provided.
+            api_key:     OpenRouter API key, or a callable returning a token
+                         (e.g. ``OpenRouterWorkloadIdentity``).  Reads
+                         ``OPENROUTER_API_KEY`` from the environment when not
+                         provided, falling back to workload identity
+                         federation (``OPENROUTER_FEDERATION_POLICY_ID`` +
+                         ``OPENROUTER_IDP_TOKEN``/``OPENROUTER_IDP_TOKEN_FILE``).
             model:       Model slug (default: ``openrouter/auto``).
             temperature: Sampling temperature (default: 0.7).
             max_tokens:  Maximum output tokens.
             base_url:    Override the gateway URL (default:
                          ``https://openrouter.ai/api/v1``).
         """
-        resolved_key = api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        resolved_key = (
+            api_key
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or OpenRouterWorkloadIdentity.from_env()
+            or ""
+        )
         config = OpenAIConfig(
             api_key=resolved_key,
             model=model,

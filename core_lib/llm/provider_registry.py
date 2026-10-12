@@ -261,6 +261,41 @@ class ProviderConfig:
         if not self.name:
             self.name = self._build_default_name()
 
+    def _openrouter_federation(self):
+        """Workload identity federation credential, or None if not configured.
+
+        Configured via a ``workload_identity`` block (``policy_id``,
+        ``subject_token`` or ``subject_token_file``, optional ``token_url``)
+        or the ``OPENROUTER_FEDERATION_POLICY_ID`` / ``OPENROUTER_IDP_TOKEN[_FILE]``
+        environment variables.
+        """
+        from .openrouter_auth import OpenRouterWorkloadIdentity
+
+        cached = self.__dict__.get("_federation_cache")
+        if cached is not None:
+            return cached
+        block = self.extra.get("workload_identity")
+        federation = OpenRouterWorkloadIdentity.from_env(
+            block if isinstance(block, dict) else None
+        )
+        self.__dict__["_federation_cache"] = federation
+        return federation
+
+    def _openrouter_credential(self):
+        """Return the OpenRouter api_key: a string, or a token-refreshing callable.
+
+        An explicit ``workload_identity`` block wins; otherwise a static key
+        (config or ``OPENROUTER_API_KEY``); otherwise env-configured federation.
+        """
+        if isinstance(self.extra.get("workload_identity"), dict):
+            federation = self._openrouter_federation()
+            if federation is not None:
+                return federation
+        static = self.api_key or os.getenv("OPENROUTER_API_KEY")
+        if static:
+            return static
+        return self._openrouter_federation() or ""
+
     def _build_default_name(self) -> str:
         """Create a readable identifier for logging and error messages."""
         provider = self.provider or "unknown"
@@ -630,11 +665,7 @@ class ProviderConfig:
 
         elif self.provider == "openrouter":
             from .providers.openai_provider import OpenAIConfig
-            api_key = (
-                self.api_key
-                or os.getenv("OPENROUTER_API_KEY")
-                or ""
-            )
+            api_key = self._openrouter_credential()
             timeout = int(self.extra.get("timeout", 60))
             return OpenAIConfig(
                 api_key=api_key,
@@ -752,6 +783,7 @@ class ProviderConfig:
             return (
                 bool(self.api_key)
                 or bool(os.getenv("OPENROUTER_API_KEY"))
+                or self._openrouter_federation() is not None
             )
         elif self.provider == "mistral":
             return (
