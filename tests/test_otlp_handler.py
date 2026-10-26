@@ -1,5 +1,6 @@
 """Focused tests for OTLP handler internals."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 from core_lib.tracing.handlers.otlp_handler import OTLPHandler, _OTLPWorkerHandler
@@ -96,3 +97,49 @@ def test_otlp_worker_send_batch_emits_machine_resource_attributes(mock_post):
     assert {"key": "service.instance.id", "value": {"stringValue": "server-01"}} in attrs
     assert {"key": "host.name", "value": {"stringValue": "host-01"}} in attrs
     assert {"key": "faciliter.log_channel", "value": {"stringValue": "myfaq"}} in attrs
+
+
+@patch("core_lib.tracing.handlers.otlp_handler.requests.post")
+def test_otlp_flush_drains_queue_before_export(mock_post):
+    """Explicit flush must include records still queued in the listener."""
+    mock_post.return_value = MagicMock(status_code=200)
+    handler = OTLPHandler(endpoint="http://localhost:4318/v1/logs", service_name="test")
+    handler.start()
+    try:
+        for index in range(5):
+            handler.handle(logging.makeLogRecord({"msg": f"record-{index}", "levelno": logging.INFO}))
+        handler.flush()
+        assert mock_post.call_count == 1
+        records = mock_post.call_args.kwargs["json"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+        assert [record["body"]["stringValue"] for record in records] == [f"record-{i}" for i in range(5)]
+    finally:
+        handler.close()
+    assert mock_post.call_count == 1
+
+
+@patch("core_lib.tracing.handlers.otlp_handler.requests.post")
+def test_otlp_close_exports_final_batch_once(mock_post):
+    """Closing a short-lived process must not silently discard its last batch."""
+    mock_post.return_value = MagicMock(status_code=200)
+    handler = OTLPHandler(endpoint="http://localhost:4318/v1/logs", service_name="test")
+    handler.start()
+    handler.handle(logging.makeLogRecord({"msg": "last event", "levelno": logging.INFO}))
+    handler.close()
+    handler.close()
+    assert mock_post.call_count == 1
+    records = mock_post.call_args.kwargs["json"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    assert records[0]["body"]["stringValue"] == "last event"
+
+
+@patch("core_lib.tracing.handlers.otlp_handler.requests.post")
+def test_otlp_interpreter_exit_exports_final_batch_once(mock_post):
+    mock_post.return_value = MagicMock(status_code=200)
+    worker = _OTLPWorkerHandler(
+        endpoint="http://localhost:4318/v1/logs", headers={}, timeout=10, insecure=False,
+        service_name="test", service_version=None, service_instance_id=None,
+        host_name=None, log_channel=None,
+    )
+    worker.handle(logging.makeLogRecord({"msg": "exit event", "levelno": logging.INFO}))
+    worker._atexit_flush()
+    worker.close()
+    assert mock_post.call_count == 1

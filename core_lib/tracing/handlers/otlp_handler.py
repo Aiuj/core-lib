@@ -245,6 +245,10 @@ class OTLPHandler(logging.Handler):
     
     def flush(self) -> None:
         """Flush any pending logs immediately (useful before shutdown)."""
+        # The listener may still hold records when flush is requested. Wait for
+        # them to reach the worker's batch before exporting that batch.
+        if self._listener is not None:
+            self._queue.join()
         if self._worker_handler is not None:
             self._worker_handler.flush()
     
@@ -484,12 +488,13 @@ class _OTLPWorkerHandler(logging.Handler):
     
     def _atexit_flush(self) -> None:
         """Flush on interpreter exit."""
-        if not self._shutdown:
-            with self._lock:
-                self._shutdown = True
+        with self._lock:
+            if not self._shutdown:
                 self._cancel_flush_timer()
                 if self._batch:
                     self._send_batch_locked()
+                # _send_batch_locked skips work once shutdown is set.
+                self._shutdown = True
     
     def flush(self) -> None:
         """Flush any pending logs immediately."""
@@ -499,9 +504,6 @@ class _OTLPWorkerHandler(logging.Handler):
     
     def close(self) -> None:
         """Flush remaining logs before closing."""
-        with self._lock:
-            self._shutdown = True
-            self._cancel_flush_timer()
-            if self._batch:
-                self._send_batch_locked()
+        self._atexit_flush()
+        atexit.unregister(self._atexit_flush)
         super().close()
