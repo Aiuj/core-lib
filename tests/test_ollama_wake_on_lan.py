@@ -639,3 +639,22 @@ def test_convert_messages_tool_call_arguments_invalid_json_kept_as_string():
     args = converted[0]["tool_calls"][0]["function"]["arguments"]
     assert isinstance(args, str)
     assert args == "{invalid-json}"
+
+
+def test_lfm3_explicit_thinking_flag_reaches_ollama(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            pass
+
+        def chat(self, **payload):
+            captured.update(payload)
+            return {"message": {"content": "OK"}}
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(Client=FakeClient))
+    provider = OllamaProvider(OllamaConfig(model="lfm3:1.7b-q8_0", thinking_enabled=False))
+    provider.chat(messages=[{"role": "user", "content": "Hi"}], thinking_enabled=True)
+    assert captured["think"] is True
+    provider.chat(messages=[{"role": "user", "content": "Hi"}], thinking_enabled=False)
+    assert captured["think"] is False

@@ -132,6 +132,7 @@ class OllamaProvider(BaseProvider):
 
     _THINKING_MODEL_HINTS = (
         "deepseek-r1",
+        "lfm3",
         "qwen3",
         "granite-4.2",
         "granite4.2",
