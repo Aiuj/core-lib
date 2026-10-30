@@ -1,6 +1,7 @@
 """Tests for FallbackLLMClient with automatic provider failover."""
 
 import pytest
+from pydantic import BaseModel
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core_lib.llm.fallback_client import (
@@ -100,6 +101,39 @@ def test_required_tools_skip_provider_without_tool_support(mock_registry, mock_h
     assert result['content'] == 'Test response'
     assert get_client.call_args.args[0].provider == 'openai'
     assert mock_llm.chat.call_args.kwargs['tools'] == tools
+
+
+def test_required_structured_rejects_invalid_without_demoting_or_retrying(mock_registry, mock_health_tracker):
+    class Answer(BaseModel):
+        answer: str
+
+    client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+    mock_llm = create_mock_client(response_content="unstructured private text")
+    with patch.object(client, '_get_client', return_value=mock_llm):
+        result = client.chat('Hi', structured_output=Answer, require_structured=True)
+    assert result['error_code'] == 'structured_output_invalid'
+    assert result['content'] is None and result['structured'] is False
+    assert mock_llm.chat.call_count == 1
+    assert mock_health_tracker.get_status('gemini', 'gemini-2.0-flash').is_healthy
+    with patch.object(client, '_get_client', return_value=mock_llm):
+        result = client.chat('Hi', structured_output=Answer, require_structured=True, return_fallback_result=True)
+    assert result.error and result.content is None
+
+
+def test_required_structured_validates_schema_and_is_opt_in(mock_registry, mock_health_tracker):
+    class Answer(BaseModel):
+        answer: str
+
+    client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+    mock_llm = create_mock_client(response_content='plain')
+    with patch.object(client, '_get_client', return_value=mock_llm):
+        assert client.chat('Hi', structured_output=Answer)['content'] == 'plain'
+        mock_llm.chat.return_value = {'content': {'answer': 'ok'}, 'structured': True}
+        assert client.chat('Hi', structured_output=Answer, require_structured=True)['content'] == {'answer': 'ok'}
+        mock_llm.chat.return_value = {'content': {'wrong': 'field'}, 'structured': True}
+        assert client.chat('Hi', structured_output=Answer, require_structured=True)['error_code'] == 'structured_output_invalid'
+    with pytest.raises(ValueError, match='requires structured_output'):
+        client.chat('Hi', require_structured=True)
 
 
 class TestFallbackLLMClientChat:

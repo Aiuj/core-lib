@@ -24,6 +24,26 @@ from .providers.openai_provider import OpenAIProvider
 from .providers.openai_responses_provider import OpenAIResponsesProvider, OpenAIResponsesConfig
 
 
+def _require_structured_response(result: Dict[str, Any], schema: Type[BaseModel]) -> Dict[str, Any]:
+    """Reject an invalid structured result without exposing its raw contents."""
+    if result.get("error"):
+        return result
+    try:
+        if not result.get("structured"):
+            raise ValueError("Provider returned unstructured content")
+        validated = schema.model_validate(result.get("content"))
+    except (ValueError, TypeError):
+        return {
+            "error": "Structured output did not match the requested schema",
+            "error_code": "structured_output_invalid",
+            "content": None,
+            "structured": False,
+            "tool_calls": [],
+            "usage": result.get("usage", {}),
+        }
+    return {**result, "content": validated.model_dump()}
+
+
 class LLMClient:
     """Main LLM client that abstracts different LLM providers."""
     
@@ -65,6 +85,7 @@ class LLMClient:
         thinking_enabled: Optional[bool] = None,
         usage: Optional[str] = None,
         expected_output_tokens: Optional[int] = None,
+        require_structured: bool = False,
     ) -> Dict[str, Any]:
         """Send a chat message to the LLM.
         
@@ -80,10 +101,13 @@ class LLMClient:
                    Logged as metadata alongside token usage.
             expected_output_tokens: Optional hint for the expected response length,
                    used by providers that size request timeouts locally (e.g. Ollama).
+            require_structured: Return an error if the requested schema is not validated.
 
         Returns:
             Dictionary containing the response, usage info, and any tool calls
         """
+        if require_structured and structured_output is None:
+            raise ValueError("require_structured requires structured_output")
         # Normalize messages into a list[dict] with role/content for providers
         formatted_messages = self._normalize_messages(messages, system_message)
 
@@ -155,6 +179,9 @@ class LLMClient:
                         thinking_enabled=thinking_enabled,
                         expected_output_tokens=expected_output_tokens,
                     )
+
+                if require_structured:
+                    result = _require_structured_response(result, structured_output)
 
                 # Post-call tracing metadata
                 try:

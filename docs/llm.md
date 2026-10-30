@@ -172,6 +172,17 @@ Provider adapters validate the returned instance against the supplied Pydantic m
 
 These fallbacks address provider grammar/schema compatibility. They do not execute model-generated code or accept an object that fails the requested Pydantic schema.
 
+For machine-consumed results, opt into `require_structured=True` alongside
+`structured_output`. If validation fails, the response contains
+`error_code="structured_output_invalid"`, `structured=False`, and `content=None`;
+check `error` before using it. The default remains permissive. The fallback
+client also supports this option and returns the validation error without
+retrying another provider or marking the provider unhealthy. With
+`return_fallback_result=True`, inspect the result's `error` field.
+Schema validation alone does not prove that an answer is nonempty, grounded,
+or consistent with its classification; add appropriate Pydantic validators and
+service-level evidence checks.
+
 ### Tool / Function Calling
 
 ```python

@@ -470,6 +470,7 @@ class FallbackLLMClient:
         expected_output_tokens: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
         require_tools: bool = False,
+        require_structured: bool = False,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
@@ -497,6 +498,8 @@ class FallbackLLMClient:
             max_output_tokens: Per-request generation ceiling; preserves lower provider limits.
             expected_output_tokens: Optional hint for the expected response length,
                 used by providers that size request timeouts locally (e.g. Ollama).
+            require_structured: Return an error if the selected response fails schema validation.
+                This does not retry or demote a healthy provider.
 
         Returns:
             Standard LLMClient response dict, or FallbackResult if requested
@@ -504,6 +507,8 @@ class FallbackLLMClient:
         Raises:
             RuntimeError: If all providers fail
         """
+        if require_structured and structured_output is None:
+            raise ValueError("require_structured requires structured_output")
         if max_output_tokens is not None and max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be positive")
         if not self._registry.providers:
@@ -682,6 +687,10 @@ class FallbackLLMClient:
                     self.last_used_model = config.model
                     self.last_was_fallback = is_fallback
                     self.last_attempts = attempts
+
+                    if require_structured:
+                        from .llm_client import _require_structured_response
+                        response = _require_structured_response(response, structured_output)
                     
                     tier_info = f" [{config.tier}]" if hasattr(config, 'tier') and config.tier else ""
                     level_info = f" IQ{level}" if level is not None else ""
@@ -708,6 +717,7 @@ class FallbackLLMClient:
                             usage=response.get("usage", {}),
                             tool_calls=response.get("tool_calls"),
                             structured=response.get("structured", False),
+                            error=response.get("error"),
                         )
                     
                     # Add fallback metadata to response
