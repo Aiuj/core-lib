@@ -20,6 +20,29 @@ from .wake_on_lan import WakeOnLanStrategy, WakeupServiceStrategy
 
 logger = get_module_logger()
 
+# A server that answers "too busy" (TEI returns 429 when its batch queue is
+# full) usually recovers within milliseconds. Retrying the same URL briefly
+# keeps a fast primary instead of failing over, which would also bench it
+# for the caller's health-check interval.
+OVERLOAD_STATUS_CODES = frozenset({429, 503})
+# Kept short: a server can also refuse a request it will never accept (TEI
+# answers 429 when one request carries more inputs than its concurrency
+# limit), and that must still fail over quickly.
+OVERLOAD_RETRIES = 2
+OVERLOAD_BASE_DELAY_SECONDS = 0.1
+OVERLOAD_MAX_DELAY_SECONDS = 1.0
+
+
+def _overload_delay(response: Any, attempt: int) -> float:
+    """Seconds to wait before retrying an overloaded server: a short Retry-After, else backoff."""
+    retry_after = (getattr(response, "headers", None) or {}).get("Retry-After")
+    try:
+        if retry_after is not None:
+            return min(max(float(retry_after), 0.0), OVERLOAD_MAX_DELAY_SECONDS)
+    except (TypeError, ValueError):
+        pass
+    return min(OVERLOAD_BASE_DELAY_SECONDS * (2 ** attempt), OVERLOAD_MAX_DELAY_SECONDS)
+
 
 class InfinityAPIError(Exception):
     """Base exception for Infinity API errors."""
@@ -188,7 +211,22 @@ class InfinityAPIClient:
                         headers=headers,
                         timeout=effective_timeout
                     )
-                    
+                    for overload_attempt in range(OVERLOAD_RETRIES):
+                        if getattr(response, "status_code", None) not in OVERLOAD_STATUS_CODES:
+                            break
+                        delay = _overload_delay(response, overload_attempt)
+                        logger.debug(
+                            f"{full_url} overloaded (HTTP {response.status_code}); "
+                            f"retrying in {delay:.2f}s ({overload_attempt + 1}/{OVERLOAD_RETRIES})"
+                        )
+                        time.sleep(delay)
+                        response = self._requests.post(
+                            full_url,
+                            json=json,
+                            headers=headers,
+                            timeout=effective_timeout
+                        )
+
                     # Raise for HTTP errors
                     response.raise_for_status()
                     
