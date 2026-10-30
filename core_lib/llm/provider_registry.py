@@ -672,6 +672,10 @@ class ProviderConfig:
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                # Without these, a YAML `thinking: false` was dropped and
+                # reasoning models ran with their own default effort.
+                thinking_enabled=self.thinking_enabled,
+                thinking_config=self.thinking_config,
                 base_url=self.host or "https://openrouter.ai/api/v1",
                 organization=self.organization,
                 project=self.project,

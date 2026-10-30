@@ -711,6 +711,10 @@ class OpenAIProvider(BaseProvider):
             if not content_text and not tool_calls and reasoning_text and not bool(use_thinking):
                 content_text = reasoning_text.strip()
             usage = getattr(completion, "usage", {}) or {}
+            # Every provider returns usage as a plain dict; the SDK's
+            # CompletionUsage object broke callers reading usage.get(...).
+            if not isinstance(usage, dict) and hasattr(usage, "model_dump"):
+                usage = usage.model_dump(exclude_none=True)
 
             # Log service usage to OpenTelemetry/OpenSearch (replaces Langfuse tracing)
             try:
