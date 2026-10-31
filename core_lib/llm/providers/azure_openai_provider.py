@@ -110,6 +110,8 @@ class AzureOpenAIConfig(OpenAIConfig):
         organization: Optional[str] = None,
         project: Optional[str] = None,
         payload_capture: Optional[bool] = None,
+        thinking_config: Optional[dict] = None,
+        timeout: int = 60,
     ) -> None:
         # Call OpenAIConfig.__init__ — sets self.provider = "openai" first …
         super().__init__(
@@ -119,6 +121,8 @@ class AzureOpenAIConfig(OpenAIConfig):
             max_tokens=max_tokens,
             thinking_enabled=thinking_enabled,
             thinking_budget=thinking_budget,
+            thinking_config=thinking_config,
+            timeout=timeout,
             base_url=None,
             organization=organization,
             project=project,

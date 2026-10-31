@@ -27,6 +27,27 @@ _DEPLOYMENT = "gpt-4o-mini"
 _API_VERSION = "2024-08-01-preview"
 
 
+def test_azure_registry_preserves_thinking_and_timeout_for_luna():
+    pc = ProviderConfig.from_dict({
+        "provider": "azure-openai", "model": "gpt-6-luna-eu",
+        "api_key": _API_KEY, "azure_endpoint": _ENDPOINT,
+        "thinking": False, "timeout": 180,
+    })
+    config = pc.to_llm_config()
+    assert config.thinking_config == {"enabled": False}
+    assert config.timeout == 180
+    with patch("core_lib.llm.providers.openai_provider.AzureOpenAI") as mock_cls:
+        mock_client = mock_cls.return_value
+        mock_client.chat.completions.create.return_value = _make_completion("ok")
+        provider = AzureOpenAIProvider(config)
+        result = provider.chat(messages=[{"role": "user", "content": "hello"}])
+        assert result["content"] == "ok"
+        kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert kwargs["model"] == "gpt-6-luna-eu"
+        assert kwargs["reasoning_effort"] == "none"
+        assert kwargs["timeout"] == 180
+
+
 def _make_provider(
     model: str = _DEPLOYMENT,
     api_key: str = _API_KEY,

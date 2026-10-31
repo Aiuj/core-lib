@@ -581,6 +581,8 @@ class ProviderConfig:
                 max_tokens=self.max_tokens,
                 thinking_enabled=self.thinking_enabled,
                 thinking_budget=thinking_budget,
+                thinking_config=self.thinking_config,
+                timeout=int(self.extra.get("timeout", 60)),
                 organization=self.organization,
                 project=self.project,
                 payload_capture=self.payload_capture,

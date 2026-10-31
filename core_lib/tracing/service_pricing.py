@@ -17,6 +17,9 @@ LLM_PRICING = {
     # Prices per 1M tokens in API docs, converted to per 1K here.
     # GPT-6 series (also reached through OpenRouter as "openai/<model>")
     "gpt-6-luna": {"input": 0.0001, "output": 0.0005},         # $0.10/$0.50 per 1M
+    # Explicit Azure EU Data Zone Standard deployment alias; short-context estimate.
+    # https://azure.microsoft.com/en-us/blog/gpt-6-astra-sol-and-luna-for-production-agents-in-microsoft-foundry/
+    "gpt-6-luna-eu": {"input": 0.00012, "output": 0.00060},
     "openai/gpt-6-luna": {"input": 0.0001, "output": 0.0005},  # $0.10/$0.50 per 1M (OpenRouter)
     # GPT-5.6 series
     "gpt-5.6-terra": {"input": 0.002, "output": 0.012},    # $2.00/$12.00 per 1M

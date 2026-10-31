@@ -25,6 +25,11 @@ def test_calculate_llm_cost_unknown_model():
     assert cost == 0.0
 
 
+def test_azure_eu_luna_short_context_cost():
+    assert calculate_llm_cost("azure", "gpt-6-luna-eu", 1_000_000, 1_000_000) == pytest.approx(0.72)
+    assert calculate_llm_cost("openrouter", "openai/gpt-6-luna", 1_000_000, 1_000_000) == pytest.approx(0.60)
+
+
 def test_calculate_embedding_cost_known_model():
     """Test cost calculation for known embedding models."""
     # text-embedding-3-small: $0.00002 per 1K tokens
