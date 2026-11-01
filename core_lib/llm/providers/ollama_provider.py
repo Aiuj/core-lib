@@ -728,6 +728,7 @@ class OllamaProvider(BaseProvider):
                         "usage": usage,
                         "text": content_text,
                         "content_json": _json.dumps(parsed, ensure_ascii=False, default=str),
+                        "thinking": thinking_text,
                     }
                 else:
                     # Could not validate the model output against the schema even
@@ -763,6 +764,7 @@ class OllamaProvider(BaseProvider):
                         "tool_calls": tool_calls or [],
                         "usage": usage,
                         "text": content_text,
+                        "thinking": thinking_text,
                     }
 
             return {

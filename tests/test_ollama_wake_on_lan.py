@@ -658,3 +658,24 @@ def test_lfm3_explicit_thinking_flag_reaches_ollama(monkeypatch):
     assert captured["think"] is True
     provider.chat(messages=[{"role": "user", "content": "Hi"}], thinking_enabled=False)
     assert captured["think"] is False
+
+
+@pytest.mark.parametrize("content, expected_structured", [('{"answer":"ok"}', True), ('', False)])
+def test_ollama_preserves_thinking_with_structured_output(monkeypatch, content, expected_structured):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    class FakeClient:
+        def __init__(self, host=None, **kwargs):
+            pass
+
+        def chat(self, **payload):
+            return {"message": {"content": content, "thinking": "reasoning"}}
+
+    monkeypatch.setitem(sys.modules, "ollama", types.SimpleNamespace(Client=FakeClient))
+    provider = OllamaProvider(OllamaConfig(model="lfm3", thinking_enabled=True))
+    result = provider.chat(messages=[{"role": "user", "content": "Hi"}], structured_output=Answer)
+    assert result["structured"] is expected_structured
+    assert result["thinking"] == "reasoning"
