@@ -913,7 +913,7 @@ class GoogleGenAIProvider(BaseProvider):
                     else getattr(self.config, "thinking_enabled", None)
                 )
                 err_thinking_level = cfg_thinking.get("level") if err_thinking_enabled else None
-                log_llm_usage(
+                call_id = log_llm_usage(
                     provider='google_genai', model=self.config.model,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     structured=bool(structured_output), has_tools=bool(tools),
@@ -926,6 +926,14 @@ class GoogleGenAIProvider(BaseProvider):
                           else 'https://generativelanguage.googleapis.com'),
                     region=self._location,
                     metadata={'error_code': error_reason}, error=str(e),
+                )
+                failed_messages = list(messages)
+                if system_message:
+                    failed_messages.insert(0, {"role": "system", "content": system_message})
+                capture_llm_payload(
+                    call_id=call_id, provider='google_genai', model=self.config.model,
+                    messages=failed_messages, metadata={'error_code': error_reason},
+                    force_enabled=self.config.payload_capture,
                 )
             except Exception:
                 logger.exception('Could not log failed Google GenAI request')

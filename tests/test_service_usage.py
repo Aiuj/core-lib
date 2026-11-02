@@ -11,6 +11,17 @@ from core_lib.tracing.service_usage import (
 )
 
 
+def test_llm_error_attributes_do_not_conflict_in_opensearch():
+    with patch('core_lib.tracing.service_usage.logger') as logger:
+        log_llm_usage(provider='openai', model='test', error='request timed out',
+                      metadata={'error_code': 'timeout'})
+    attributes = logger.info.call_args.kwargs['extra']['extra_attrs']
+    assert attributes['status'] == 'error'
+    assert attributes['error'] == 'request timed out'
+    assert attributes['error_code'] == 'timeout'
+    assert 'error.code' not in attributes
+
+
 def test_calculate_llm_cost_known_model():
     """Test cost calculation for known models."""
     # GPT-4: $0.03 input, $0.06 output per 1K tokens

@@ -421,7 +421,8 @@ def log_llm_usage(
         event["error"] = error
         error_code = (metadata or {}).get("error_code")
         if error_code:
-            event["error.code"] = error_code
+            # OpenSearch cannot map both scalar `error` and child `error.code`.
+            event["error_code"] = error_code
         event["status"] = "error"
     else:
         event["status"] = "success"

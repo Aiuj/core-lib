@@ -91,6 +91,32 @@ class TestFallbackLLMClientInit:
         assert "openai:gpt-4o-mini" in caplog.text
 
 
+def test_usage_is_forwarded_to_provider_client(mock_registry, mock_health_tracker):
+    client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+    mock_llm = create_mock_client()
+    with patch.object(client, '_get_client', return_value=mock_llm):
+        client.chat('Extract facts', usage='extract')
+    assert mock_llm.chat.call_args.kwargs['usage'] == 'extract'
+
+
+def test_failed_attempt_payload_uses_its_usage_call_id(mock_registry, mock_health_tracker):
+    client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)
+    primary = create_mock_client(should_succeed=False)
+    secondary = create_mock_client()
+    with patch.object(client, '_get_client', side_effect=lambda c: primary if c.provider == 'gemini' else secondary), \
+         patch('core_lib.llm.fallback_client.log_llm_usage', return_value='failed-call-id') as usage, \
+         patch('core_lib.llm.fallback_client.capture_llm_payload') as capture:
+        client.chat('Extract facts', system_message='Use only evidence.', usage='extract')
+    usage.assert_called_once()
+    assert usage.call_args.kwargs['usage_type'] == 'extract'
+    capture.assert_called_once()
+    assert capture.call_args.kwargs['call_id'] == 'failed-call-id'
+    assert capture.call_args.kwargs['messages'] == [
+        {'role': 'system', 'content': 'Use only evidence.'},
+        {'role': 'user', 'content': 'Extract facts'},
+    ]
+
+
 def test_required_tools_skip_provider_without_tool_support(mock_registry, mock_health_tracker):
     mock_registry.providers[0].supports_tools = False
     client = FallbackLLMClient(registry=mock_registry, health_tracker=mock_health_tracker)

@@ -14,6 +14,23 @@ class SampleSchema(BaseModel):
     score: float
 
 
+def test_failed_google_request_captures_payload_with_usage_call_id():
+    config = GeminiConfig(api_key="test-key", model="gemini-2.0-flash")
+    with patch('core_lib.llm.providers.google_genai_provider.genai'):
+        provider = GoogleGenAIProvider(config)
+    with patch.object(provider, '_acquire_rate_limit'), \
+         patch.object(provider, '_chat_with_retry', side_effect=TimeoutError('synthetic timeout')), \
+         patch('core_lib.llm.providers.google_genai_provider.log_llm_usage', return_value='google-error-id'), \
+         patch('core_lib.llm.providers.google_genai_provider.capture_llm_payload') as capture:
+        result = provider.chat(messages=[{'role': 'user', 'content': 'test'}],
+                               system_message='system')
+    assert result['_usage_error_logged'] is True
+    assert capture.call_args.kwargs['call_id'] == 'google-error-id'
+    assert capture.call_args.kwargs['messages'] == [
+        {'role': 'system', 'content': 'system'}, {'role': 'user', 'content': 'test'},
+    ]
+
+
 class TestGeminiJSONModeFallback:
     """Test JSON mode fallback for models that don't support it."""
     

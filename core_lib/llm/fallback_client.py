@@ -46,6 +46,7 @@ from pydantic import BaseModel
 
 from core_lib.api_utils import WarmupFallbackRouter
 from core_lib.tracing.logger import get_module_logger
+from core_lib.tracing.payload_capture import capture_llm_payload
 from core_lib.tracing.service_usage import log_llm_usage, set_intelligence_level, set_llm_selection
 
 from .llm_client import LLMClient
@@ -639,6 +640,7 @@ class FallbackLLMClient:
                 
                 try:
                     start_time = time.time()
+                    request_messages = None
                     
                     # Set intelligence level in context for usage logging
                     if level is not None:
@@ -659,14 +661,16 @@ class FallbackLLMClient:
                             f"Stripping tools for {provider_id} (supports_tools=False)"
                         )
 
+                    request_messages = messages(config) if callable(messages) else messages
                     response = client.chat(
-                        messages=messages(config) if callable(messages) else messages,
+                        messages=request_messages,
                         tools=effective_tools,
                         structured_output=structured_output,
                         system_message=system_message,
                         use_search_grounding=use_search_grounding,
                         thinking_enabled=thinking_enabled,
                         expected_output_tokens=expected_output_tokens,
+                        usage=effective_usage,
                     )
 
                     elapsed_ms = (time.time() - start_time) * 1000
@@ -739,13 +743,27 @@ class FallbackLLMClient:
                     # auditable place to record it.
                     if not getattr(e, '_usage_error_logged', False):
                         try:
-                            log_llm_usage(
+                            call_id = log_llm_usage(
                                 provider=config.provider, model=config.model,
+                                usage_type=effective_usage,
                                 latency_ms=(time.time() - start_time) * 1000,
                                 structured=bool(structured_output), has_tools=bool(tools),
                                 search_grounding=use_search_grounding,
                                 metadata={'error_code': error_reason, 'fallback_attempt': attempts},
                                 error=str(e),
+                            )
+                            captured_messages = (
+                                [{"role": "user", "content": request_messages}]
+                                if isinstance(request_messages, str)
+                                else list(request_messages or [])
+                            )
+                            if system_message:
+                                captured_messages.insert(0, {"role": "system", "content": system_message})
+                            capture_llm_payload(
+                                call_id=call_id, provider=config.provider, model=config.model,
+                                messages=captured_messages,
+                                metadata={'error_code': error_reason, 'fallback_attempt': attempts},
+                                force_enabled=config.payload_capture,
                             )
                         except Exception:
                             logger.exception('Could not log failed LLM fallback attempt')
