@@ -768,13 +768,9 @@ class FallbackLLMClient:
                         except Exception:
                             logger.exception('Could not log failed LLM fallback attempt')
 
-                    wake_on_lan_cfg = getattr(config, "wake_on_lan", None)
-                    wol_enabled = isinstance(wake_on_lan_cfg, dict) and bool(
-                        wake_on_lan_cfg.get("enabled", True)
-                    )
-                    is_expected_wol_connection_error = (
-                        error_reason == "connection_error"
-                        and wol_enabled
+                    in_warmup = self._warmup_router.is_warming(warmup_key, client)
+                    is_expected_warmup_failure = (
+                        error_reason in ("connection_error", "timeout") and in_warmup
                     )
 
                     log_message = (
@@ -782,7 +778,7 @@ class FallbackLLMClient:
                         f"{type(e).__name__}: {e} (classified as: {error_reason})"
                     )
 
-                    if is_expected_wol_connection_error:
+                    if is_expected_warmup_failure:
                         logger.info(log_message)
                     else:
                         logger.warning(log_message)
@@ -792,10 +788,7 @@ class FallbackLLMClient:
                     # is booting and will be ready after the warmup window, so
                     # we don't permanently demote it in the health tracker.
                     if retry == self._max_retries - 1:
-                        client_for_wol_check = self._get_client(config)
-                        if self._warmup_router.is_warming(
-                            warmup_key, client_for_wol_check
-                        ):
+                        if in_warmup:
                             logger.info(
                                 f"{provider_id} is in WoL warmup — skipping health demotion; "
                                 f"will retry after warmup window"

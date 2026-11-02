@@ -514,6 +514,29 @@ class TestFallbackLLMClientContextManager:
 class TestFallbackLLMClientWoLWarmup:
     """Tests for non-blocking Wake-on-LAN warmup handling in FallbackLLMClient."""
 
+    @pytest.mark.parametrize('warmup,error,expected_level', [
+        (True, TimeoutError('Request timed out'), 'INFO'),
+        (False, TimeoutError('Request timed out'), 'WARNING'),
+        (True, RuntimeError('connection refused'), 'INFO'),
+        (False, RuntimeError('connection refused'), 'WARNING'),
+    ])
+    def test_only_active_warmup_failures_are_informational(
+        self, mock_health_tracker, caplog, warmup, error, expected_level,
+    ):
+        registry = self._make_registry_with_ollama_secondary()
+        fallback = FallbackLLMClient(registry=registry, health_tracker=mock_health_tracker)
+        primary = self._make_client_mock(chat_side_effect=error)
+        primary.is_in_warmup.side_effect = [False, warmup]
+        secondary = self._make_client_mock()
+        fallback._get_client = lambda config: primary if config.provider == 'ollama' else secondary
+        with caplog.at_level('INFO'):
+            result = fallback.chat('Hello')
+        assert result['content'] == 'ok'
+        failures = [r for r in caplog.records if r.getMessage().startswith('Provider ollama:')]
+        assert len(failures) == 1 and failures[0].levelname == expected_level
+        health = mock_health_tracker.get_status('ollama', 'qwen3:1.7b')
+        assert health.is_healthy == warmup
+
     def _make_registry_with_ollama_secondary(self):
         """Two-provider registry: Ollama (priority 1) + OpenAI (priority 2)."""
         from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
