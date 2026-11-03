@@ -661,7 +661,26 @@ class GoogleGenAIProvider(BaseProvider):
                 if budget == 0:
                     disable_requested = True
 
-                if disable_requested:
+                # These Gemini 3 models use discrete levels; even their lowest
+                # level may think. A numeric budget is deprecated for Gemini 3.
+                level_models = ("gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash")
+                if (any(model_lc.startswith(name) for name in level_models)
+                        and (disable_requested or enabled is True or level)
+                        and (budget is None or budget == 0)):
+                    lowest = "low" if model_lc.startswith("gemini-3.8-flash") else "minimal"
+                    selected_level = lowest if disable_requested else (level or "medium")
+                    if selected_level not in {"minimal", "low", "medium", "high"} or (lowest == "low" and selected_level == "minimal"):
+                        raise ValueError(f"Unsupported thinking level {selected_level!r} for {self.config.model}")
+                    thinking_kwargs = {"thinking_level": selected_level}
+                    if include_thoughts is not None:
+                        thinking_kwargs["include_thoughts"] = include_thoughts
+                    elif enabled is True and not disable_requested:
+                        thinking_kwargs["include_thoughts"] = True
+                    cfg["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
+                    if thinking_meta is not None:
+                        thinking_meta["enabled"] = True
+                        thinking_meta["level"] = selected_level
+                elif disable_requested:
                     cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
                     if thinking_meta is not None:
                         thinking_meta["enabled"] = False
@@ -693,6 +712,9 @@ class GoogleGenAIProvider(BaseProvider):
                         # Model defaults to its own thinking behavior; neither
                         # explicitly enabled nor disabled by config/override.
                         thinking_meta["enabled"] = None
+        except ValueError as exc:
+            if str(exc).startswith("Unsupported thinking level "):
+                raise
         except Exception:
             # Never fail building config due to thinking support
             pass
@@ -1260,17 +1282,24 @@ class GoogleGenAIProvider(BaseProvider):
                 usage_metadata = getattr(resp, "usage_metadata", None)
                 input_tokens = None
                 output_tokens = None
+                thought_tokens = None
                 total_tokens = None
                 
                 if usage_metadata is not None:
                     # usage_metadata is a GenerateContentResponseUsageMetadata object, not a dict
                     input_tokens = getattr(usage_metadata, "prompt_token_count", None)
                     output_tokens = getattr(usage_metadata, "candidates_token_count", None)
+                    thought_tokens = getattr(usage_metadata, "thoughts_token_count", None)
                     total_tokens = getattr(usage_metadata, "total_token_count", None)
+
+                # Google bills internal thinking at the output-token rate.
+                if isinstance(thought_tokens, int):
+                    output_tokens = (output_tokens if isinstance(output_tokens, int) else 0) + thought_tokens
 
                 usage = {
                     "prompt_tokens": input_tokens,
                     "completion_tokens": output_tokens,
+                    "thinking_tokens": thought_tokens,
                     "total_tokens": total_tokens,
                 }
                 

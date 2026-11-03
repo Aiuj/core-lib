@@ -47,13 +47,16 @@ LLM_PRICING = {
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     
     # Google Gemini models
-    # Source: https://ai.google.dev/gemini-api/docs/pricing (updated July 31, 2026)
-    #         https://ai.google.dev/gemini-api/docs/pricing#gemini-3.8-flash
+    # Sources: https://ai.google.dev/gemini-api/docs/pricing and
+    # https://cloud.google.com/model-garden/pricing (global standard text rates
+    # checked November 3, 2026; regional, cached and batch rates may differ).
     # Prices per 1M tokens in API docs, converted to per 1K here.
     # Preview variants (e.g. gemini-3.7-flash-preview) are resolved automatically
     # by the fuzzy matcher in get_llm_pricing() — no need to list them separately.
     # Gemini 3.8, 3.7, and 3.6 Flash share the same promo pricing through
     # Dec 31, 2026 ($1.50/$7.50 per 1M starting Jan 1, 2027).
+    # On Vertex the promotion is described as 50% credits on net spend; the
+    # static rates below estimate effective cost and do not model credit eligibility.
     # Gemini 3.8 models
     "gemini-3.8-flash": {"input": 0.00075, "output": 0.00375},    # $0.75/$3.75 per 1M
     # Gemini 3.7 models
