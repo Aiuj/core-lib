@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from core_lib.llm.providers.google_genai_provider import (
     GoogleGenAIProvider,
     GeminiConfig,
-    _instrumentation_initialized,
 )
 
 
@@ -27,6 +26,7 @@ class TestGeminiWarningsFix:
 
     @patch("google.genai", create=True)
     @patch("openinference.instrumentation.google_genai.GoogleGenAIInstrumentor")
+    @patch("core_lib.llm.providers.google_genai_provider._instrumentation_initialized", False)
     def test_instrumentation_called_once_only(self, mock_instrumentor, mock_genai):
         """Verify instrumentation is only called once even with multiple provider instances."""
         # Setup mocks
