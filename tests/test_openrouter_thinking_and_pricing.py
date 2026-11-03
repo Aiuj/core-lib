@@ -35,6 +35,34 @@ def test_thinking_level_is_forwarded():
     assert create_kwargs["reasoning_effort"] == "low"
 
 
+def test_health_probe_preserves_configured_openrouter_reasoning(monkeypatch):
+    import sys
+    import types
+    from core_lib.llm.startup_preflight import _probe_provider
+
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(
+                message=types.SimpleNamespace(content="OK", tool_calls=None), finish_reason="stop")],
+            usage={"prompt_tokens": 2, "completion_tokens": 1})
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    real_openai = sys.modules["openai"]
+    stub = {name: getattr(real_openai, name) for name in dir(real_openai) if not name.startswith("_")}
+    stub["OpenAI"] = lambda **kwargs: client
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(**stub))
+
+    for thinking, expected in (({"enabled": True, "level": "low"}, "low"), (False, "none")):
+        config = ProviderConfig.from_dict({
+            "provider": "openrouter", "model": "z-ai/glm-5.3-flash", "api_key": "sk-test",
+            "host": "https://eu.openrouter.ai/api/v1", "thinking": thinking,
+        })
+        assert _probe_provider(config) is None
+        assert calls[-1]["reasoning_effort"] == expected
+
+
 def test_chat_returns_usage_as_a_plain_dict(monkeypatch):
     """The SDK's CompletionUsage object broke callers reading usage.get(...)."""
     import sys

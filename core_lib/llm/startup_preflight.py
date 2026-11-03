@@ -194,7 +194,6 @@ def _probe_provider(provider, *, allow_wol: bool = True) -> str | None:
             return None
         response = client.chat(
             [{"role": "user", "content": "Reply with OK."}],
-            thinking_enabled=False,
         )
         if isinstance(response, dict) and response.get("error"):
             return str(response["error"])
