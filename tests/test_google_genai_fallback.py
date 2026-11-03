@@ -172,6 +172,20 @@ class TestGeminiJSONModeFallback:
             mock_client.models.generate_content_stream.assert_not_called()
             mock_chat.send_message_stream.assert_called_once()
 
+    def test_thought_parts_are_separate_from_final_answer(self):
+        config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash-lite", thinking_enabled=True)
+        with patch('google.genai.Client') as mock_client_class, \
+             patch('openinference.instrumentation.google_genai.GoogleGenAIInstrumentor'):
+            provider = GoogleGenAIProvider(config)
+            parts = [SimpleNamespace(thought=True, text="private reasoning"),
+                     SimpleNamespace(thought=False, text="final answer")]
+            chunk = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))],
+                                    function_calls=None, usage_metadata=None)
+            mock_client_class.return_value.models.generate_content.return_value = chunk
+            result = provider.chat(messages=[{"role": "user", "content": "test"}])
+            assert result["content"] == "final answer"
+            assert result["thinking"] == "private reasoning"
+
     def test_gemini_parsed_as_dict_handled_safely(self):
         """Test native-mode handling when resp.parsed is a dict rather than a Pydantic model."""
         config = GeminiConfig(api_key="test-key", model="gemini-2.5-flash")

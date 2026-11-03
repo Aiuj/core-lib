@@ -57,10 +57,11 @@ Example usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 from core_lib import get_module_logger
@@ -200,6 +201,11 @@ class ProviderConfig:
     payload_capture: Optional[bool] = None
     
     _missing_service_account_logged: ClassVar[Set[str]] = set()
+
+    def client_cache_key(self) -> str:
+        """Identify the complete configuration without exposing its credentials."""
+        serialized = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
     
     def __post_init__(self):
         """Normalize provider name and set defaults."""
@@ -857,7 +863,13 @@ class ProviderRegistry:
             providers: List of ProviderConfig instances
         """
         self._providers: List[ProviderConfig] = providers or []
-        self._clients_cache: Dict[int, Any] = {}
+        self._clients_cache: Dict[str, Any] = {}
+
+    def _get_or_create_client(self, provider: ProviderConfig) -> Any:
+        key = provider.client_cache_key()
+        if key not in self._clients_cache:
+            self._clients_cache[key] = provider.to_client()
+        return self._clients_cache[key]
     
     def add(self, config: ProviderConfig) -> "ProviderRegistry":
         """Add a provider configuration.
@@ -930,10 +942,7 @@ class ProviderRegistry:
         if index >= len(providers):
             return None
         
-        if index not in self._clients_cache:
-            self._clients_cache[index] = providers[index].to_client()
-        
-        return self._clients_cache[index]
+        return self._get_or_create_client(providers[index])
     
     def get_fallback_client(self):
         """Get the first fallback LLMClient.
@@ -1063,12 +1072,7 @@ class ProviderRegistry:
         if provider is None:
             return None
         
-        # Use a level-specific cache key
-        cache_key = f"level_{intelligence_level}_{provider.provider}_{provider.model}"
-        if cache_key not in self._clients_cache:
-            self._clients_cache[cache_key] = provider.to_client()
-        
-        return self._clients_cache[cache_key]
+        return self._get_or_create_client(provider)
     
     def iter_clients_for_level(self, intelligence_level: int) -> Iterator[Tuple[Any, bool, Dict[str, Any]]]:
         """Iterate through clients that support a specific intelligence level.
@@ -1083,11 +1087,7 @@ class ProviderRegistry:
             providers = self.providers
         
         for i, provider in enumerate(providers):
-            cache_key = f"level_{intelligence_level}_{provider.provider}_{provider.model}"
-            if cache_key not in self._clients_cache:
-                self._clients_cache[cache_key] = provider.to_client()
-            
-            client = self._clients_cache[cache_key]
+            client = self._get_or_create_client(provider)
             if client:
                 yield (
                     client,
@@ -1378,10 +1378,7 @@ class ProviderRegistry:
         
         if healthy_providers:
             provider = healthy_providers[0]
-            cache_key = f"healthy_{provider.provider}_{provider.model}"
-            if cache_key not in self._clients_cache:
-                self._clients_cache[cache_key] = provider.to_client()
-            return self._clients_cache[cache_key]
+            return self._get_or_create_client(provider)
         
         # All unhealthy - fall back to primary
         logger.warning("All providers unhealthy, falling back to primary")
@@ -1414,17 +1411,11 @@ class ProviderRegistry:
         
         # Yield healthy providers first
         for i, provider in enumerate(healthy):
-            cache_key = f"fallback_{provider.provider}_{provider.model}"
-            if cache_key not in self._clients_cache:
-                self._clients_cache[cache_key] = provider.to_client()
-            yield (self._clients_cache[cache_key], i > 0, provider)
+            yield (self._get_or_create_client(provider), i > 0, provider)
         
         # Then yield unhealthy providers as last resort
         for provider in unhealthy:
-            cache_key = f"fallback_{provider.provider}_{provider.model}"
-            if cache_key not in self._clients_cache:
-                self._clients_cache[cache_key] = provider.to_client()
-            yield (self._clients_cache[cache_key], True, provider)
+            yield (self._get_or_create_client(provider), True, provider)
     
     def mark_healthy(
         self,

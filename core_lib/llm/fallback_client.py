@@ -37,7 +37,6 @@ Example:
 from __future__ import annotations
 
 import time
-import hashlib
 import json
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
@@ -300,25 +299,9 @@ class FallbackLLMClient:
     def _build_cache_key(self, config: ProviderConfig) -> str:
         """Build a stable cache key for a specific provider configuration.
 
-        Includes enough config identity to avoid collisions when multiple entries
-        share the same provider/model but use different credentials or routing.
+        Includes the complete provider configuration and the client timeout override.
         """
-        api_key_fingerprint = ""
-        if config.api_key:
-            api_key_fingerprint = hashlib.sha256(config.api_key.encode("utf-8")).hexdigest()[:10]
-
-        return "|".join([
-            f"provider={config.provider}",
-            f"model={config.model}",
-            f"priority={config.priority}",
-            f"host={config.host or ''}",
-            f"tier={config.tier or ''}",
-            f"level={config.min_intelligence_level}-{config.max_intelligence_level}",
-            f"keyfp={api_key_fingerprint}",
-            f"timeout_ms={self._http_timeout_ms or ''}",
-            f"max_tokens={config.max_tokens}",
-            f"num_predict={config.extra.get('num_predict')}",
-        ])
+        return f"{config.client_cache_key()}|timeout_ms={self._http_timeout_ms}"
     
     def _iter_providers(
         self,

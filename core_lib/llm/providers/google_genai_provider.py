@@ -476,7 +476,7 @@ class GoogleGenAIProvider(BaseProvider):
                     for part in parts:
                         # Extract text from text parts only
                         part_text = getattr(part, "text", None)
-                        if part_text:
+                        if part_text and getattr(part, "thought", None) is not True:
                             text_parts.append(part_text)
                     if text_parts:
                         return "".join(text_parts)
@@ -1409,8 +1409,7 @@ class GoogleGenAIProvider(BaseProvider):
                     except Exception as e:
                         logger.warning(f"Failed to retrieve native parsed result: {e}")
 
-            # Extract thinking content if present (Gemini 2.0 Flash Thinking)
-            # Thinking content is in 'thought_signature' parts
+            # A thought part is marked by a boolean; its text is in part.text.
             thought_text = None
             if self.config.thinking_enabled:
                 thought_parts = []
@@ -1422,10 +1421,9 @@ class GoogleGenAIProvider(BaseProvider):
                         if content:
                             parts = getattr(content, "parts", [])
                             for part in parts:
-                                # Check for thought_signature or thought (SDK dependent)
-                                # In google-genai, it is usually part.thought if typed, or checked via attribute
-                                if hasattr(part, "thought") and part.thought:
-                                    thought_parts.append(part.thought)
+                                part_text = getattr(part, "text", None)
+                                if getattr(part, "thought", None) is True and isinstance(part_text, str):
+                                    thought_parts.append(part_text)
                 
                 if thought_parts:
                     thought_text = "\n".join(thought_parts)
@@ -1441,6 +1439,7 @@ class GoogleGenAIProvider(BaseProvider):
             
             if thought_text:
                 result["thought"] = thought_text
+                result["thinking"] = thought_text
 
             if parsed_result:
                 # Follow the standard core-lib provider contract:
