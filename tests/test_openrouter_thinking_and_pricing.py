@@ -67,3 +67,39 @@ def test_chat_returns_usage_as_a_plain_dict(monkeypatch):
 def test_gpt_6_luna_pricing_under_both_names():
     for name in ("gpt-6-luna", "openai/gpt-6-luna", "OpenAI/GPT-6-Luna"):
         assert get_llm_pricing(name) == {"input": 0.0001, "output": 0.0005}
+
+
+def test_glm_53_flash_pricing_under_both_names():
+    for name in ("glm-5.3-flash", "z-ai/glm-5.3-flash", "Z-AI/GLM-5.3-FLASH"):
+        assert get_llm_pricing(name) == {"input": 0.00015, "output": 0.0005}
+
+
+def test_openrouter_call_override_and_reasoning_telemetry(monkeypatch):
+    import sys
+    import types
+    from pydantic import BaseModel
+    from core_lib.llm.providers.openai_provider import OpenAIConfig
+
+    class Result(BaseModel):
+        answer: str
+
+    calls = []
+    def create(**kwargs):
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(
+                content='{"answer":"ok"}', reasoning="reasoning observed", tool_calls=None), finish_reason="stop")],
+            usage={"prompt_tokens": 2, "completion_tokens": 3})
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    real_openai = sys.modules["openai"]
+    stub = {name: getattr(real_openai, name) for name in dir(real_openai) if not name.startswith("_")}
+    stub["OpenAI"] = lambda **kwargs: client
+    monkeypatch.setitem(sys.modules, "openai", types.SimpleNamespace(**stub))
+    provider = OpenAIProvider(OpenAIConfig(api_key="sk-test", model="z-ai/glm-5.3-flash",
+        base_url="https://eu.openrouter.ai/api/v1", thinking_config={"enabled": False}))
+    response = provider.chat(messages=[{"role": "user", "content": "hi"}], thinking_enabled=True, structured_output=Result)
+    assert calls[-1]["reasoning_effort"] == "medium"
+    assert response["thinking"] == "reasoning observed" and response["structured"]
+    response = provider.chat(messages=[{"role": "user", "content": "hi"}], thinking_enabled=False)
+    assert calls[-1]["reasoning_effort"] == "none"
+    assert response["thinking"] == "reasoning observed"

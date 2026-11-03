@@ -585,6 +585,14 @@ class OpenAIProvider(BaseProvider):
             #   "/no_think" to the system message (Qwen3 soft-disable signal).
             use_thinking = thinking_enabled if thinking_enabled is not None else self.config.thinking_enabled
             self._apply_thinking_mode(create_kwargs, use_thinking)
+            # Per-call overrides must take precedence over the provider default.
+            # OpenRouter accepts the standard Chat Completions reasoning_effort.
+            if self.config.is_openrouter and thinking_enabled is not None:
+                level = str((self.config.thinking_config or {}).get("level") or "").lower()
+                create_kwargs["reasoning_effort"] = (
+                    (level if level in {"minimal", "low", "medium", "high", "xhigh", "max"} else "medium")
+                    if thinking_enabled else "none"
+                )
 
             # Call API — with optional Wake-on-LAN support for local endpoints
             base_url_for_wol = self.config.base_url or self.config.azure_endpoint or ""
@@ -821,6 +829,7 @@ class OpenAIProvider(BaseProvider):
                         "structured": True,
                         "tool_calls": tool_calls or [],
                         "usage": usage,
+                        "thinking": reasoning_text,
                         "text": content_text,
                         "content_json": _json.dumps(parsed_dict, ensure_ascii=False, default=str),
                     }
@@ -836,6 +845,7 @@ class OpenAIProvider(BaseProvider):
                     "structured": False,
                     "tool_calls": tool_calls or [],
                     "usage": usage,
+                    "thinking": reasoning_text,
                     "text": content_text,
                 }
 
@@ -845,6 +855,7 @@ class OpenAIProvider(BaseProvider):
                 "structured": False,
                 "tool_calls": tool_calls or [],
                 "usage": usage,
+                "thinking": reasoning_text,
             }
         except Exception as e:
             import openai as _openai

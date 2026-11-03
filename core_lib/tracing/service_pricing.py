@@ -12,6 +12,9 @@ Last updated: October 30, 2026
 # LLM Pricing per 1K tokens (USD)
 # Format: {"model-name": {"input": price_per_1k, "output": price_per_1k}}
 LLM_PRICING = {
+    # GLM-5.3 Flash configured OpenRouter estimate, USD per 1K tokens.
+    "z-ai/glm-5.3-flash": {"input": 0.00015, "output": 0.0005},
+    "glm-5.3-flash": {"input": 0.00015, "output": 0.0005},
     # OpenAI models
     # Source: https://developers.openai.com/api/docs/pricing (updated July 31, 2026)
     # Prices per 1M tokens in API docs, converted to per 1K here.
