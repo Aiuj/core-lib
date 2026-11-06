@@ -57,6 +57,12 @@ class OllamaConfig(LLMConfig):
     repeat_penalty: Optional[float] = None
     top_k: Optional[int] = None
     top_p: Optional[float] = None
+    min_p: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    repeat_last_n: Optional[int] = None
+    seed: Optional[int] = None
+    # Native mode relies exclusively on the server's JSON Schema constraint.
+    json_prompt_mode: str = "template"
     thinking_config: Optional[Dict[str, Any]] = None
     wake_on_lan: Optional[Dict[str, Any]] = None
 
@@ -77,6 +83,11 @@ class OllamaConfig(LLMConfig):
         thinking_config: Optional[Dict[str, Any]] = None,
         wake_on_lan: Optional[Dict[str, Any]] = None,
         payload_capture: Optional[bool] = None,
+        min_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        repeat_last_n: Optional[int] = None,
+        seed: Optional[int] = None,
+        json_prompt_mode: str = "template",
     ):
         super().__init__("ollama", model, temperature, max_tokens, thinking_enabled, payload_capture)
         self.base_url = base_url
@@ -87,6 +98,13 @@ class OllamaConfig(LLMConfig):
         self.repeat_penalty = repeat_penalty
         self.top_k = top_k
         self.top_p = top_p
+        self.min_p = min_p
+        self.presence_penalty = presence_penalty
+        self.repeat_last_n = repeat_last_n
+        self.seed = seed
+        if json_prompt_mode not in {"template", "native"}:
+            raise ValueError("Ollama json_prompt_mode must be 'template' or 'native'")
+        self.json_prompt_mode = json_prompt_mode
         self.thinking_config = dict(thinking_config) if thinking_config else None
         self.wake_on_lan = dict(wake_on_lan) if wake_on_lan else None
 
@@ -100,6 +118,10 @@ class OllamaConfig(LLMConfig):
         repeat_penalty_env = os.getenv("OLLAMA_REPEAT_PENALTY")
         top_k_env = os.getenv("OLLAMA_TOP_K")
         top_p_env = os.getenv("OLLAMA_TOP_P")
+        min_p_env = os.getenv("OLLAMA_MIN_P")
+        presence_penalty_env = os.getenv("OLLAMA_PRESENCE_PENALTY")
+        repeat_last_n_env = os.getenv("OLLAMA_REPEAT_LAST_N")
+        seed_env = os.getenv("OLLAMA_SEED")
         thinking_level = os.getenv("OLLAMA_THINKING_LEVEL")
         thinking_budget_env = os.getenv("OLLAMA_THINKING_BUDGET")
 
@@ -125,6 +147,11 @@ class OllamaConfig(LLMConfig):
             repeat_penalty=float(repeat_penalty_env) if repeat_penalty_env is not None else None,
             top_k=int(top_k_env) if top_k_env is not None else None,
             top_p=float(top_p_env) if top_p_env is not None else None,
+            min_p=float(min_p_env) if min_p_env is not None else None,
+            presence_penalty=float(presence_penalty_env) if presence_penalty_env is not None else None,
+            repeat_last_n=int(repeat_last_n_env) if repeat_last_n_env is not None else None,
+            seed=int(seed_env) if seed_env is not None else None,
+            json_prompt_mode=os.getenv("OLLAMA_JSON_PROMPT_MODE", "template"),
         )
 
 class OllamaProvider(BaseProvider):
@@ -358,6 +385,10 @@ class OllamaProvider(BaseProvider):
             options["top_k"] = self.config.top_k
         if self.config.top_p is not None:
             options["top_p"] = self.config.top_p
+        for name in ("min_p", "presence_penalty", "repeat_last_n", "seed"):
+            value = getattr(self.config, name, None)
+            if value is not None:
+                options[name] = value
 
         # When thinking is enabled and nothing already caps generation length
         # (max_tokens/num_predict), bound it to the configured thinking budget
@@ -538,6 +569,8 @@ class OllamaProvider(BaseProvider):
                 try:
                     payload["format"] = structured_output.model_json_schema()
                 except Exception:
+                    if self.config.json_prompt_mode == "native":
+                        raise
                     payload["format"] = "json"
 
                 # Augment the last user message with a compact JSON template so
@@ -545,18 +578,19 @@ class OllamaProvider(BaseProvider):
                 # constrains syntax but many models still need the expected
                 # structure described in the prompt to reliably fill it in.
                 # See https://docs.ollama.com/capabilities/structured-outputs
-                augmented_messages = list(payload["messages"])
-                for i in range(len(augmented_messages) - 1, -1, -1):
-                    if augmented_messages[i].get("role") == "user":
-                        augmented_messages[i] = {
-                            **augmented_messages[i],
-                            "content": augment_prompt_for_json(
-                                augmented_messages[i].get("content", ""),
-                                structured_output,
-                            ),
-                        }
-                        break
-                payload["messages"] = augmented_messages
+                if self.config.json_prompt_mode == "template":
+                    augmented_messages = list(payload["messages"])
+                    for i in range(len(augmented_messages) - 1, -1, -1):
+                        if augmented_messages[i].get("role") == "user":
+                            augmented_messages[i] = {
+                                **augmented_messages[i],
+                                "content": augment_prompt_for_json(
+                                    augmented_messages[i].get("content", ""),
+                                    structured_output,
+                                ),
+                            }
+                            break
+                    payload["messages"] = augmented_messages
 
             if think_value and model_supports_thinking:
                 payload["think"] = think_value
@@ -592,6 +626,7 @@ class OllamaProvider(BaseProvider):
                     resp = self._chat_once(bool_payload, effective_timeout)
                 elif (
                     structured_output is not None
+                    and self.config.json_prompt_mode == "template"
                     and isinstance(payload.get("format"), dict)
                     and self._is_schema_grammar_error(first_error)
                 ):
