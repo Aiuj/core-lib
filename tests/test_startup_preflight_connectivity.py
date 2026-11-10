@@ -23,6 +23,21 @@ def _http_error(url: str, code: int = 404, reason: str = "Not Found") -> HTTPErr
     return HTTPError(url=url, code=code, msg=reason, hdrs=None, fp=_FakeHTTPResponse(code, b""))
 
 
+def test_openrouter_model_check_sends_user_agent_and_validates_model(monkeypatch):
+    def fake_get(url, headers, timeout=8):
+        assert url == "https://eu.openrouter.ai/api/v1/models"
+        assert headers == {"Authorization": "Bearer test-key", "User-Agent": "core-lib/1.0"}
+        return 200, b'{"data":[{"id":"openai/gpt-6-luna"}]}'
+
+    monkeypatch.setattr(startup_preflight, "_http_get", fake_get)
+    assert startup_preflight._check_openrouter(
+        "openai/gpt-6-luna", "test-key", "https://eu.openrouter.ai/api/v1"
+    ) == ("ok", "1 model(s) available", None)
+    assert startup_preflight._check_openrouter(
+        "missing/model", "test-key", "https://eu.openrouter.ai/api/v1"
+    )[0] == "down"
+
+
 def test_check_openai_compatible_uses_models_list_success(monkeypatch):
     calls = []
 

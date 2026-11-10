@@ -720,7 +720,11 @@ def _check_openrouter(model: str, api_key: str, base_url: str) -> tuple[str, Opt
     """
     url = f"{base_url.rstrip('/')}/models"
     try:
-        _, body = _http_get(url, {"Authorization": f"Bearer {api_key}"}, timeout=10)
+        _, body = _http_get(
+            url,
+            {"Authorization": f"Bearer {api_key}", "User-Agent": "core-lib/1.0"},
+            timeout=10,
+        )
         ids = {m.get("id", "") for m in json.loads(body.decode()).get("data", [])}
         if model in ids:
             return "ok", f"{len(ids)} model(s) available", None
