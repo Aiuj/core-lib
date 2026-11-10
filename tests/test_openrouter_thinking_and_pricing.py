@@ -102,6 +102,11 @@ def test_glm_53_flash_pricing_under_both_names():
         assert get_llm_pricing(name) == {"input": 0.00015, "output": 0.0005}
 
 
+def test_claude_haiku_55_openrouter_pricing():
+    for name in ("claude-haiku-5.5", "anthropic/claude-haiku-5.5", "Anthropic/Claude-Haiku-5.5-20261007"):
+        assert get_llm_pricing(name) == {"input": 0.0001, "output": 0.0005}
+
+
 def test_openrouter_call_override_and_reasoning_telemetry(monkeypatch):
     import sys
     import types

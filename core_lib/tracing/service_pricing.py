@@ -83,6 +83,9 @@ LLM_PRICING = {
     # Source: https://platform.claude.com/docs/en/about-claude/pricing (updated July 31, 2026)
     # Prices per 1M tokens in API docs, converted to per 1K here.
     # Claude Series 5 models
+    # OpenRouter standard text rates: https://openrouter.ai/anthropic/claude-haiku-5.5
+    "claude-haiku-5.5": {"input": 0.0001, "output": 0.0005},
+    "anthropic/claude-haiku-5.5": {"input": 0.0001, "output": 0.0005},
     "claude-opus-5": {"input": 0.005, "output": 0.025},     # $5/$25 per 1M
     "claude-sonnet-5": {"input": 0.002, "output": 0.01},    # $2/$10 per 1M (introductory pricing)
     # Claude Series 4.x models
