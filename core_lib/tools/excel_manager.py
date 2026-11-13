@@ -614,15 +614,21 @@ class ExcelManager:
             columns = {}
             headers_for_md = []
             columns_to_include = []  # Track which columns to include in output
+
+            # Read-only .cell() reparses the worksheet XML for every access.
+            # A distant styled blank can make this loop 16,384 separate parses.
+            # Read the header once, retaining every column (including distant
+            # real headers), rather than truncating the worksheet's bounds.
+            header_ws = full_wb[sheet_name] if full_wb is not None else ws
+            raw_headers = next(header_ws.iter_rows(
+                min_row=header_row, max_row=header_row,
+                min_col=min_col, max_col=max_col, values_only=True,
+            ), ())
             
             for col_idx in range(min_col, max_col + 1):
                 col_letter = get_column_letter(col_idx)
-                _ws_for_header = None
-                try:
-                    _ws_for_header = full_wb[sheet_name] if full_wb is not None else ws
-                except Exception:
-                    _ws_for_header = ws
-                raw_header = _ws_for_header.cell(row=header_row, column=col_idx).value
+                offset = col_idx - min_col
+                raw_header = raw_headers[offset] if offset < len(raw_headers) else None
                 header_val = self.clean_cell(raw_header)
                 
                 has_data = col_idx in used_cols
