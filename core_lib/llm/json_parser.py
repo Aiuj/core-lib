@@ -363,6 +363,53 @@ def extract_all_json_from_text(text: str) -> List[Dict[str, Any]]:
     return results
 
 
+_DANGLING_KEY = re.compile(r',?\s*"(?:[^"\\]|\\.)*"\s*:?\s*$')
+
+
+def close_truncated_json(text: str) -> Optional[str]:
+    """Close a JSON object or array whose output stopped between tokens.
+
+    A stop sequence made only of whitespace cannot match inside a JSON string,
+    so the text is a valid prefix ending after a complete value, a comma, or
+    a key. Drop a trailing comma or a dangling key and append the missing
+    closing brackets. Returns the closed text when it parses, otherwise None
+    (for instance when the text ends inside a string).
+    """
+    body = (text or "").strip()
+    if not body or body[0] not in "{[":
+        return None
+    stack: List[str] = []
+    in_string = escaped = False
+    for char in body:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if not stack or stack.pop() != char:
+                return None
+    if in_string:
+        return None
+    candidates = [body.rstrip().rstrip(",").rstrip()]
+    if stack and stack[-1] == "}":
+        candidates.append(_DANGLING_KEY.sub("", body).rstrip().rstrip(",").rstrip())
+    for candidate in candidates:
+        closed = candidate + "".join(reversed(stack))
+        try:
+            json.loads(closed)
+        except ValueError:
+            continue
+        return closed
+    return None
+
+
 def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Extract the first JSON object from text response.
     

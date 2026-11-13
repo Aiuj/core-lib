@@ -172,6 +172,12 @@ class ProviderConfig:
 
     extra: Dict[str, Any] = field(default_factory=dict)
 
+    # Per-call stop sequences, set by FallbackLLMClient.chat(stop_sequences=...)
+    # on a bounded copy of this config (never read from YAML). Applied by the
+    # OpenAI-compatible providers (openai, openrouter, azure-openai); other
+    # providers ignore it.
+    stop_sequences: Optional[Tuple[str, ...]] = None
+
     # Per-provider HTTP timeout override (ms). Gemini-only for now.
     # Overrides GOOGLE_GENAI_HTTP_TIMEOUT_MS when set.
     http_timeout_ms: Optional[int] = None
@@ -578,7 +584,7 @@ class ProviderConfig:
             thinking_budget: Optional[int] = None
             if self.thinking_config and "budget" in self.thinking_config:
                 thinking_budget = int(self.thinking_config["budget"])
-            return AzureOpenAIConfig(
+            azure_config = AzureOpenAIConfig(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
                 model=self.model,
@@ -593,6 +599,8 @@ class ProviderConfig:
                 project=self.project,
                 payload_capture=self.payload_capture,
             )
+            azure_config.stop_sequences = self.stop_sequences
+            return azure_config
 
         elif self.provider == "openai":
             from .providers.openai_provider import OpenAIConfig
@@ -624,6 +632,7 @@ class ProviderConfig:
                 timeout=timeout,
                 wake_on_lan=self.wake_on_lan,
                 payload_capture=self.payload_capture,
+                stop_sequences=self.stop_sequences,
             )
 
         elif self.provider == "ollama":
@@ -690,6 +699,7 @@ class ProviderConfig:
                 project=self.project,
                 timeout=timeout,
                 payload_capture=self.payload_capture,
+                stop_sequences=self.stop_sequences,
             )
 
         elif self.provider == "mistral":

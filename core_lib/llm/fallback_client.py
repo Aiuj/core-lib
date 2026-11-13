@@ -455,6 +455,7 @@ class FallbackLLMClient:
         max_output_tokens: Optional[int] = None,
         require_tools: bool = False,
         require_structured: bool = False,
+        stop_sequences: Optional[List[str]] = None,
     ) -> Union[Dict[str, Any], FallbackResult]:
         """Send a chat message with automatic fallback on failure.
         
@@ -484,6 +485,11 @@ class FallbackLLMClient:
                 used by providers that size request timeouts locally (e.g. Ollama).
             require_structured: Return an error if the selected response fails schema validation.
                 This does not retry or demote a healthy provider.
+            stop_sequences: Per-request stop strings. The output ends before the
+                first match. Applied by the OpenAI-compatible providers (openai,
+                openrouter, azure-openai), ignored by the others. With
+                ``structured_output``, a JSON object ended by a whitespace-only
+                stop sequence is closed before validation.
 
         Returns:
             Standard LLMClient response dict, or FallbackResult if requested
@@ -581,6 +587,12 @@ class FallbackLLMClient:
                     extra["num_predict"] = min(limits)
                 bounded_entries.append((replace(config, max_tokens=min(limits), extra=extra), is_fallback))
             entries = bounded_entries
+        if stop_sequences:
+            stops = tuple(str(stop) for stop in stop_sequences if stop)
+            entries = [
+                (replace(config, stop_sequences=stops), is_fallback)
+                for config, is_fallback in entries
+            ]
         provider_entries = self._warmup_router.prioritize_recovered(
             entries,
             key=lambda entry: self._build_cache_key(entry[0]),

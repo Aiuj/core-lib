@@ -17,7 +17,7 @@ Docs: https://langfuse.com/integrations/model-providers/openai-py
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 import time
 import uuid
 
@@ -57,6 +57,9 @@ class OpenAIConfig(LLMConfig):
     thinking_config: Optional[Dict[str, Any]] = None
     timeout: int = 60
     wake_on_lan: Optional[Dict[str, Any]] = None
+    # Sent as ``stop``; the output ends before the first match (per call,
+    # set by FallbackLLMClient.chat(stop_sequences=...)).
+    stop_sequences: Optional[Tuple[str, ...]] = None
 
     def __init__(
         self,
@@ -75,8 +78,10 @@ class OpenAIConfig(LLMConfig):
         timeout: int = 60,
         wake_on_lan: Optional[Dict[str, Any]] = None,
         payload_capture: Optional[bool] = None,
+        stop_sequences: Optional[Sequence[str]] = None,
     ):
         super().__init__("openai", model, temperature, max_tokens, thinking_enabled, payload_capture)
+        self.stop_sequences = tuple(stop_sequences) if stop_sequences else None
         self.api_key = api_key
         self.thinking_budget = thinking_budget
         self.thinking_config = thinking_config or {}
@@ -525,6 +530,8 @@ class OpenAIProvider(BaseProvider):
             }
             if self.config.max_tokens is not None:
                 create_kwargs["max_tokens"] = self.config.max_tokens
+            if getattr(self.config, "stop_sequences", None):
+                create_kwargs["stop"] = list(self.config.stop_sequences)
 
             # Tools (function calling)
             tool_param = self._build_tool_param(tools)
@@ -822,6 +829,23 @@ class OpenAIProvider(BaseProvider):
                 # Literal/enum coercion).
                 if parsed_dict is None:
                     parsed_dict = _parse_structured_output(content_text, structured_output) if content_text else None
+
+                # Attempt 3: a stop sequence ended the output between JSON
+                # tokens (it cannot match inside a JSON string), so the object
+                # is complete up to its closing brackets.
+                if parsed_dict is None and content_text and getattr(self.config, "stop_sequences", None):
+                    from ..json_parser import close_truncated_json as _close_truncated_json
+
+                    closed = _close_truncated_json(content_text)
+                    if closed is not None:
+                        parsed_dict = _parse_structured_output(closed, structured_output)
+                        if parsed_dict is not None:
+                            logger.info(
+                                "openai: output ended by a stop sequence; closed the JSON "
+                                "object (%d chars) and validated it against %s",
+                                len(content_text),
+                                structured_output.__name__,
+                            )
 
                 if parsed_dict is not None:
                     return {
