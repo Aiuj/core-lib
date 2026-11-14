@@ -23,6 +23,54 @@ Then commit, push and tag this new version in github and create a release for th
 
 ---
 
+## November 2026
+
+### v0.6.0 - Per-Request LLM Controls, Provider Routing & Decision Clients (Nov 14, 2026)
+
+#### Per-request output limit and stop sequences on `FallbackLLMClient.chat()`
+
+- **`max_output_tokens`** (per request): each provider gets a copy of its configuration bounded to the smaller of the caller's limit and its own, under its own client cache key. A looping model can no longer generate until the context window is full when the caller asked for a limit.
+- **`stop_sequences`** (per request, new): the same bounded-copy mechanism. `ProviderConfig.stop_sequences` is passed to the OpenAI-compatible providers (OpenAI, OpenRouter, Azure OpenAI) as `stop`. Providers that cannot honour them ignore the parameter.
+- **Truncated structured output is completed, not lost**: when a structured response ended at a stop sequence or at the output limit, the new `json_parser.close_truncated_json` drops a trailing comma or dangling key and appends the missing brackets before validation, so every field already written is kept. The OpenAI provider tries this as its third parsing attempt.
+- **Why it exists**: a small local model on vLLM wrote a complete JSON answer and then emitted whitespace where the closing brace belongs until it hit the output limit (24 to 29 requests per full regression run in `mcp-doc-qa`, a quarter of the server's slot time). With whitespace stop sequences the same suite had 0 such requests and a quarter fewer output tokens.
+- **Downstream impact**: `mcp-doc-qa` passes `stop_sequences` only when the installed core-lib accepts the parameter, so it works with this release and with older ones; it takes effect on upgrade. Callers that do not pass the parameter see no change.
+
+#### Provider routing, context windows and resilience
+
+- **Providers whose context window cannot hold the prompt are skipped**, with per-provider token estimates used for the check; unified fallback routing and TEI warmup handling.
+- **Brief retry of an overloaded inference server** before failing over to the next provider.
+- **LLM provider client cache identity fixed**, so two configurations of the same provider no longer share a cached client.
+- **OpenRouter**: workload identity federation authentication, thinking settings honoured and usage returned as a dict, reasoning fixes, and a connectivity health check fix.
+- **Gemini and Ollama**: thinking level and budget honoured (including a bare `thinking: true/false`), token accounting fixed, Ollama sampling and schema controls improved, dynamic timeouts and reasoning tracing, LFM3 thinking support, thinking text preserved in structured Ollama responses.
+- **Azure**: model settings preserved.
+- **Health probes**: latency status added to LLM health checks, probe reasoning configuration fixed, active-model warmup timeouts treated as informational.
+- **Opt-in strict structured-response validation.**
+- **Unsupported `response_format` recovery**, with expected provider errors logged quietly; the Gemini automatic function-calling warning is disabled.
+
+#### Decision clients and application agents
+
+- **TypeSafe and Ollama decision clients**, usage telemetry for decisions sanitized and logging made best-effort.
+- **Application agents require tool support** from the provider.
+
+#### Tracing, usage and background jobs
+
+- **Origin of an action** (`usage_origin`, `usage_agent`) tags logs and usage events; usage tags preserved and indexable failure traces captured; Celery `task_id` and `task_name` mapped in `LoggingContextFilter`; queued OTLP records flushed and the final batch exported once.
+- **LLM payload capture to S3** is non-blocking, with a per-model override and no traceback on capture errors; a replayable questionnaire usage action was added.
+- **Background jobs survive Redis/Valkey outages**, with worker liveness and lost-job recovery.
+- **FastMCP**: a server can restrict where JWT tokens may come from (strict token sources).
+- **`api_utils`**: opt-in silent-path logging and uvicorn reload options.
+
+#### Documents and pricing
+
+- **OCR prompt chosen per provider** from `llm_providers.yaml`; document classification HTTP timeout capped at 20 s; sparse Excel headers read in a single worksheet pass.
+- **Pricing**: Claude Haiku 5.5, DeepSeek-V4.1-Flash, Gemini 3.8 Flash (and the corrected 3.6 Flash promotion), GLM, and EU Luna.
+
+#### Maintenance
+
+- **Release integrity verification** (`scripts/release_integrity.py`, `RELEASE_INTEGRITY.json`), dependency lockfile refreshed, Claude Code project instructions added.
+
+---
+
 ## September 2026
 
 ### v0.5.0 - Task-Scoped Observability, LLM Payload Capture & Provider Resilience (Sep 7, 2026)
