@@ -281,13 +281,12 @@ def _extract_nested_match(
     required_fields = {
         name for name, field in schema.model_fields.items() if field.is_required()
     }
-    if not required_fields:
-        return None
+    expected_fields = set(schema.model_fields)
     for v in data.values():
         if not isinstance(v, dict):
             continue
         candidate_keys = {k.lower().strip() for k in v.keys()}
-        if required_fields.issubset(candidate_keys):
+        if required_fields.issubset(candidate_keys) and expected_fields.intersection(candidate_keys):
             return v
     return None
 
@@ -467,6 +466,18 @@ def parse_structured_output(
 
     # ── Inner helper: validate a candidate dict, with literal coercion on fail ─
     def _try_validate(candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # A truncated outer response may leave only complete nested objects.
+        # Pydantic ignores unknown keys by default, so an all-default schema
+        # would otherwise turn e.g. {"label": "Deadline"} into an empty brief.
+        # Leave empty objects and fieldless schemas to their own validators.
+        known_keys = set(schema.model_fields)
+        known_keys.update(
+            field.alias for field in schema.model_fields.values()
+            if isinstance(field.alias, str)
+        )
+        if candidate and known_keys and not known_keys.intersection(candidate):
+            return None
+
         def _normalise_result(value: Dict[str, Any]) -> Dict[str, Any]:
             # Compliance categories are identifiers, not free-form text. Keep
             # their public representation stable even when a schema declares

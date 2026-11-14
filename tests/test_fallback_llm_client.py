@@ -1063,6 +1063,24 @@ def test_request_output_cap_must_be_positive(mock_registry):
         FallbackLLMClient(mock_registry).chat("test", max_output_tokens=0)
 
 
+def test_request_output_budget_excludes_provider_with_insufficient_context():
+    registry = ProviderRegistry([
+        ProviderConfig(provider='openai', model='small', api_key='test', context_window=8192, priority=1),
+        ProviderConfig(provider='openai', model='large', api_key='test', context_window=32000, priority=2),
+    ])
+    client = FallbackLLMClient(registry)
+    selected = []
+    def get_client(config):
+        selected.append(config.model)
+        mock = create_mock_client()
+        mock.is_in_warmup.return_value = False
+        return mock
+    with patch.object(client, '_get_client', side_effect=get_client):
+        result = client.chat('Buyer requests migration.', max_output_tokens=8192)
+    assert result.get('error') is None
+    assert selected == ['large']
+
+
 class TestMessagesFactory:
     """``messages`` may be a callable that builds the request per provider."""
 
@@ -1159,3 +1177,35 @@ class TestMessagesFactory:
 
         assert models == ["small-model"]
 
+
+
+def test_brief_escalation_uses_only_different_stronger_enabled_models():
+    from core_lib.llm import create_escalation_llm_client
+    from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+
+    registry = ProviderRegistry([
+        ProviderConfig(provider='vertex', model='lite', tier='low'),
+        ProviderConfig(provider='vertex', model='flash', tier='standard'),
+        ProviderConfig(provider='vertex', model='disabled', tier='high', enabled=False),
+        ProviderConfig(provider='openai', model='another-lite', tier='low'),
+        ProviderConfig(provider='openai', model='vision', tier='high', usage=['vision']),
+    ])
+    with patch.object(ProviderRegistry, 'from_env', return_value=registry), \
+            patch('core_lib.llm.fallback_client.FallbackLLMClient.from_registry') as factory:
+        result = create_escalation_llm_client({'_fallback_metadata': {'provider': 'vertex', 'model': 'lite'}}, intelligence_level=5, usage='quality_analysis')
+        assert result is factory.return_value
+        selected = factory.call_args.args[0]
+        assert [p.model for p in selected.providers] == ['flash']
+
+
+def test_brief_escalation_does_not_repeat_same_model_or_downgrade():
+    from core_lib.llm import create_escalation_llm_client
+    from core_lib.llm.provider_registry import ProviderConfig, ProviderRegistry
+
+    registry = ProviderRegistry([
+        ProviderConfig(provider='vertex', model='flash', tier='standard'),
+        ProviderConfig(provider='vertex', model='lite', tier='low'),
+    ])
+    with patch.object(ProviderRegistry, 'from_env', return_value=registry):
+        assert create_escalation_llm_client({'_fallback_metadata': {'provider': 'vertex', 'model': 'flash'}}) is None
+        assert create_escalation_llm_client({}) is None

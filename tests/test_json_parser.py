@@ -25,6 +25,27 @@ class SampleSchema(BaseModel):
     is_valid: bool
 
 
+class DefaultBriefSchema(BaseModel):
+    summary: str = ''
+    key_dates: list[dict] = Field(default_factory=list)
+
+
+def test_truncated_outer_object_does_not_validate_nested_items_as_empty_brief():
+    text = ('{"summary": "Buyer requests migration", "key_dates": '
+            '[{"label": "Deadline", "value": "2026-12-04"}], '
+            '"evidence_selection": [{"evidence_id": "1", "reason": "cut off')
+    assert parse_structured_output(text, DefaultBriefSchema) is None
+
+
+def test_default_schema_recovers_nested_and_case_normalized_fields():
+    assert parse_structured_output('{"response": {"summary": "Migration"}}', DefaultBriefSchema)['summary'] == 'Migration'
+    assert parse_structured_output('{"Summary": "Migration"}', DefaultBriefSchema)['summary'] == 'Migration'
+
+
+def test_default_schema_does_not_discard_valid_sparse_instance():
+    assert parse_structured_output('{"summary": "Migration"}', DefaultBriefSchema)['summary'] == 'Migration'
+
+
 class TestExtractJsonFromText:
     """Test JSON extraction from text."""
     

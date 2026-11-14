@@ -53,6 +53,7 @@ from .fallback_client import (
     FallbackResult,
     LLMCallError,
     create_fallback_llm_client,
+    create_escalation_llm_client,
 )
 from .startup_preflight import (
     StartupValidationSummary,
@@ -97,6 +98,7 @@ __all__ = [
     
     # Fallback client (automatic provider failover)
     "FallbackLLMClient",
+    "create_escalation_llm_client",
     "FallbackResult",
     "LLMCallError",
     "create_fallback_llm_client",

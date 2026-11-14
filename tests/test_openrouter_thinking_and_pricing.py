@@ -1,7 +1,40 @@
 """OpenRouter honours the YAML thinking setting, and GPT-6 Luna is priced."""
+import pytest
 from core_lib.llm.provider_registry import ProviderConfig
 from core_lib.llm.providers.openai_provider import OpenAIProvider
 from core_lib.tracing.service_pricing import get_llm_pricing
+
+
+@pytest.mark.parametrize('kind,model,host', [
+    ('openai', 'qwen3.5-9b-nvfp4', 'http://127.0.0.1:18101/v1'),
+    ('openrouter', 'anthropic/claude-haiku-5.5', 'https://eu.openrouter.ai/api/v1'),
+    ('openrouter', 'openai/gpt-6-luna', 'https://eu.openrouter.ai/api/v1'),
+])
+def test_brief_output_budget_reaches_openai_compatible_api(monkeypatch, kind, model, host):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from core_lib.llm.fallback_client import FallbackLLMClient
+    from core_lib.llm.provider_registry import ProviderRegistry
+
+    sdk = Mock()
+    sdk.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content='OK', tool_calls=None), finish_reason='stop')],
+        usage={'prompt_tokens': 10, 'completion_tokens': 1, 'total_tokens': 11},
+    )
+    monkeypatch.setattr('core_lib.llm.providers.openai_provider.OpenAI', lambda **kwargs: sdk)
+    config = ProviderConfig.from_dict({
+        'provider': kind, 'model': model, 'host': host, 'api_key': 'test', 'thinking': False,
+    })
+    with FallbackLLMClient(ProviderRegistry([config])) as client:
+        response = client.chat('Extract brief.', max_output_tokens=8192)
+    assert response.get('error') is None
+    sent = sdk.chat.completions.create.call_args.kwargs
+    assert sent['max_tokens'] == 8192
+    if kind == 'openrouter':
+        assert sent['reasoning_effort'] == 'none'
+    else:
+        assert sent['extra_body']['chat_template_kwargs']['enable_thinking'] is False
+    assert config.max_tokens is None
 
 
 def _provider(thinking):

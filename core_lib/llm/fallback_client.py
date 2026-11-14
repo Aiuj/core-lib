@@ -585,7 +585,16 @@ class FallbackLLMClient:
                     if predicted is not None and int(predicted) > 0:
                         limits.append(int(predicted))
                     extra["num_predict"] = min(limits)
-                bounded_entries.append((replace(config, max_tokens=min(limits), extra=extra), is_fallback))
+                bounded = replace(config, max_tokens=min(limits), extra=extra)
+                if prompt_tokens is not None and not bounded.fits_prompt_tokens(
+                    prompt_tokens, reserved_output_tokens=bounded.max_tokens,
+                ):
+                    logger.warning(
+                        'Skipping %s: prompt and requested output exceed its context window',
+                        config.model,
+                    )
+                    continue
+                bounded_entries.append((bounded, is_fallback))
             entries = bounded_entries
         if stop_sequences:
             stops = tuple(str(stop) for stop in stop_sequences if stop)
@@ -1005,6 +1014,47 @@ class FallbackLLMClient:
 
 
 # Convenience factory function
+def create_escalation_llm_client(
+    response: Dict[str, Any],
+    *,
+    intelligence_level: Optional[int] = None,
+    usage: Optional[str] = None,
+    registry: Optional[ProviderRegistry] = None,
+) -> Optional[FallbackLLMClient]:
+    """Return a client restricted to different models in a higher configured tier.
+
+    Call after application validation rejects otherwise successful content.
+    This does not mark the original provider globally unhealthy. Returns None
+    when the response identity/tier is unknown or no eligible upgrade exists;
+    callers decide whether to retry the original model or fail. The caller
+    owns the returned client and limits the number of escalation attempts.
+    Tier labels (low, standard, high) are deployment policy, not benchmarks.
+    """
+    metadata = response.get('_fallback_metadata') or {}
+    model = metadata.get('model')
+    if not model:
+        return None
+    registry = registry if registry is not None else ProviderRegistry.from_env()
+    ranks = {'low': 0, 'standard': 1, 'high': 2}
+    failed = [p for p in registry.providers if p.model == model
+              and p.provider == metadata.get('provider')]
+    if not failed or failed[0].tier not in ranks:
+        return None
+    providers = registry.get_providers_for_usage(usage) if usage else registry.providers
+    candidates = [
+        p for p in providers
+        if p.enabled and p.model != model
+        and ranks.get(p.tier, -1) > ranks[failed[0].tier]
+        and (intelligence_level is None or p.supports_intelligence_level(intelligence_level))
+    ]
+    if not candidates:
+        return None
+    logger.warning('Escalating content validation retry from %s to a higher model tier', model)
+    return FallbackLLMClient.from_registry(
+        ProviderRegistry(candidates), intelligence_level=intelligence_level, usage=usage,
+    )
+
+
 def create_fallback_llm_client(
     providers: Optional[List[Dict[str, Any]]] = None,
     intelligence_level: Optional[int] = None,
