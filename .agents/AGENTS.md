@@ -36,7 +36,8 @@ Follow a strict two-phase workflow with a mandatory user review gate.
    If verification fails, stop and regenerate the manifest from the corrected staged release before committing again.
    `git push origin main`
 2. **Create and Push Git Tag**:
-   `git tag vX.Y.Z`
+   `git tag -s vX.Y.Z -m "vX.Y.Z"`
+   `git tag -v vX.Y.Z` (must report a good signature; if signing is not configured, stop and see "Tag signing")
    `uv run --no-sync scripts/release_integrity.py verify vX.Y.Z`
    `git push origin vX.Y.Z`
 3. **Create GitHub Release**:
@@ -45,4 +46,8 @@ Follow a strict two-phase workflow with a mandatory user review gate.
 
 ### Release integrity
 
-`RELEASE_INTEGRITY.json` is committed with each release. It records a SHA-256 digest over all tracked paths, Git file modes, and blob contents in the staged release tree, excluding only the manifest itself. Run `uv run --no-sync scripts/release_integrity.py verify vX.Y.Z` to check a tag later; the command uses Git objects, not the current working tree. Any staged change after creating the manifest requires regenerating and staging it again. The digest covers source tracked by Git, not untracked files, generated release assets, or submodule contents (submodules are rejected). A digest stored beside the content detects accidental changes but does not authenticate a maliciously replaced commit or tag; establish tag authenticity separately, for example with a trusted signed tag.
+`RELEASE_INTEGRITY.json` is committed with each release. It records a SHA-256 digest over all tracked paths, Git file modes, and blob contents in the staged release tree, excluding only the manifest itself. Run `uv run --no-sync scripts/release_integrity.py verify vX.Y.Z` to check a tag later; the command uses Git objects, not the current working tree. Any staged change after creating the manifest requires regenerating and staging it again. The digest covers source tracked by Git, not untracked files, generated release assets, or submodule contents (submodules are rejected). A digest stored beside the content detects accidental changes but does not authenticate a maliciously replaced commit or tag; tag authenticity comes from the signed tag (see below).
+
+### Tag signing
+
+Release tags are SSH-signed with the shared `nadaudsoftware` key, the same for every repository. It is configured once in the global git config: `gpg.format=ssh`, `user.signingkey=~/.ssh/nadaudsoftware.pub`, `tag.gpgsign=true`, `gpg.ssh.allowedSignersFile=~/.ssh/allowed_signers`. The public key must be registered on GitHub as a Signing Key. On a new machine, copy `~/.ssh/nadaudsoftware` and `nadaudsoftware.pub`, recreate `allowed_signers` (`<email> <public key>`), and set the four options with `git config --global`. Never create a per-repository key and never push an unsigned release tag.
