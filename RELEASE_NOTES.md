@@ -25,6 +25,29 @@ Then commit, push and tag this new version in github and create a release for th
 
 ## November 2026
 
+### v1.0.0 - First Production Release (Nov 15, 2026)
+
+First stable release of core-lib, cut for production use. It includes everything since v0.5.0 (see v0.6.0 below, which was never tagged) plus the changes listed here.
+
+#### Added
+
+- **`check_downstream_service_health`** in `core_lib.api_utils`: probes a downstream service's health endpoint and verifies that authentication works, so a service can report an unreachable or misconfigured dependency.
+- **Structured response recovery and model tier escalation** in the fallback LLM client (included since the v0.6.0 preparation).
+
+#### Fixed
+
+- Escalation test provider configuration in `tests/test_fallback_llm_client.py`.
+
+#### Release integrity
+
+- The release commit carries `RELEASE_INTEGRITY.json`, a SHA-256 digest of the tracked release tree. Check a tag with `uv run --no-sync scripts/release_integrity.py verify v1.0.0`.
+
+#### Downstream impact
+
+- Version moves to 1.0.0 with no API removals. `mcp-doc-qa`, `agent-rfx`, `saas-admin` and `rfx-evaluation` need a lockfile update to pick it up.
+
+---
+
 ### v0.6.0 - Per-Request LLM Controls, Provider Routing & Decision Clients (Nov 14, 2026)
 
 #### Per-request output limit and stop sequences on `FallbackLLMClient.chat()`
