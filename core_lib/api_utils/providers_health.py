@@ -32,6 +32,7 @@ auto-detection.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 from core_lib.tracing.logger import get_module_logger
@@ -246,3 +247,100 @@ def is_providers_healthy(components: Dict[str, Any]) -> bool:
         if not data.get("healthy", True):
             return False
     return True
+
+
+def check_downstream_service_health(
+    url: Optional[str],
+    *,
+    auth_mode: Optional[str] = None,
+    jwt_token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_key_header_name: str = "x-api-key",
+    health_endpoint: str = "/health",
+    auth_endpoint: Optional[str] = None,
+    auth_error: Optional[str] = None,
+    timeout: float = 5.0,
+) -> Dict[str, Any]:
+    """Probe a downstream HTTP service's health and optional authentication.
+
+    Parameters
+    ----------
+    url:
+        Base URL of the downstream service. Returns ``{"configured": False}``
+        when empty or *None*.
+    auth_mode:
+        Configured authentication mode (e.g. ``"jwt"``, ``"legacy"``, ``"none"``).
+    jwt_token:
+        Bearer JWT token to send when probing ``auth_endpoint``.
+    api_key:
+        Legacy API key to send when ``jwt_token`` is not set.
+    api_key_header_name:
+        Header name for legacy API key (default: ``"x-api-key"``).
+    health_endpoint:
+        Unauthenticated liveness path on the downstream service.
+    auth_endpoint:
+        Authenticated endpoint path to verify credentials (e.g.
+        ``"/v1/documents?company_id=00000000-0000-0000-0000-000000000000"``).
+        Skipped when *None* or when ``auth_mode == "none"``.
+    auth_error:
+        Pre-existing credential-setup error (e.g. missing ``JWT_SECRET``).
+    timeout:
+        HTTP request timeout in seconds.
+    """
+    if not url:
+        return {"configured": False}
+
+    import httpx
+
+    base = url.rstrip("/")
+    result: Dict[str, Any] = {"configured": True, "url": url}
+    if auth_mode:
+        result["auth_mode"] = auth_mode
+
+    start = time.monotonic()
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            health_url = f"{base}/{health_endpoint.lstrip('/')}"
+            resp = client.get(health_url)
+            result["latency_ms"] = round((time.monotonic() - start) * 1000, 1)
+            if resp.status_code != 200:
+                result["healthy"] = False
+                result["error"] = f"Health endpoint returned HTTP {resp.status_code}"
+                return result
+
+            if auth_error:
+                result["healthy"] = False
+                result["auth_verified"] = False
+                result["error"] = auth_error
+                return result
+
+            if auth_endpoint and (auth_mode or "").lower() != "none":
+                headers: Dict[str, str] = {}
+                if jwt_token:
+                    headers["Authorization"] = f"Bearer {jwt_token}"
+                elif api_key:
+                    headers[api_key_header_name] = api_key
+
+                auth_url = f"{base}/{auth_endpoint.lstrip('/')}"
+                auth_resp = client.get(auth_url, headers=headers)
+                if auth_resp.status_code in (401, 403):
+                    result["healthy"] = False
+                    result["auth_verified"] = False
+                    result["error"] = f"Authentication failed (HTTP {auth_resp.status_code})"
+                    return result
+                if auth_resp.status_code >= 500:
+                    result["healthy"] = False
+                    result["auth_verified"] = None
+                    result["error"] = f"Auth probe returned HTTP {auth_resp.status_code}"
+                    return result
+                result["auth_verified"] = True
+
+            result["healthy"] = True
+            return result
+    except Exception as exc:
+        result["latency_ms"] = round((time.monotonic() - start) * 1000, 1)
+        result["healthy"] = False
+        if auth_endpoint and (auth_mode or "").lower() != "none":
+            result["auth_verified"] = False
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result

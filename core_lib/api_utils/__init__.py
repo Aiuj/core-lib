@@ -127,6 +127,7 @@ from .uvicorn_runner import (
 
 # Shared provider diagnostics for health endpoints
 from .providers_health import (
+    check_downstream_service_health,
     check_providers_health,
     is_providers_healthy,
 )
@@ -173,6 +174,7 @@ __all__ = [
     "run_uvicorn_from_settings",
 
     # Provider diagnostics
+    "check_downstream_service_health",
     "check_providers_health",
     "is_providers_healthy",
 ] + __all_jwt__ + __all_fastapi__
