@@ -552,7 +552,9 @@ def parse_structured_output(
                 )
                 return result
 
-    logger.warning(
+    # Callers (e.g. providers) log the actionable fallback warning; this one
+    # fires on every parse attempt (often twice per call), so keep it at INFO.
+    logger.info(
         "parse_structured_output: all recovery strategies exhausted for schema %s",
         schema.__name__,
     )
