@@ -867,14 +867,22 @@ class ProviderRegistry:
     - Programmatic configuration
     """
     
-    def __init__(self, providers: Optional[List[ProviderConfig]] = None):
+    def __init__(
+        self,
+        providers: Optional[List[ProviderConfig]] = None,
+        default_max_tokens: Optional[int] = None,
+    ):
         """Initialize the registry with optional provider configurations.
         
         Args:
             providers: List of ProviderConfig instances
+            default_max_tokens: Optional default output token budget loaded from config
         """
         self._providers: List[ProviderConfig] = providers or []
         self._clients_cache: Dict[str, Any] = {}
+        self.default_max_tokens: Optional[int] = (
+            int(default_max_tokens) if default_max_tokens is not None else None
+        )
 
     def _get_or_create_client(self, provider: ProviderConfig) -> Any:
         key = provider.client_cache_key()
@@ -1318,6 +1326,14 @@ class ProviderRegistry:
             data = substitute_env_vars(data)
         
         # Handle different config structures
+        if isinstance(data, dict):
+            raw_default_max_tokens = data.get("default_max_tokens")
+            if raw_default_max_tokens is None and isinstance(data.get("defaults"), dict):
+                raw_default_max_tokens = data["defaults"].get("max_tokens")
+            if raw_default_max_tokens is not None:
+                parsed_default = int(raw_default_max_tokens)
+                if parsed_default > 0:
+                    registry.default_max_tokens = parsed_default
         providers_list = data if isinstance(data, list) else data.get("providers", data.get("llm_providers", []))
         
         for p in providers_list:

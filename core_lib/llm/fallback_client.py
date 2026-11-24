@@ -440,6 +440,11 @@ class FallbackLLMClient:
         for provider in unhealthy:
             yield (provider, True)
     
+    @property
+    def default_max_tokens(self) -> Optional[int]:
+        """Default output token budget configured on the provider registry, if any."""
+        return getattr(self._registry, "default_max_tokens", None)
+
     def chat(
         self,
         messages: MessagesInput,
@@ -574,6 +579,43 @@ class FallbackLLMClient:
         if require_tools:
             entries = [entry for entry in entries if entry[0].supports_tools]
         if max_output_tokens is not None:
+            def _configured_output_cap(cfg: ProviderConfig) -> Optional[int]:
+                caps: List[int] = []
+                if cfg.max_tokens is not None and cfg.max_tokens > 0:
+                    caps.append(cfg.max_tokens)
+                if cfg.provider == "ollama":
+                    predicted = cfg.extra.get("num_predict")
+                    if predicted is not None and int(predicted) > 0:
+                        caps.append(int(predicted))
+                return min(caps) if caps else None
+
+            sufficient_entries = [
+                entry for entry in entries
+                if (cap := _configured_output_cap(entry[0])) is None or cap >= max_output_tokens
+            ]
+            if sufficient_entries and len(sufficient_entries) < len(entries):
+                skipped_names = [
+                    f"{cfg.name or cfg.model} (max_tokens={_configured_output_cap(cfg)})"
+                    for cfg, _ in entries
+                    if (cap := _configured_output_cap(cfg)) is not None and cap < max_output_tokens
+                ]
+                logger.info(
+                    "Requested max_output_tokens (%d) exceeds configured max_tokens for %s; "
+                    "routing to another provider.",
+                    max_output_tokens,
+                    ", ".join(skipped_names),
+                )
+                entries = [
+                    (cfg, idx > 0 or is_fb)
+                    for idx, (cfg, is_fb) in enumerate(sufficient_entries)
+                ]
+            elif not sufficient_entries and entries:
+                logger.warning(
+                    "Requested max_output_tokens (%d) exceeds configured max_tokens for all "
+                    "providers; trying providers with their configured limits as last resort.",
+                    max_output_tokens,
+                )
+
             bounded_entries = []
             for config, is_fallback in entries:
                 limits = [max_output_tokens]
@@ -586,8 +628,11 @@ class FallbackLLMClient:
                         limits.append(int(predicted))
                     extra["num_predict"] = min(limits)
                 bounded = replace(config, max_tokens=min(limits), extra=extra)
-                if prompt_tokens is not None and not bounded.fits_prompt_tokens(
-                    prompt_tokens, reserved_output_tokens=bounded.max_tokens,
+                est_prompt = (
+                    prompt_tokens(bounded) if callable(prompt_tokens) else prompt_tokens
+                )
+                if est_prompt is not None and not bounded.fits_prompt_tokens(
+                    est_prompt, reserved_output_tokens=bounded.max_tokens,
                 ):
                     logger.warning(
                         'Skipping %s: prompt and requested output exceed its context window',

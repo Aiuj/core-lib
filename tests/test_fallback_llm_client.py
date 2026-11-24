@@ -1209,3 +1209,39 @@ def test_brief_escalation_does_not_repeat_same_model_or_downgrade():
     with patch.object(ProviderRegistry, 'from_env', return_value=registry):
         assert create_escalation_llm_client({'_fallback_metadata': {'provider': 'ollama', 'model': 'flash'}}) is None
         assert create_escalation_llm_client({}) is None
+
+
+def test_request_output_budget_routes_past_provider_with_lower_configured_max_tokens():
+    registry = ProviderRegistry([
+        ProviderConfig(provider="openai", model="capped-local", api_key="test", max_tokens=2000, priority=1),
+        ProviderConfig(provider="openai", model="roomy-cloud", api_key="test", max_tokens=8000, priority=2),
+    ])
+    client = FallbackLLMClient(registry)
+    selected = []
+
+    def get_client(config):
+        selected.append((config.model, config.max_tokens))
+        mock = create_mock_client()
+        mock.is_in_warmup.return_value = False
+        return mock
+
+    with patch.object(client, "_get_client", side_effect=get_client):
+        result = client.chat("Answer this question.", max_output_tokens=4000)
+    assert result.get("error") is None
+    assert selected == [("roomy-cloud", 4000)]
+
+
+def test_registry_loads_default_max_tokens_from_yaml(tmp_path):
+    cfg_file = tmp_path / "llm_providers.yaml"
+    cfg_file.write_text(
+        "default_max_tokens: 4096\n"
+        "providers:\n"
+        "  - provider: openai\n"
+        "    model: test-model\n"
+        "    api_key: test\n",
+        encoding="utf-8",
+    )
+    registry = ProviderRegistry.from_file(str(cfg_file), substitute_env=False)
+    assert registry.default_max_tokens == 4096
+    client = FallbackLLMClient(registry)
+    assert client.default_max_tokens == 4096
