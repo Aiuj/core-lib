@@ -634,7 +634,9 @@ class FallbackLLMClient:
                 if est_prompt is not None and not bounded.fits_prompt_tokens(
                     est_prompt, reserved_output_tokens=bounded.max_tokens,
                 ):
-                    logger.warning(
+                    # Expected routing decision (a smaller provider is simply
+                    # not eligible for this request), not a failure.
+                    logger.debug(
                         'Skipping %s: prompt and requested output exceed its context window',
                         config.model,
                     )
